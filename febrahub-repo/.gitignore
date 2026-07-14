@@ -1,0 +1,23 @@
+# NUNCA commitar credenciais.
+# A service_role key do Supabase ignora toda a RLS —
+# vazar ela é entregar o banco inteiro.
+.env
+.env.*
+!.env.example
+*.key
+secrets/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# SO
+.DS_Store
+Thumbs.db
