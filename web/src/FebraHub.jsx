@@ -9,7 +9,7 @@ import {
   useSessao, usePerfil, entrar, sair,
   useComercialFunil, useComercialRanking,
   useFinanceiroReceita, useFinanceiroInadimp, useFinanceiroQualid,
-  useFinanceiroPagamentos,
+  useFinanceiroPagamentos, useFinanceiroReceitaCategoria,
   useMarketingOrigem, usePedagogicoTurmas, useEventosDesempenho,
   useDiretoriaConsol,
   porMes, variacao, moeda, numero,
@@ -57,6 +57,10 @@ const agrupar = (linhas, chave, valor) => {
   for (const l of linhas) m.set(l[chave] ?? "—", (m.get(l[chave] ?? "—") ?? 0) + Number(l[valor] ?? 0));
   return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([rotulo, v]) => ({ rotulo, valor: v }));
 };
+
+// "Sem vínculo" não é categoria de produto: é pagamento que entrou sem
+// matrícula casada. Nunca disputa o topo do ranking como se fosse curso.
+const ehSemVinculo = (cat) => /sem[\s_]?v[ií]nculo|n[aã]o[_\s]?determinad|indefinid/i.test(cat ?? "");
 
 /* ============ PRIMITIVOS ============ */
 
@@ -168,6 +172,54 @@ function Lista({ linhas, formatar = moeda, total }) {
       )}
     </div>
   );
+}
+
+/* Receita por categoria, ranqueada pela receita da UNIDADE — o que
+   sobra pra Febracis — nunca pelo bruto. No Coaching Individual o bruto
+   se divide 50/50 com o coach, entao rankear por bruto inflaria o peso
+   do coaching pela metade que nem entra no caixa. */
+function ReceitaPorCategoria({ reais, orfas }) {
+  const max = Math.max(...reais.map((r) => r.unidade), 1);
+  const linha = (r) => (
+    <div key={r.categoria} style={{ padding: "13px 20px", borderBottom: `1px solid ${C.hair}` }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 130px", gap: 14, alignItems: "center" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
+            <span style={{
+              fontSize: 13.5, fontWeight: 600,
+              color: r.orfa ? C.faint : C.bright,
+              fontStyle: r.orfa ? "italic" : "normal",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }} title={r.categoria}>
+              {r.categoria}
+            </span>
+            {r.repasse > 0 && (
+              <span style={{ fontSize: 10, fontWeight: 800, color: C.warn, border: `1px solid ${C.warn}55`, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>
+                50/50
+              </span>
+            )}
+          </div>
+          <div style={{ height: 4, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+            <div style={{
+              width: `${(r.unidade / max) * 100}%`, height: "100%", borderRadius: 3,
+              background: r.orfa ? C.faint : `linear-gradient(90deg, ${C.goldBase}, ${C.gold})`,
+            }} />
+          </div>
+        </div>
+        <span style={{ fontFamily: GROTESK, fontSize: 15, fontWeight: 700, textAlign: "right", color: r.orfa ? C.faint : C.text }}>
+          {moeda(r.unidade)}
+        </span>
+      </div>
+      <div style={{ fontSize: 11.5, color: C.faint, marginTop: 7 }}>
+        {r.orfa
+          ? "Pagamento sem matrícula casada — não é um produto"
+          : r.repasse > 0
+            ? <>{numero(r.vendas)} vendas · bruto {moeda(r.bruto)} · metade fica com o coach ({moeda(r.repasse)})</>
+            : <>{numero(r.vendas)} vendas</>}
+      </div>
+    </div>
+  );
+  return <div>{reais.map(linha)}{orfas.map(linha)}</div>;
 }
 
 /* Pagamentos por origem do status. pct_pago e sem_status vem da
@@ -397,6 +449,26 @@ function HubFinanceiro() {
   const inad = useFinanceiroInadimp();
   const qual = useFinanceiroQualid();
   const pag = useFinanceiroPagamentos();
+  const recCat = useFinanceiroReceitaCategoria();
+
+  // Ranqueio pela receita_unidade (o que fica na Febracis), separo o
+  // "Sem vínculo" pra ele nunca aparecer no topo como se fosse produto,
+  // e calculo a cobertura: quanto da receita tem categoria identificada.
+  const categorias = useMemo(() => {
+    const rows = (recCat.data ?? []).map((r) => ({
+      categoria: ehSemVinculo(r.categoria) ? "Sem vínculo" : (r.categoria ?? "—"),
+      vendas: Number(r.vendas ?? 0),
+      bruto: Number(r.receita_bruta ?? 0),
+      unidade: Number(r.receita_unidade ?? 0),
+      repasse: Number(r.repasse_coach ?? 0),
+      orfa: ehSemVinculo(r.categoria),
+    }));
+    const reais = rows.filter((r) => !r.orfa).sort((a, b) => b.unidade - a.unidade);
+    const orfas = rows.filter((r) => r.orfa);
+    const total = rows.reduce((s, r) => s + r.unidade, 0);
+    const semVinc = orfas.reduce((s, r) => s + r.unidade, 0);
+    return { reais, orfas, semVinc, cobertura: total ? ((total - semVinc) / total) * 100 : null };
+  }, [recCat.data]);
 
   // A view vem por (ano, origem_status). Agrego por origem somando os
   // anos e recalculo o pct_pago ponderado — pagos sobre os que TEM status,
@@ -445,6 +517,21 @@ function HubFinanceiro() {
       </div>
       <Bloco titulo="Receita por curso" canto="venda · acumulado" sem>
         <Lista linhas={cursos} total={cursos.reduce((s, l) => s + l.valor, 0)} />
+      </Bloco>
+      <Bloco titulo="Receita por categoria" canto="por receita da unidade" sem>
+        <Estado carregando={recCat.isLoading} erro={recCat.error} vazio={!categorias.reais.length && !categorias.orfas.length}>
+          <ReceitaPorCategoria reais={categorias.reais} orfas={categorias.orfas} />
+          <div style={{ display: "flex", gap: 9, padding: "14px 20px", background: "rgba(255,255,255,.02)" }}>
+            <AlertTriangle size={13} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+            <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.55 }}>
+              Ranqueado pela <b style={{ color: C.bright }}>receita da unidade</b> — o que fica na Febracis,
+              não o bruto. No Coaching Individual o bruto se divide 50/50 com o coach, então só a metade
+              da casa entra no ranking. “Sem vínculo” é pagamento sem matrícula casada
+              {categorias.semVinc > 0 && <> ({moeda(categorias.semVinc)})</>}, fora do ranking de produtos.
+              {categorias.cobertura != null && <> Cobertura: <b style={{ color: C.bright }}>{categorias.cobertura.toFixed(0)}%</b> da receita tem categoria identificada.</>}
+            </span>
+          </div>
+        </Estado>
       </Bloco>
       <Bloco titulo="Status de pagamento" canto="acumulado" sem>
         <Estado carregando={inad.isLoading} erro={inad.error} vazio={!status.length}>

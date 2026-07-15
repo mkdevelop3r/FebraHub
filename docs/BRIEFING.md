@@ -86,6 +86,8 @@ Comparar 14 dias contra o mês inteiro produz "-99%". Correto e enganoso.
 Sem metas no banco → sem KPI de meta. Sem IA → sem "gerado pela IA". Prometer o que não
 existe é o jeito mais rápido de perder a confiança da diretoria.
 
+Cielo: comercialmente é CisPay, mas 0/408 têm liquidação na fato_liquidacao_cartao. Provavelmente cobranças por link direto, cujo fluxo a API schedules-ex não retorna (mesma causa do cod_salesforce órfão). Consequência: os ~408 pagamentos Cielo entram como bruto, sem taxa de 3,10% medida. Não estimar a taxa — mostrar como bruto e sinalizar cobertura.
+
 ---
 
 ## Próximos passos
