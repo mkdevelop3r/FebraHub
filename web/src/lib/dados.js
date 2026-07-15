@@ -80,6 +80,12 @@ export const useFinanceiroInadimp = () => useView("vw_financeiro_inadimplencia")
 export const useFinanceiroQualid  = () => useView("vw_financeiro_qualidade");
 export const useFinanceiroPagamentos = () => useView("vw_financeiro_pagamentos");
 export const useFinanceiroReceitaCategoria = () => useView("vw_financeiro_receita_categoria_total");
+export const useFinanceiroCaixaHorizonte = () => useView("vw_financeiro_caixa_horizonte");
+export const useFinanceiroFormasPagamento = () => useView("vw_financeiro_formas_pagamento");
+// Views que a Dulce vai criar (evolução mensal + caixa CisPay). Enquanto
+// não existirem, o useView devolve [] e o card mostra estado vazio honesto.
+export const useFinanceiroReceitaMensal = () => useView("vw_financeiro_receita_mensal");
+export const useFinanceiroCaixaMensal = () => useView("vw_financeiro_caixa_mensal");
 export const useMarketingOrigem   = () => useView("vw_marketing_origem");
 export const usePedagogicoTurmas  = () => useView("vw_pedagogico_turmas");
 export const useEventosDesempenho = () => useView("vw_eventos_desempenho");
