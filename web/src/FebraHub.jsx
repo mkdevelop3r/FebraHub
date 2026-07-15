@@ -4,12 +4,15 @@ import {
   TrendingUp, Wallet, Megaphone, GraduationCap, ShoppingBag, CalendarDays,
   LayoutDashboard, Lock, Mail, AlertTriangle, Package, LogOut, Power,
   Database, ShieldAlert, Loader2, ArrowRight, Sparkles, Bell,
+  Clock, Receipt, Hourglass,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
   useComercialFunil, useComercialRanking,
-  useFinanceiroReceita, useFinanceiroInadimp, useFinanceiroQualid,
+  useFinanceiroReceita, useFinanceiroQualid,
   useFinanceiroPagamentos, useFinanceiroReceitaCategoria,
+  useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
+  useFinanceiroReceitaMensal, useFinanceiroCaixaMensal,
   useMarketingOrigem, usePedagogicoTurmas, useEventosDesempenho,
   useDiretoriaConsol,
   porMes, variacao, moeda, numero,
@@ -41,6 +44,11 @@ const C = {
 
 const GROTESK = "'Space Grotesk', system-ui, sans-serif";
 const SANS = "'Manrope', system-ui, sans-serif";
+
+// Altura máxima do CORPO de um painel de BI. O conteúdo rola dentro do
+// card (overflow interno) em vez de esticar a página — é o que faz o Hub
+// caber numa tela. Um só valor pra todos os hubs herdarem o mesmo ritmo.
+const ALTURA_PAINEL = 260;
 
 const HUBS = [
   { key: "comercial",  nome: "Comercial",  Icone: TrendingUp,    desc: "Funil, conversão e consultores" },
@@ -112,39 +120,73 @@ function Kpi({ label, valor, unidade, delta, up, serie, nota, destaque, parcial 
   );
 }
 
-function Bloco({ titulo, canto, children, sem }) {
+/* Painel. Com `altura`, o cabeçalho fica fixo e só o CORPO rola
+   (overflow-y interno) — o card nunca passa da altura, então a página
+   não cresce. Sem `altura`, cresce com o conteúdo (comportamento antigo). */
+function Bloco({ titulo, canto, children, sem, altura }) {
   return (
-    <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 16, overflow: "hidden", marginBottom: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 20px", borderBottom: `1px solid ${C.hair}` }}>
+    <div style={{
+      background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 16,
+      overflow: "hidden", marginBottom: 20,
+      display: "flex", flexDirection: "column", minHeight: 0,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "13px 20px", borderBottom: `1px solid ${C.hair}`, flexShrink: 0 }}>
         <span style={{ fontSize: 13.5, fontWeight: 800, color: C.bright }}>{titulo}</span>
         {canto && <span style={{ fontSize: 11, color: C.faint }}>{canto}</span>}
       </div>
-      <div style={{ padding: sem ? 0 : "16px 20px" }}>{children}</div>
+      <div
+        className={altura ? "rolagem" : undefined}
+        style={{
+          padding: sem ? 0 : "16px 20px",
+          ...(altura ? { maxHeight: altura, overflowY: "auto" } : {}),
+        }}
+      >
+        {children}
+      </div>
     </div>
   );
 }
 
+/* Alterna entre o top-N e a lista inteira. Ranking longo empurraria os
+   outros cards pra fora da primeira tela — a Dulce vê os 5 que importam
+   e abre o resto só se precisar. */
+function VerTodas({ aberto, resto, onClick }) {
+  return (
+    <button onClick={onClick} style={{
+      width: "100%", padding: "9px 20px", textAlign: "center", background: "none",
+      border: "none", borderBottom: `1px solid ${C.hair}`, cursor: "pointer",
+      fontFamily: SANS, fontSize: 11.5, fontWeight: 700, letterSpacing: ".3px", color: C.gold,
+    }}>
+      {aberto ? "Ver menos ▴" : `Ver todas · +${resto} ▾`}
+    </button>
+  );
+}
+
 /* Lista densa: rótulo, valor, variação. É o formato que a Dulce
-   consegue ler de relance sem interpretar gráfico. */
-function Lista({ linhas, formatar = moeda, total }) {
+   consegue ler de relance sem interpretar gráfico. Com `top`, mostra
+   só os N primeiros e esconde o resto atrás do "ver todas". */
+function Lista({ linhas, formatar = moeda, total, top }) {
+  const [aberto, setAberto] = useState(false);
   const max = Math.max(...linhas.map((l) => Math.abs(l.valor)), 1);
+  const limitar = top && !aberto && linhas.length > top;
+  const visiveis = limitar ? linhas.slice(0, top) : linhas;
   return (
     <div>
-      {linhas.map((l) => (
+      {visiveis.map((l) => (
         <div key={l.rotulo} style={{
           display: "grid", gridTemplateColumns: "1fr 120px", gap: 14, alignItems: "center",
-          padding: "13px 20px", borderBottom: `1px solid ${C.hair}`,
+          padding: "8px 20px", borderBottom: `1px solid ${C.hair}`,
         }}>
           <div style={{ minWidth: 0 }}>
             <div style={{
-              fontSize: 13.5, fontWeight: 600, marginBottom: 7,
+              fontSize: 13, fontWeight: 600, marginBottom: 5,
               color: l.orfa ? C.faint : C.bright,
               fontStyle: l.orfa ? "italic" : "normal",
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }} title={l.rotulo}>
               {l.rotulo}
             </div>
-            <div style={{ height: 4, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+            <div style={{ height: 3, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
               <div style={{
                 width: `${(Math.abs(l.valor) / max) * 100}%`, height: "100%", borderRadius: 3,
                 background: l.orfa ? C.faint : `linear-gradient(90deg, ${C.goldBase}, ${C.gold})`,
@@ -152,20 +194,23 @@ function Lista({ linhas, formatar = moeda, total }) {
             </div>
           </div>
           <span style={{
-            fontFamily: GROTESK, fontSize: 15, fontWeight: 700, textAlign: "right",
+            fontFamily: GROTESK, fontSize: 14.5, fontWeight: 700, textAlign: "right",
             color: l.orfa ? C.faint : C.text,
           }}>
             {formatar(l.valor)}
           </span>
         </div>
       ))}
+      {top && linhas.length > top && (
+        <VerTodas aberto={aberto} resto={linhas.length - top} onClick={() => setAberto((a) => !a)} />
+      )}
       {total != null && (
         <div style={{
           display: "grid", gridTemplateColumns: "1fr 120px", gap: 14,
-          padding: "14px 20px", background: "rgba(255,255,255,.02)",
+          padding: "11px 20px", background: "rgba(255,255,255,.02)",
         }}>
           <span style={{ fontSize: 13, fontWeight: 800, color: C.bright }}>Total</span>
-          <span style={{ fontFamily: GROTESK, fontSize: 16, fontWeight: 700, textAlign: "right", color: C.gold }}>
+          <span style={{ fontFamily: GROTESK, fontSize: 15, fontWeight: 700, textAlign: "right", color: C.gold }}>
             {formatar(total)}
           </span>
         </div>
@@ -174,83 +219,259 @@ function Lista({ linhas, formatar = moeda, total }) {
   );
 }
 
-/* Receita por categoria, ranqueada pela receita da UNIDADE — o que
-   sobra pra Febracis — nunca pelo bruto. No Coaching Individual o bruto
-   se divide 50/50 com o coach, entao rankear por bruto inflaria o peso
-   do coaching pela metade que nem entra no caixa. */
-function ReceitaPorCategoria({ reais, orfas }) {
-  const max = Math.max(...reais.map((r) => r.unidade), 1);
-  const linha = (r) => (
-    <div key={r.categoria} style={{ padding: "13px 20px", borderBottom: `1px solid ${C.hair}` }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 130px", gap: 14, alignItems: "center" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
-            <span style={{
-              fontSize: 13.5, fontWeight: 600,
-              color: r.orfa ? C.faint : C.bright,
-              fontStyle: r.orfa ? "italic" : "normal",
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            }} title={r.categoria}>
-              {r.categoria}
-            </span>
-            {r.repasse > 0 && (
-              <span style={{ fontSize: 10, fontWeight: 800, color: C.warn, border: `1px solid ${C.warn}55`, borderRadius: 5, padding: "1px 5px", flexShrink: 0 }}>
-                50/50
-              </span>
-            )}
-          </div>
-          <div style={{ height: 4, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
-            <div style={{
-              width: `${(r.unidade / max) * 100}%`, height: "100%", borderRadius: 3,
-              background: r.orfa ? C.faint : `linear-gradient(90deg, ${C.goldBase}, ${C.gold})`,
-            }} />
-          </div>
+/* Chip de KPI compacto — faixa horizontal do design: ícone + label +
+   valor + delta/nota. `hero` deixa o card dourado (o número-âncora). */
+function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero }) {
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 12, minHeight: 78,
+      background: "rgba(255,255,255,.03)",
+      border: `1px solid ${hero ? `${C.gold}38` : C.cardLine}`,
+      borderRadius: 13, padding: "13px 15px",
+    }}>
+      <span style={{
+        width: 30, height: 30, flexShrink: 0, borderRadius: 8,
+        background: hero ? `${C.gold}24` : "rgba(255,255,255,.05)",
+        color: hero ? C.gold : "#C9C9CE",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <Icone size={15} />
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: GROTESK, fontSize: 22, fontWeight: 700, letterSpacing: "-.5px", color: hero ? C.gold : C.text }}>
+            {valor}
+            {unidade && <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}> {unidade}</span>}
+          </span>
+          {delta != null
+            ? <span style={{ fontSize: 11, fontWeight: 800, color: up ? C.up : C.down }}>{up ? "▲" : "▼"} {String(delta).replace(/[+-]/, "")}</span>
+            : nota && <span style={{ fontSize: 11, fontWeight: 800, color: C.muted }}>{nota}</span>}
         </div>
-        <span style={{ fontFamily: GROTESK, fontSize: 15, fontWeight: 700, textAlign: "right", color: r.orfa ? C.faint : C.text }}>
-          {moeda(r.unidade)}
-        </span>
-      </div>
-      <div style={{ fontSize: 11.5, color: C.faint, marginTop: 7 }}>
-        {r.orfa
-          ? "Pagamento sem matrícula casada — não é um produto"
-          : r.repasse > 0
-            ? <>{numero(r.vendas)} vendas · bruto {moeda(r.bruto)} · metade fica com o coach ({moeda(r.repasse)})</>
-            : <>{numero(r.vendas)} vendas</>}
       </div>
     </div>
   );
-  return <div>{reais.map(linha)}{orfas.map(linha)}</div>;
 }
 
-/* Pagamentos por origem do status. pct_pago e sem_status vem da
-   vw_financeiro_pagamentos, mas os dois numeros so significam algo
-   junto da cobertura: uma origem legada (Stone, status batido a mao)
-   tem quase tudo sem status; a CisPay ja nasce com status. Mostrar o
-   pct_pago sozinho esconderia que o NULL e migracao, nao inadimplencia. */
-function PagamentosPorOrigem({ linhas }) {
+/* Donut SVG + legenda. `segmentos`: [{rotulo, valor, cor}]. As % são
+   calculadas do total real — nada chumbado. */
+function Donut({ segmentos, size = 132, centroValor, centroLabel, centroCor, centroSize = 27 }) {
+  const total = segmentos.reduce((s, x) => s + x.valor, 0);
+  const stroke = 15, r = size / 2 - stroke / 2 - 1, circ = 2 * Math.PI * r;
+  let acc = 0;
   return (
-    <div>
-      {linhas.map((l) => (
-        <div key={l.origem} style={{ padding: "13px 20px", borderBottom: `1px solid ${C.hair}` }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 90px", gap: 14, alignItems: "center", marginBottom: 8 }}>
-            <span style={{ fontSize: 13.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.origem}>
-              {l.origem}
-            </span>
-            <span style={{ fontFamily: GROTESK, fontSize: 15, fontWeight: 700, textAlign: "right", color: l.pct_pago == null ? C.faint : C.text }}>
-              {l.pct_pago == null ? "—" : `${l.pct_pago.toFixed(0)}%`}
-            </span>
-          </div>
-          <div style={{ height: 4, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
-            <div style={{ width: `${l.pct_pago ?? 0}%`, height: "100%", borderRadius: 3, background: `linear-gradient(90deg, ${C.goldBase}, ${C.gold})` }} />
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 7, fontSize: 11.5 }}>
-            <span style={{ color: l.sem_status ? C.warn : C.faint }}>{numero(l.sem_status)} sem status</span>
-            <span style={{ color: C.faint }}>
-              cobertura {l.cobertura == null ? "—" : `${l.cobertura.toFixed(0)}%`} · {numero(l.matriculas)} matrículas
-            </span>
-          </div>
+    <div style={{ display: "flex", alignItems: "center", gap: 20, flex: 1, minWidth: 0 }}>
+      <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ transform: "rotate(-90deg)" }}>
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,.05)" strokeWidth={stroke} />
+          {total > 0 && segmentos.map((s, i) => {
+            const dash = (s.valor / total) * circ;
+            const c = <circle key={i} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={s.cor}
+              strokeWidth={stroke} strokeDasharray={`${dash} ${circ - dash}`} strokeDashoffset={-acc} />;
+            acc += dash;
+            return c;
+          })}
+        </svg>
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 12px" }}>
+          <div style={{ fontFamily: GROTESK, fontSize: centroSize, fontWeight: 700, color: centroCor ?? C.gold, lineHeight: 1, maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textAlign: "center" }}>{centroValor}</div>
+          <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginTop: 3, textAlign: "center", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{centroLabel}</div>
         </div>
-      ))}
+      </div>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 11, minWidth: 0 }}>
+        {segmentos.map((s, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <span style={{ width: 9, height: 9, borderRadius: 3, background: s.cor, flexShrink: 0 }} />
+            <span style={{ fontSize: 12.5, color: "#C9C9CE", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.rotulo}</span>
+            <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: C.text }}>{total > 0 ? Math.round((s.valor / total) * 100) : 0}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* Receita por categoria — barras horizontais do design. Ranqueada pela
+   receita da UNIDADE (o que fica na Febracis), nunca pelo bruto. No
+   Coaching o bruto se divide 50/50: a metade da unidade é sólida, a do
+   coach é hachurada (aparece, mas não conta como receita da casa).
+   "Sem vínculo" fica por último, cinza — é cobertura, não produto. */
+function BarrasCategoria({ reais, orfas, semVinc, cobertura }) {
+  const max = Math.max(...reais.map((r) => r.unidade), 1);
+  const barra = (r, i) => (
+    <div key={r.categoria}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 600, color: r.orfa ? C.faint : C.bright, fontStyle: r.orfa ? "italic" : "normal", display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.categoria}>{r.categoria}</span>
+          {r.repasse > 0 && (
+            <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".4px", color: C.warn, background: `${C.warn}24`, border: `1px solid ${C.warn}4d`, padding: "1px 6px", borderRadius: 5, flexShrink: 0 }}>50/50</span>
+          )}
+        </span>
+        <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, flexShrink: 0, color: r.orfa ? C.faint : (i === 0 ? C.gold : C.text) }}>{moeda(r.unidade)}</span>
+      </div>
+      <div style={{ height: 8, borderRadius: 5, background: "rgba(255,255,255,.05)", overflow: "hidden", display: "flex" }}>
+        <div style={{
+          width: `${(r.unidade / max) * 100}%`, height: "100%", borderRadius: 5,
+          background: r.orfa ? C.faint : (i === 0 ? `linear-gradient(90deg, ${C.goldTop}, ${C.goldBase})` : "linear-gradient(90deg, #d9b866, #7d6634)"),
+        }} />
+        {r.repasse > 0 && (
+          <div style={{ width: `${(r.repasse / max) * 100}%`, height: "100%", background: `repeating-linear-gradient(45deg, ${C.gold}38 0 3px, transparent 3px 6px)` }} />
+        )}
+      </div>
+      {r.repasse > 0 && <div style={{ fontSize: 10, color: C.faint, marginTop: 4 }}>bruto {moeda(r.bruto)} · 50% repassado ao coach ({moeda(r.repasse)})</div>}
+      {r.orfa && <div style={{ fontSize: 10, color: C.faint, marginTop: 4 }}>pagamento sem matrícula casada — não é um produto</div>}
+    </div>
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
+      {reais.map(barra)}
+      {orfas.map((o, i) => barra(o, reais.length + i))}
+      <div style={{ display: "flex", gap: 8, paddingTop: 10, borderTop: `1px solid ${C.hair}` }}>
+        <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+        <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+          Ranqueado pela receita da unidade — o que fica na Febracis, não o bruto.
+          {semVinc > 0 && <> “Sem vínculo” ({moeda(semVinc)}) fora do ranking de produtos.</>}
+          {cobertura != null && <> Cobertura: {cobertura.toFixed(0)}% da receita com categoria identificada.</>}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* Evolução mensal — linha simples do design. Escala uniforme (viewBox em
+   px reais, sem preserveAspectRatio="none", senão os marcadores viram
+   elipses e a linha esmaga). O mês corrente é parcial: sai tracejado e o
+   domínio do eixo Y IGNORA ele — poucos dias de receita não podem
+   comprimir a escala dos meses fechados. */
+function LinhaEvolucao({ serie }) {
+  if (serie.length < 2) return null;
+  const W = 720, H = 228, padL = 54, padR = 14, padT = 44, padB = 26;
+  const plotW = W - padL - padR, plotH = H - padT - padB, plotBottom = padT + plotH;
+
+  // Domínio só com meses FECHADOS.
+  const fechados = serie.filter((s) => !s.parcial).map((s) => s.valor);
+  const base = fechados.length ? fechados : serie.map((s) => s.valor);
+  let vMax = Math.max(...base), vMin = Math.min(...base);
+  if (vMax === vMin) { vMax = vMax || 1; vMin = 0; }
+  const folga = (vMax - vMin) * 0.08;
+  vMax += folga; vMin = Math.max(0, vMin - folga);
+
+  const n = serie.length;
+  const x = (i) => padL + (i / (n - 1)) * plotW;
+  const y = (v) => Math.max(padT, Math.min(plotBottom, plotBottom - ((v - vMin) / (vMax - vMin || 1)) * plotH));
+  const pts = serie.map((s, i) => [x(i), y(s.valor)]);
+
+  const parcialIdx = serie.findIndex((s) => s.parcial);
+  const temParcial = parcialIdx > 0;
+  const ultSolido = temParcial ? parcialIdx - 1 : n - 1;
+  const solidPts = pts.slice(0, ultSolido + 1);
+  const solido = solidPts.map((p) => p.join(",")).join(" ");
+  const tracejado = temParcial ? [pts[parcialIdx - 1], pts[parcialIdx]].map((p) => p.join(",")).join(" ") : null;
+  const area = `M ${solidPts.map((p) => p.join(",")).join(" L ")} L ${solidPts.at(-1)[0]},${plotBottom} L ${solidPts[0][0]},${plotBottom} Z`;
+
+  const yticks = [vMin, (vMin + vMax) / 2, vMax];
+  const alvo = 7, passo = Math.max(1, Math.round((n - 1) / (alvo - 1)));
+  const xticks = [];
+  for (let i = 0; i < n; i += passo) xticks.push(i);
+  if (xticks.at(-1) !== n - 1) xticks.push(n - 1);
+  const mesAno = (iso) => {
+    const d = new Date(String(iso).slice(0, 10) + "T00:00:00");
+    return d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "") + "/" + String(d.getFullYear()).slice(2);
+  };
+
+  return (
+    <>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        <defs>
+          <linearGradient id="fillEvol" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={C.gold} stopOpacity="0.16" />
+            <stop offset="1" stopColor={C.gold} stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        {yticks.map((v, i) => {
+          const yy = y(v);
+          return (
+            <g key={i}>
+              <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
+              <text x={padL - 9} y={yy + 3.5} fontSize="11" textAnchor="end" fill={C.faint} fontFamily={SANS}>{moeda(v)}</text>
+            </g>
+          );
+        })}
+        <path d={area} fill="url(#fillEvol)" />
+        <polyline points={solido} fill="none" stroke={C.gold} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {tracejado && <polyline points={tracejado} fill="none" stroke={C.gold} strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" opacity="0.6" />}
+        {/* pontinho nos meses rotulados + o ponto parcial destacado */}
+        {xticks.map((i) => serie[i].parcial ? null : (
+          <circle key={"d" + i} cx={pts[i][0]} cy={pts[i][1]} r="2.4" fill={C.goldTop} />
+        ))}
+        {temParcial && <circle cx={pts[parcialIdx][0]} cy={pts[parcialIdx][1]} r="3.5" fill={C.void} stroke={C.gold} strokeWidth="1.6" />}
+        {/* rótulos de dados (valor + variação mês a mês) nos meses rotulados */}
+        {xticks.map((i) => {
+          const [lx, ly] = pts[i];
+          const val = serie[i].valor;
+          const prev = serie[i - 1]?.valor;
+          const d = prev ? ((val - prev) / prev) * 100 : null;
+          const parc = serie[i].parcial;
+          const anchor = i === 0 ? "start" : i === n - 1 ? "end" : "middle";
+          const baseY = Math.max(26, ly - 12);
+          return (
+            <g key={"lbl" + i}>
+              {parc
+                ? <text x={lx} y={baseY - 13} fontSize="10" fontWeight="700" textAnchor={anchor} fill={C.faint} fontFamily={SANS}>parcial</text>
+                : d != null && (
+                  <text x={lx} y={baseY - 13} fontSize="10.5" fontWeight="800" textAnchor={anchor} fill={d >= 0 ? C.up : C.down} fontFamily={SANS}>
+                    {d >= 0 ? "▲" : "▼"} {Math.abs(d).toFixed(0)}%
+                  </text>
+                )}
+              <text x={lx} y={baseY} fontSize="11.5" fontWeight="700" textAnchor={anchor} fill={parc ? C.faint : C.bright} fontFamily={GROTESK}>{moeda(val)}</text>
+            </g>
+          );
+        })}
+        {xticks.map((i) => (
+          <text key={i} x={x(i)} y={H - 8} fontSize="11" textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"} fill={C.faint} fontFamily={SANS}>
+            {mesAno(serie[i].mes)}
+          </text>
+        ))}
+      </svg>
+      <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6 }}>
+        Último ponto = mês em curso (parcial), não comparável a mês fechado. Escala do eixo Y calculada só sobre meses fechados.
+      </div>
+    </>
+  );
+}
+
+/* Caixa recebido — card destaque verde. Cobre SÓ a CisPay; a Stone
+   ainda não está integrada. Rotulado "Caixa CisPay (parcial)" — nunca
+   como caixa total, senão vira número que engana. */
+function CaixaCard({ serie, semFonte }) {
+  if (semFonte || !serie.length) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", height: "100%", gap: 8 }}>
+        <div style={{ fontSize: 12.5, color: C.muted, fontWeight: 600 }}>Caixa CisPay</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Database size={14} style={{ color: C.faint, marginTop: 2, flexShrink: 0 }} />
+          <span style={{ fontSize: 11.5, color: C.faint, lineHeight: 1.5 }}>
+            Aguardando a view <b style={{ color: C.muted }}>vw_financeiro_caixa_mensal</b>. Quando existir, mostra o caixa recebido da CisPay (parcial — Stone fora).
+          </span>
+        </div>
+      </div>
+    );
+  }
+  const atual = serie.at(-1).valor;
+  const ant = serie.at(-2)?.valor;
+  const pct = ant ? ((atual - ant) / Math.abs(ant)) * 100 : null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", height: "100%" }}>
+      <div>
+        <div style={{ fontSize: 12.5, color: C.muted, fontWeight: 600 }}>Caixa CisPay <span style={{ color: C.faint }}>· parcial</span></div>
+        <div style={{ fontFamily: GROTESK, fontSize: 32, fontWeight: 700, letterSpacing: "-1px", marginTop: 6, color: C.up }}>{moeda(atual)}</div>
+        {pct != null && (
+          <div style={{ fontSize: 12, fontWeight: 800, color: pct >= 0 ? C.up : C.down, marginTop: 4 }}>
+            {pct >= 0 ? "▲" : "▼"} {Math.abs(pct).toFixed(0)}% vs mês anterior
+          </div>
+        )}
+        <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6, lineHeight: 1.5 }}>Só CisPay — a Stone ainda não está integrada. Não é o caixa total.</div>
+      </div>
+      <div style={{ height: 34, marginTop: 10 }}><Spark serie={serie} cor={C.up} /></div>
     </div>
   );
 }
@@ -444,12 +665,23 @@ function HubComercial() {
   );
 }
 
+// Paleta das fatias de "Formas de pagamento" — dourado desbotando pro cinza.
+const PALETA_FORMAS = [C.gold, C.goldBase, "#8B8B90", "#55555c", C.up, C.warn];
+
+// Miolo do donut de formas: rótulo curto (último token), pra não vazar do
+// centro. O nome completo fica na legenda ao lado. "Cartão/PIX CisPay" → "CisPay".
+const abreviaForma = (s) => {
+  const toks = String(s ?? "").trim().split(/[\s/]+/).filter(Boolean);
+  return toks.length ? toks.at(-1) : "—";
+};
+
 function HubFinanceiro() {
-  const rec = useFinanceiroReceita();
-  const inad = useFinanceiroInadimp();
-  const qual = useFinanceiroQualid();
-  const pag = useFinanceiroPagamentos();
   const recCat = useFinanceiroReceitaCategoria();
+  const pag = useFinanceiroPagamentos();
+  const caixaHor = useFinanceiroCaixaHorizonte();
+  const fpag = useFinanceiroFormasPagamento();
+  const recMensal = useFinanceiroReceitaMensal();
+  const caixaMensal = useFinanceiroCaixaMensal();
 
   // Ranqueio pela receita_unidade (o que fica na Febracis), separo o
   // "Sem vínculo" pra ele nunca aparecer no topo como se fosse produto,
@@ -466,93 +698,140 @@ function HubFinanceiro() {
     const reais = rows.filter((r) => !r.orfa).sort((a, b) => b.unidade - a.unidade);
     const orfas = rows.filter((r) => r.orfa);
     const total = rows.reduce((s, r) => s + r.unidade, 0);
+    const vendasTot = rows.reduce((s, r) => s + r.vendas, 0);
     const semVinc = orfas.reduce((s, r) => s + r.unidade, 0);
-    return { reais, orfas, semVinc, cobertura: total ? ((total - semVinc) / total) * 100 : null };
+    return { reais, orfas, total, vendasTot, semVinc, cobertura: total ? ((total - semVinc) / total) * 100 : null };
   }, [recCat.data]);
 
-  // A view vem por (ano, origem_status). Agrego por origem somando os
-  // anos e recalculo o pct_pago ponderado — pagos sobre os que TEM status,
-  // nunca sobre o total, senao o NULL da migracao viraria "inadimplencia".
-  const porOrigem = useMemo(() => {
-    const m = new Map();
+  // Agrego pagos/pendentes/perdidos/sem_status somando todas as origens.
+  // O donut usa o total INCLUINDO sem_status — assim "Sem status" aparece
+  // como fatia honesta, não sumido do denominador.
+  const pagTot = useMemo(() => {
+    let pagos = 0, pend = 0, perd = 0, sem = 0, matr = 0;
     for (const r of pag.data ?? []) {
-      const k = r.origem_status ?? "sem origem";
-      const a = m.get(k) ?? { origem: k, matriculas: 0, com_status: 0, pagos: 0, sem_status: 0 };
-      a.matriculas += Number(r.matriculas ?? 0);
-      a.com_status += Number(r.com_status ?? 0);
-      a.pagos += Number(r.pagos ?? 0);
-      a.sem_status += Number(r.sem_status ?? 0);
-      m.set(k, a);
+      pagos += Number(r.pagos ?? 0); pend += Number(r.pendentes ?? 0);
+      perd += Number(r.perdidos ?? 0); sem += Number(r.sem_status ?? 0);
+      matr += Number(r.matriculas ?? 0);
     }
-    return [...m.values()]
-      .map((a) => ({
-        ...a,
-        pct_pago: a.com_status ? (a.pagos / a.com_status) * 100 : null,
-        cobertura: a.matriculas ? (a.com_status / a.matriculas) * 100 : null,
-      }))
-      .sort((x, y) => y.matriculas - x.matriculas);
+    const tot = pagos + pend + perd + sem;
+    return {
+      pagos, pend, perd, sem, matr, tot,
+      pctPago: tot ? (pagos / tot) * 100 : null,
+      pctEmAberto: tot ? (pend / tot) * 100 : null,
+      pctSem: matr ? (sem / matr) * 100 : (tot ? (sem / tot) * 100 : null),
+    };
   }, [pag.data]);
 
-  const vendas = useMemo(() => (rec.data ?? []).filter((r) => r.natureza === "venda"), [rec.data]);
-  const serie = useMemo(() => porMes(vendas, "mes", "valor"), [vendas]);
-  const v = variacao(serie);
-  const cursos = useMemo(() => {
-    const g = agrupar(vendas, "curso", "valor").slice(0, 8);
-    return g.map((l) => l.rotulo === "nao_determinado" ? { ...l, rotulo: "Sem curso vinculado", orfa: true } : l);
-  }, [vendas]);
-  const ajustes = useMemo(
-    () => (rec.data ?? []).filter((r) => r.natureza === "ajuste").reduce((s, r) => s + Number(r.valor ?? 0), 0),
-    [rec.data]
+  const aReceber = useMemo(
+    () => (caixaHor.data ?? []).reduce((s, r) => s + Number(r.a_receber ?? 0), 0),
+    [caixaHor.data]
   );
-  const status = useMemo(() => agrupar(inad.data ?? [], "status_pagamento", "valor"), [inad.data]);
-  const q = qual.data?.[0];
+
+  // Formas de pagamento. Contrato confirmado da view: { forma, receita }.
+  const formas = useMemo(() => {
+    return (fpag.data ?? [])
+      .map((r) => ({ rotulo: r.forma ?? "—", valor: Number(r.receita ?? 0) }))
+      .filter((x) => x.valor > 0)
+      .sort((a, b) => b.valor - a.valor)
+      .map((f, i) => ({ ...f, cor: PALETA_FORMAS[i % PALETA_FORMAS.length] }));
+  }, [fpag.data]);
+
+  // Evolução mensal. Contrato: { mes (1º dia do mês), receita }. O mês
+  // corrente é marcado como parcial pra sair tracejado no gráfico.
+  const evolucao = useMemo(() => {
+    const d = new Date();
+    const cm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+    return (recMensal.data ?? [])
+      .map((r) => ({ mes: r.mes, valor: Number(r.receita ?? 0) }))
+      .filter((r) => r.mes)
+      .sort((a, b) => String(a.mes).localeCompare(String(b.mes)))
+      .map((r) => ({ ...r, parcial: String(r.mes).slice(0, 10) === cm }));
+  }, [recMensal.data]);
+
+  // Caixa CisPay. Contrato: { mes, caixa }. View pode não existir ainda.
+  const caixaSerie = useMemo(() => {
+    return (caixaMensal.data ?? [])
+      .map((r) => ({ mes: r.mes, valor: Number(r.caixa ?? 0) }))
+      .filter((r) => r.mes)
+      .sort((a, b) => String(a.mes).localeCompare(String(b.mes)));
+  }, [caixaMensal.data]);
+
+  const statusSeg = [
+    { rotulo: "Pago", valor: pagTot.pagos, cor: C.up },
+    { rotulo: "Em aberto", valor: pagTot.pend, cor: C.warn },
+    { rotulo: "Negado", valor: pagTot.perd, cor: C.down },
+    { rotulo: "Sem status", valor: pagTot.sem, cor: "#55555c" },
+  ];
+  const pctPagoCentro = pagTot.tot ? Math.round((pagTot.pagos / pagTot.tot) * 100) : 0;
+  const ticket = categorias.vendasTot ? categorias.total / categorias.vendasTot : null;
+  const formasTot = formas.reduce((s, f) => s + f.valor, 0);
+  const leaderPct = formasTot ? Math.round((formas[0].valor / formasTot) * 100) : 0;
+  const evolSemFonte = !!recMensal.error || evolucao.length < 2;
+  const caixaSemFonte = !!caixaMensal.error || !caixaSerie.length;
 
   return (
-    <Estado carregando={rec.isLoading} erro={rec.error} vazio={!rec.data?.length}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 26 }}>
-        <Kpi label="Receita · venda" valor={moeda(v.atual)} delta={v.delta} up={v.up} serie={v.serie} parcial={v.parcial != null ? moeda(v.parcial) : null} />
-        <Kpi label="Ajustes e cortesias" valor={moeda(ajustes)} nota="não é venda" />
-        <Kpi label="Sem data" valor={q ? numero(q.sem_data) : "—"} nota={q ? moeda(q.valor_sem_data) : ""} destaque={C.warn} />
-        <Kpi label="Sem status" valor={q ? q.pct_sem_status : "—"} unidade="%" nota="dos pagamentos" destaque={C.warn} />
+    <>
+      {/* Faixa de KPIs compactos — âncora dourada + 4 métricas do mês */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <ChipKpi hero Icone={Wallet} label="Receita reconhecida" valor={moeda(categorias.total)} nota="acumulado" />
+        <ChipKpi Icone={Clock} label="Sem status" valor={pagTot.pctSem != null ? pagTot.pctSem.toFixed(1) : "—"} unidade="%" nota="dos pagamentos" />
+        <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%" nota="a receber" />
+        <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota="receita ÷ vendas" />
+        <ChipKpi Icone={Hourglass} label="A receber" valor={moeda(aReceber)} nota="CisPay · a liquidar" />
       </div>
-      <Bloco titulo="Receita por curso" canto="venda · acumulado" sem>
-        <Lista linhas={cursos} total={cursos.reduce((s, l) => s + l.valor, 0)} />
-      </Bloco>
-      <Bloco titulo="Receita por categoria" canto="por receita da unidade" sem>
-        <Estado carregando={recCat.isLoading} erro={recCat.error} vazio={!categorias.reais.length && !categorias.orfas.length}>
-          <ReceitaPorCategoria reais={categorias.reais} orfas={categorias.orfas} />
-          <div style={{ display: "flex", gap: 9, padding: "14px 20px", background: "rgba(255,255,255,.02)" }}>
-            <AlertTriangle size={13} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
-            <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.55 }}>
-              Ranqueado pela <b style={{ color: C.bright }}>receita da unidade</b> — o que fica na Febracis,
-              não o bruto. No Coaching Individual o bruto se divide 50/50 com o coach, então só a metade
-              da casa entra no ranking. “Sem vínculo” é pagamento sem matrícula casada
-              {categorias.semVinc > 0 && <> ({moeda(categorias.semVinc)})</>}, fora do ranking de produtos.
-              {categorias.cobertura != null && <> Cobertura: <b style={{ color: C.bright }}>{categorias.cobertura.toFixed(0)}%</b> da receita tem categoria identificada.</>}
-            </span>
-          </div>
-        </Estado>
-      </Bloco>
-      <Bloco titulo="Status de pagamento" canto="acumulado" sem>
-        <Estado carregando={inad.isLoading} erro={inad.error} vazio={!status.length}>
-          <Lista linhas={status} />
-        </Estado>
-      </Bloco>
-      <Bloco titulo="Pagamentos por origem do status" canto="% pago sobre quem tem status" sem>
-        <Estado carregando={pag.isLoading} erro={pag.error} vazio={!porOrigem.length}>
-          <PagamentosPorOrigem linhas={porOrigem} />
-          <div style={{ display: "flex", gap: 9, padding: "14px 20px", background: "rgba(255,255,255,.02)" }}>
-            <AlertTriangle size={13} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
-            <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.55 }}>
-              “Stone e outras” carrega status manual/legado — a maioria das matrículas ainda não tem
-              status registrado. Os NULL <b style={{ color: C.bright }}>não são inadimplência</b>: é a
-              migração para a CisPay ainda em andamento. Por isso o % pago sai só sobre quem já tem
-              status, e a cobertura mostra o quanto de cada origem já foi migrado.
-            </span>
-          </div>
-        </Estado>
-      </Bloco>
-    </Estado>
+
+      {/* Linha 1: categoria (larga) · status donut · caixa destaque */}
+      <div className="finRow1" style={{ marginBottom: 16 }}>
+        <Bloco titulo="Receita por categoria" canto="por receita da unidade" altura={ALTURA_PAINEL}>
+          <Estado carregando={recCat.isLoading} erro={recCat.error} vazio={!categorias.reais.length && !categorias.orfas.length}>
+            <BarrasCategoria reais={categorias.reais} orfas={categorias.orfas} semVinc={categorias.semVinc} cobertura={categorias.cobertura} />
+          </Estado>
+        </Bloco>
+
+        <Bloco titulo="Status de pagamento" canto={pagTot.tot ? `${pctPagoCentro}% pago` : null} altura={ALTURA_PAINEL}>
+          <Estado carregando={pag.isLoading} erro={pag.error} vazio={!pagTot.tot}>
+            <Donut segmentos={statusSeg} centroValor={`${pctPagoCentro}%`} centroLabel="pago" centroCor={C.up} />
+            <div style={{ display: "flex", gap: 8, marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.hair}` }}>
+              <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+              <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+                {pagTot.pctSem != null ? `${pagTot.pctSem.toFixed(1)}% sem status` : "Parte sem status"} — migração CisPay em andamento (Stone/legado batido a mão). <b style={{ color: C.muted }}>Não é inadimplência.</b>
+              </span>
+            </div>
+          </Estado>
+        </Bloco>
+
+        <Bloco titulo="Caixa recebido" canto="mês · CisPay" altura={ALTURA_PAINEL}>
+          <CaixaCard serie={caixaSerie} semFonte={caixaSemFonte} />
+        </Bloco>
+      </div>
+
+      {/* Linha 2: evolução mensal (larga) · formas de pagamento donut */}
+      <div className="finRow2">
+        <Bloco titulo="Evolução mensal da receita" canto="R$ · Receita" altura={ALTURA_PAINEL}>
+          {recMensal.isLoading ? (
+            <Estado carregando />
+          ) : evolSemFonte ? (
+            <div style={{ display: "flex", gap: 9, padding: "8px 0" }}>
+              <Database size={15} style={{ color: C.faint, marginTop: 2, flexShrink: 0 }} />
+              <div>
+                <div style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>Aguardando a view mensal</div>
+                <div style={{ fontSize: 11.5, color: C.faint, marginTop: 4, lineHeight: 1.5 }}>
+                  Quando <b style={{ color: C.muted }}>vw_financeiro_receita_mensal</b> existir, a linha aparece aqui — com o mês em curso tracejado (parcial).
+                </div>
+              </div>
+            </div>
+          ) : (
+            <LinhaEvolucao serie={evolucao} />
+          )}
+        </Bloco>
+
+        <Bloco titulo="Formas de pagamento" canto="acumulado" altura={ALTURA_PAINEL}>
+          <Estado carregando={fpag.isLoading} erro={fpag.error} vazio={!formas.length}>
+            <Donut segmentos={formas} size={118} centroSize={17} centroValor={formas[0] ? abreviaForma(formas[0].rotulo) : "—"} centroLabel={`${leaderPct}% líder`} centroCor={C.gold} />
+          </Estado>
+        </Bloco>
+      </div>
+    </>
   );
 }
 
@@ -818,6 +1097,19 @@ function Shell({ perfil }) {
         @keyframes subir { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
         .girar { animation: girar 1s linear infinite; }
         .subir { animation: subir .4s ease; }
+        /* Cards do Hub: 1 coluna no mobile, 2 em telas médias/grandes.
+           O marginBottom do Bloco faz o ritmo vertical; a grade só cuida
+           das colunas (row-gap 0 pra não somar espaço). */
+        .gridFin { display: grid; grid-template-columns: 1fr; column-gap: 20px; align-items: start; }
+        @media (min-width: 1000px) { .gridFin { grid-template-columns: 1fr 1fr; } }
+        /* Painéis do Hub Financeiro (design portado): 1 coluna no mobile,
+           proporções do design (5:4:3 e 7:5) em telas largas. */
+        .finRow1 { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+        .finRow2 { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
+        @media (min-width: 1000px) {
+          .finRow1 { grid-template-columns: 5fr 4fr 3fr; }
+          .finRow2 { grid-template-columns: 7fr 5fr; }
+        }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
       `}</style>
 
