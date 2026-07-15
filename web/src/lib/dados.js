@@ -78,6 +78,7 @@ export const useComercialRanking  = () => useView("vw_comercial_ranking");
 export const useFinanceiroReceita = () => useView("vw_financeiro_receita");
 export const useFinanceiroInadimp = () => useView("vw_financeiro_inadimplencia");
 export const useFinanceiroQualid  = () => useView("vw_financeiro_qualidade");
+export const useFinanceiroPagamentos = () => useView("vw_financeiro_pagamentos");
 export const useMarketingOrigem   = () => useView("vw_marketing_origem");
 export const usePedagogicoTurmas  = () => useView("vw_pedagogico_turmas");
 export const useEventosDesempenho = () => useView("vw_eventos_desempenho");

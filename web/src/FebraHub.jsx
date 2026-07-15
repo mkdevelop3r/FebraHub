@@ -9,6 +9,7 @@ import {
   useSessao, usePerfil, entrar, sair,
   useComercialFunil, useComercialRanking,
   useFinanceiroReceita, useFinanceiroInadimp, useFinanceiroQualid,
+  useFinanceiroPagamentos,
   useMarketingOrigem, usePedagogicoTurmas, useEventosDesempenho,
   useDiretoriaConsol,
   porMes, variacao, moeda, numero,
@@ -165,6 +166,39 @@ function Lista({ linhas, formatar = moeda, total }) {
           </span>
         </div>
       )}
+    </div>
+  );
+}
+
+/* Pagamentos por origem do status. pct_pago e sem_status vem da
+   vw_financeiro_pagamentos, mas os dois numeros so significam algo
+   junto da cobertura: uma origem legada (Stone, status batido a mao)
+   tem quase tudo sem status; a CisPay ja nasce com status. Mostrar o
+   pct_pago sozinho esconderia que o NULL e migracao, nao inadimplencia. */
+function PagamentosPorOrigem({ linhas }) {
+  return (
+    <div>
+      {linhas.map((l) => (
+        <div key={l.origem} style={{ padding: "13px 20px", borderBottom: `1px solid ${C.hair}` }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 90px", gap: 14, alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 13.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.origem}>
+              {l.origem}
+            </span>
+            <span style={{ fontFamily: GROTESK, fontSize: 15, fontWeight: 700, textAlign: "right", color: l.pct_pago == null ? C.faint : C.text }}>
+              {l.pct_pago == null ? "—" : `${l.pct_pago.toFixed(0)}%`}
+            </span>
+          </div>
+          <div style={{ height: 4, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+            <div style={{ width: `${l.pct_pago ?? 0}%`, height: "100%", borderRadius: 3, background: `linear-gradient(90deg, ${C.goldBase}, ${C.gold})` }} />
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 7, fontSize: 11.5 }}>
+            <span style={{ color: l.sem_status ? C.warn : C.faint }}>{numero(l.sem_status)} sem status</span>
+            <span style={{ color: C.faint }}>
+              cobertura {l.cobertura == null ? "—" : `${l.cobertura.toFixed(0)}%`} · {numero(l.matriculas)} matrículas
+            </span>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -362,6 +396,30 @@ function HubFinanceiro() {
   const rec = useFinanceiroReceita();
   const inad = useFinanceiroInadimp();
   const qual = useFinanceiroQualid();
+  const pag = useFinanceiroPagamentos();
+
+  // A view vem por (ano, origem_status). Agrego por origem somando os
+  // anos e recalculo o pct_pago ponderado — pagos sobre os que TEM status,
+  // nunca sobre o total, senao o NULL da migracao viraria "inadimplencia".
+  const porOrigem = useMemo(() => {
+    const m = new Map();
+    for (const r of pag.data ?? []) {
+      const k = r.origem_status ?? "sem origem";
+      const a = m.get(k) ?? { origem: k, matriculas: 0, com_status: 0, pagos: 0, sem_status: 0 };
+      a.matriculas += Number(r.matriculas ?? 0);
+      a.com_status += Number(r.com_status ?? 0);
+      a.pagos += Number(r.pagos ?? 0);
+      a.sem_status += Number(r.sem_status ?? 0);
+      m.set(k, a);
+    }
+    return [...m.values()]
+      .map((a) => ({
+        ...a,
+        pct_pago: a.com_status ? (a.pagos / a.com_status) * 100 : null,
+        cobertura: a.matriculas ? (a.com_status / a.matriculas) * 100 : null,
+      }))
+      .sort((x, y) => y.matriculas - x.matriculas);
+  }, [pag.data]);
 
   const vendas = useMemo(() => (rec.data ?? []).filter((r) => r.natureza === "venda"), [rec.data]);
   const serie = useMemo(() => porMes(vendas, "mes", "valor"), [vendas]);
@@ -391,6 +449,20 @@ function HubFinanceiro() {
       <Bloco titulo="Status de pagamento" canto="acumulado" sem>
         <Estado carregando={inad.isLoading} erro={inad.error} vazio={!status.length}>
           <Lista linhas={status} />
+        </Estado>
+      </Bloco>
+      <Bloco titulo="Pagamentos por origem do status" canto="% pago sobre quem tem status" sem>
+        <Estado carregando={pag.isLoading} erro={pag.error} vazio={!porOrigem.length}>
+          <PagamentosPorOrigem linhas={porOrigem} />
+          <div style={{ display: "flex", gap: 9, padding: "14px 20px", background: "rgba(255,255,255,.02)" }}>
+            <AlertTriangle size={13} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+            <span style={{ fontSize: 12, color: C.muted, lineHeight: 1.55 }}>
+              “Stone e outras” carrega status manual/legado — a maioria das matrículas ainda não tem
+              status registrado. Os NULL <b style={{ color: C.bright }}>não são inadimplência</b>: é a
+              migração para a CisPay ainda em andamento. Por isso o % pago sai só sobre quem já tem
+              status, e a cobertura mostra o quanto de cada origem já foi migrado.
+            </span>
+          </div>
         </Estado>
       </Bloco>
     </Estado>
