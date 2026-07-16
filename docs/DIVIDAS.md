@@ -137,6 +137,14 @@ gerada por LLM.
 
 Quando a IA existir, ela **não deve** ser um prompt. Deve ser um motor de atribuição:
 
+----
+## Conta Azul integrada (12.817 parcelas, R$ 12,5M). É livro-caixa operacional.
+ NÃO somar com receita Salesforce (há sobreposição: Maestria, IF, Coaching aparecem nos dois). Usar só para inadimplência, fluxo a receber e caixa recebido. PENDENTE: confirmar com financeiro o que é "Centro Conceito - conta bancária" (R$ 2,6M, provável transferência interna) — pode precisar sair dos cards de caixa.
+
+----
+ ### Inadimplência por origem: R$ 821k vencido = 
+ Cursos R$ 613k (75%) + Comissão R$ 187k (23%) + Loja R$ 22k (3%). Investigar os R$ 187k de comissão vencida — receita a receber presa? Perguntar ao financeiro.
+
 1. calcula o indicador e sua variação;
 2. decompõe em drivers (leads × conversão × ticket);
 3. rankeia drivers por contribuição para a variação;

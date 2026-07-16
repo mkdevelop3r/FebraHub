@@ -86,6 +86,20 @@ export const useFinanceiroFormasPagamento = () => useView("vw_financeiro_formas_
 // não existirem, o useView devolve [] e o card mostra estado vazio honesto.
 export const useFinanceiroReceitaMensal = () => useView("vw_financeiro_receita_mensal");
 export const useFinanceiroCaixaMensal = () => useView("vw_financeiro_caixa_mensal");
+
+/* Conta Azul: inadimplência, a receber e despesa. NUNCA somar com a
+   receita (Salesforce) — são fontes e unidades diferentes. */
+export const useFinanceiroInadimpOrigem = () => useView("vw_financeiro_inadimplencia_origem");
+export const useFinanceiroAReceberHorizonte = () => useView("vw_financeiro_a_receber_horizonte");
+export const useFinanceiroDespesaCategoria = () => useView("vw_financeiro_despesa_categoria");
+export const useFinanceiroAPagarHorizonte = () => useView("vw_financeiro_a_pagar_horizonte");
+export const useFinanceiroPagoMensal = () => useView("vw_financeiro_pago_mensal");
+
+/* Loja — receita própria. Curso ≠ loja: nunca entra num total conjunto. */
+export const useLojaKpis = () => useView("vw_loja_kpis");
+export const useLojaReceita = () => useView("vw_loja_receita");
+export const useLojaReceitaMensal = () => useView("vw_loja_receita_mensal");
+
 export const useMarketingOrigem   = () => useView("vw_marketing_origem");
 export const usePedagogicoTurmas  = () => useView("vw_pedagogico_turmas");
 export const useEventosDesempenho = () => useView("vw_eventos_desempenho");

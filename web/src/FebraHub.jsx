@@ -13,6 +13,10 @@ import {
   useFinanceiroPagamentos, useFinanceiroReceitaCategoria,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
   useFinanceiroReceitaMensal, useFinanceiroCaixaMensal,
+  useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
+  useFinanceiroDespesaCategoria, useFinanceiroAPagarHorizonte,
+  useFinanceiroPagoMensal,
+  useLojaKpis, useLojaReceita, useLojaReceitaMensal,
   useMarketingOrigem, usePedagogicoTurmas, useEventosDesempenho,
   useDiretoriaConsol,
   porMes, variacao, moeda, numero,
@@ -56,7 +60,7 @@ const HUBS = [
   { key: "marketing",  nome: "Marketing",  Icone: Megaphone,     desc: "Origem de leads e campanhas" },
   { key: "pedagogico", nome: "Pedagógico", Icone: GraduationCap, desc: "Turmas, matrículas e conclusão" },
   { key: "eventos",    nome: "Eventos",    Icone: CalendarDays,  desc: "Ingressos e receita líquida" },
-  { key: "loja",       nome: "Loja",       Icone: ShoppingBag,   desc: "Sem fonte conectada" },
+  { key: "loja",       nome: "Loja",       Icone: ShoppingBag,   desc: "Vendas, formas de pagamento e recebimento" },
   { key: "estoque",    nome: "Estoque",    Icone: Package,       desc: "Sem fonte conectada" },
 ];
 
@@ -69,6 +73,30 @@ const agrupar = (linhas, chave, valor) => {
 // "Sem vínculo" não é categoria de produto: é pagamento que entrou sem
 // matrícula casada. Nunca disputa o topo do ranking como se fosse curso.
 const ehSemVinculo = (cat) => /sem[\s_]?v[ií]nculo|n[aã]o[_\s]?determinad|indefinid/i.test(cat ?? "");
+
+// Série mensal padrão: {mes, valor, parcial}. O mês corrente tem só alguns
+// dias — fica marcado como parcial pra sair tracejado e fora do domínio Y.
+const serieMensal = (linhas, campo) => {
+  const d = new Date();
+  const cm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+  return (linhas ?? [])
+    .map((r) => ({ mes: r.mes, valor: Number(r[campo] ?? 0) }))
+    .filter((r) => r.mes)
+    .sort((a, b) => String(a.mes).localeCompare(String(b.mes)))
+    .map((r) => ({ ...r, parcial: String(r.mes).slice(0, 10) === cm }));
+};
+
+// Horizonte vem rotulado "1 · até 30 dias": ordeno pelo prefixo numérico e
+// só mostro o texto. É linha do tempo (30/60/90), não ranking por valor.
+const porHorizonte = (linhas, campo) =>
+  (linhas ?? [])
+    .map((r) => ({
+      ord: String(r.horizonte ?? ""),
+      rotulo: String(r.horizonte ?? "—").replace(/^\s*\d+\s*·\s*/, ""),
+      valor: Number(r[campo] ?? 0),
+      parcelas: Number(r.parcelas ?? 0),
+    }))
+    .sort((a, b) => a.ord.localeCompare(b.ord));
 
 /* ============ PRIMITIVOS ============ */
 
@@ -143,6 +171,16 @@ function Bloco({ titulo, canto, children, sem, altura }) {
       >
         {children}
       </div>
+    </div>
+  );
+}
+
+/* Título de seção — separa blocos temáticos dentro de um hub. */
+function SecaoTitulo({ titulo, canto }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, margin: "26px 0 14px" }}>
+      <h2 style={{ fontSize: 15, fontWeight: 800, color: C.bright }}>{titulo}</h2>
+      {canto && <span style={{ fontSize: 11.5, color: C.faint, textAlign: "right" }}>{canto}</span>}
     </div>
   );
 }
@@ -342,7 +380,7 @@ function BarrasCategoria({ reais, orfas, semVinc, cobertura }) {
    elipses e a linha esmaga). O mês corrente é parcial: sai tracejado e o
    domínio do eixo Y IGNORA ele — poucos dias de receita não podem
    comprimir a escala dos meses fechados. */
-function LinhaEvolucao({ serie }) {
+function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false }) {
   if (serie.length < 2) return null;
   const W = 720, H = 228, padL = 54, padR = 14, padT = 44, padB = 26;
   const plotW = W - padL - padR, plotH = H - padT - padB, plotBottom = padT + plotH;
@@ -382,9 +420,9 @@ function LinhaEvolucao({ serie }) {
     <>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
         <defs>
-          <linearGradient id="fillEvol" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor={C.gold} stopOpacity="0.16" />
-            <stop offset="1" stopColor={C.gold} stopOpacity="0" />
+          <linearGradient id={idGrad} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={cor} stopOpacity="0.16" />
+            <stop offset="1" stopColor={cor} stopOpacity="0" />
           </linearGradient>
         </defs>
         {yticks.map((v, i) => {
@@ -396,14 +434,14 @@ function LinhaEvolucao({ serie }) {
             </g>
           );
         })}
-        <path d={area} fill="url(#fillEvol)" />
-        <polyline points={solido} fill="none" stroke={C.gold} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-        {tracejado && <polyline points={tracejado} fill="none" stroke={C.gold} strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" opacity="0.6" />}
+        <path d={area} fill={`url(#${idGrad})`} />
+        <polyline points={solido} fill="none" stroke={cor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+        {tracejado && <polyline points={tracejado} fill="none" stroke={cor} strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" opacity="0.6" />}
         {/* pontinho nos meses rotulados + o ponto parcial destacado */}
         {xticks.map((i) => serie[i].parcial ? null : (
-          <circle key={"d" + i} cx={pts[i][0]} cy={pts[i][1]} r="2.4" fill={C.goldTop} />
+          <circle key={"d" + i} cx={pts[i][0]} cy={pts[i][1]} r="2.4" fill={cor} />
         ))}
-        {temParcial && <circle cx={pts[parcialIdx][0]} cy={pts[parcialIdx][1]} r="3.5" fill={C.void} stroke={C.gold} strokeWidth="1.6" />}
+        {temParcial && <circle cx={pts[parcialIdx][0]} cy={pts[parcialIdx][1]} r="3.5" fill={C.void} stroke={cor} strokeWidth="1.6" />}
         {/* rótulos de dados (valor + variação mês a mês) nos meses rotulados */}
         {xticks.map((i) => {
           const [lx, ly] = pts[i];
@@ -418,7 +456,7 @@ function LinhaEvolucao({ serie }) {
               {parc
                 ? <text x={lx} y={baseY - 13} fontSize="10" fontWeight="700" textAnchor={anchor} fill={C.faint} fontFamily={SANS}>parcial</text>
                 : d != null && (
-                  <text x={lx} y={baseY - 13} fontSize="10.5" fontWeight="800" textAnchor={anchor} fill={d >= 0 ? C.up : C.down} fontFamily={SANS}>
+                  <text x={lx} y={baseY - 13} fontSize="10.5" fontWeight="800" textAnchor={anchor} fill={(inverso ? d <= 0 : d >= 0) ? C.up : C.down} fontFamily={SANS}>
                     {d >= 0 ? "▲" : "▼"} {Math.abs(d).toFixed(0)}%
                   </text>
                 )}
@@ -682,6 +720,11 @@ function HubFinanceiro() {
   const fpag = useFinanceiroFormasPagamento();
   const recMensal = useFinanceiroReceitaMensal();
   const caixaMensal = useFinanceiroCaixaMensal();
+  const inadOrig = useFinanceiroInadimpOrigem();
+  const aReceberHor = useFinanceiroAReceberHorizonte();
+  const despCat = useFinanceiroDespesaCategoria();
+  const aPagarHor = useFinanceiroAPagarHorizonte();
+  const pagoMensal = useFinanceiroPagoMensal();
 
   // Ranqueio pela receita_unidade (o que fica na Febracis), separo o
   // "Sem vínculo" pra ele nunca aparecer no topo como se fosse produto,
@@ -736,25 +779,38 @@ function HubFinanceiro() {
       .map((f, i) => ({ ...f, cor: PALETA_FORMAS[i % PALETA_FORMAS.length] }));
   }, [fpag.data]);
 
-  // Evolução mensal. Contrato: { mes (1º dia do mês), receita }. O mês
-  // corrente é marcado como parcial pra sair tracejado no gráfico.
-  const evolucao = useMemo(() => {
-    const d = new Date();
-    const cm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
-    return (recMensal.data ?? [])
-      .map((r) => ({ mes: r.mes, valor: Number(r.receita ?? 0) }))
-      .filter((r) => r.mes)
-      .sort((a, b) => String(a.mes).localeCompare(String(b.mes)))
-      .map((r) => ({ ...r, parcial: String(r.mes).slice(0, 10) === cm }));
-  }, [recMensal.data]);
+  // Evolução mensal da receita (Salesforce). Mês corrente sai parcial.
+  const evolucao = useMemo(() => serieMensal(recMensal.data, "receita"), [recMensal.data]);
 
   // Caixa CisPay. Contrato: { mes, caixa }. View pode não existir ainda.
-  const caixaSerie = useMemo(() => {
-    return (caixaMensal.data ?? [])
-      .map((r) => ({ mes: r.mes, valor: Number(r.caixa ?? 0) }))
-      .filter((r) => r.mes)
-      .sort((a, b) => String(a.mes).localeCompare(String(b.mes)));
-  }, [caixaMensal.data]);
+  const caixaSerie = useMemo(() => serieMensal(caixaMensal.data, "caixa"), [caixaMensal.data]);
+
+  /* ---- Inadimplência (Conta Azul) ---- */
+  const vencidos = useMemo(
+    () => (inadOrig.data ?? [])
+      .map((r) => ({ rotulo: String(r.origem ?? "—"), valor: Number(r.valor_vencido ?? 0) }))
+      .filter((r) => r.valor > 0)
+      .sort((a, b) => b.valor - a.valor),
+    [inadOrig.data]
+  );
+  const vencidoTot = vencidos.reduce((s, r) => s + r.valor, 0);
+  const aReceber30_90 = useMemo(() => porHorizonte(aReceberHor.data, "a_receber"), [aReceberHor.data]);
+  const aReceberTot = aReceber30_90.reduce((s, r) => s + r.valor, 0);
+
+  /* ---- Despesa (Conta Azul) — "pra onde vai o dinheiro" ---- */
+  // O prefixo "(-)" já vem do dado; ranqueio pelo total lançado.
+  const despesas = useMemo(
+    () => (despCat.data ?? [])
+      .map((r) => ({ rotulo: String(r.categoria ?? "—"), valor: Number(r.total ?? 0), pago: Number(r.pago ?? 0) }))
+      .filter((r) => r.valor > 0)
+      .sort((a, b) => b.valor - a.valor),
+    [despCat.data]
+  );
+  const despesaTot = despesas.reduce((s, r) => s + r.valor, 0);
+  const despesaPaga = despesas.reduce((s, r) => s + r.pago, 0);
+  const aPagar = useMemo(() => porHorizonte(aPagarHor.data, "a_pagar"), [aPagarHor.data]);
+  const aPagarTot = aPagar.reduce((s, r) => s + r.valor, 0);
+  const evolDespesa = useMemo(() => serieMensal(pagoMensal.data, "pago"), [pagoMensal.data]);
 
   const statusSeg = [
     { rotulo: "Pago", valor: pagTot.pagos, cor: C.up },
@@ -831,6 +887,53 @@ function HubFinanceiro() {
           </Estado>
         </Bloco>
       </div>
+
+      {/* ============ INADIMPLÊNCIA ============ */}
+      <SecaoTitulo titulo="Inadimplência" canto="vencidos e a receber · nunca somado à receita" />
+      <div className="finRow2">
+        <Bloco titulo="Vencidos por origem" canto={vencidoTot ? moeda(vencidoTot) + " vencido" : null} sem altura={ALTURA_PAINEL}>
+          <Estado carregando={inadOrig.isLoading} erro={inadOrig.error} vazio={!vencidos.length}>
+            <Lista linhas={vencidos} total={vencidoTot} />
+          </Estado>
+        </Bloco>
+        <Bloco titulo="A receber por horizonte" canto="30 / 60 / 90 dias" sem altura={ALTURA_PAINEL}>
+          <Estado carregando={aReceberHor.isLoading} erro={aReceberHor.error} vazio={!aReceber30_90.length}>
+            <Lista linhas={aReceber30_90} total={aReceberTot} />
+          </Estado>
+        </Bloco>
+      </div>
+
+      {/* ============ DESPESAS ============ */}
+      <SecaoTitulo titulo="Despesas — para onde vai o dinheiro" canto="Conta Azul · despesa e caixa, não receita" />
+      <div className="finRow2" style={{ marginBottom: 16 }}>
+        <Bloco titulo="Despesa por categoria" canto="maiores primeiro" sem altura={ALTURA_PAINEL}>
+          <Estado carregando={despCat.isLoading} erro={despCat.error} vazio={!despesas.length}>
+            <Lista linhas={despesas} total={despesaTot} top={6} />
+            <div style={{ display: "flex", gap: 8, padding: "10px 20px", background: "rgba(255,255,255,.02)" }}>
+              <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+              <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+                Total = despesa lançada. Já pago: <b style={{ color: C.muted }}>{moeda(despesaPaga)}</b>
+                {despesaTot > 0 && <> ({((despesaPaga / despesaTot) * 100).toFixed(0)}%)</>} — o resto ainda vence.
+              </span>
+            </div>
+          </Estado>
+        </Bloco>
+        <Bloco titulo="A pagar por vencimento" canto={aPagarTot ? moeda(aPagarTot) + " a pagar" : null} sem altura={ALTURA_PAINEL}>
+          <Estado carregando={aPagarHor.isLoading} erro={aPagarHor.error} vazio={!aPagar.length}>
+            <Lista linhas={aPagar} total={aPagarTot} />
+          </Estado>
+        </Bloco>
+      </div>
+
+      <Bloco titulo="Evolução da despesa" canto="R$ pago · mês" altura={ALTURA_PAINEL}>
+        {pagoMensal.isLoading ? (
+          <Estado carregando />
+        ) : pagoMensal.error || evolDespesa.length < 2 ? (
+          <Estado vazio />
+        ) : (
+          <LinhaEvolucao serie={evolDespesa} cor={C.down} idGrad="fillDesp" inverso />
+        )}
+      </Bloco>
     </>
   );
 }
@@ -913,6 +1016,72 @@ function HubEventos() {
         <Lista linhas={top} total={t.liquida} />
       </Bloco>
     </Estado>
+  );
+}
+
+/* Hub Loja. Receita da loja é da LOJA — nunca entra num total junto com
+   curso (unidades diferentes). Produto e estoque só existem no Omie, que
+   ainda não está integrado: vazio honesto em vez de número inventado. */
+function HubLoja() {
+  const kpis = useLojaKpis();
+  const rec = useLojaReceita();
+  const recMensal = useLojaReceitaMensal();
+
+  const k = kpis.data?.[0];
+  const mv = (x) => (x == null ? "—" : moeda(Number(x)));
+  const nv = (x) => (x == null ? "—" : numero(Number(x)));
+
+  const formas = useMemo(
+    () => (rec.data ?? [])
+      .map((r) => ({ rotulo: String(r.forma ?? "—"), valor: Number(r.receita ?? 0) }))
+      .filter((f) => f.valor > 0)
+      .sort((a, b) => b.valor - a.valor)
+      .map((f, i) => ({ ...f, cor: PALETA_FORMAS[i % PALETA_FORMAS.length] })),
+    [rec.data]
+  );
+  const formasTot = formas.reduce((s, f) => s + f.valor, 0);
+  const leaderPct = formasTot ? Math.round((formas[0].valor / formasTot) * 100) : 0;
+
+  const evol = useMemo(() => serieMensal(recMensal.data, "receita"), [recMensal.data]);
+  const evolSemFonte = !!recMensal.error || evol.length < 2;
+
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <ChipKpi hero Icone={Wallet} label="Receita da loja" valor={mv(k?.receita_total)} nota="acumulado" />
+        <ChipKpi Icone={ShoppingBag} label="Vendas" valor={nv(k?.vendas)} nota="no recorte" />
+        <ChipKpi Icone={Receipt} label="Ticket médio" valor={mv(k?.ticket_medio)} nota="receita ÷ vendas" />
+        <ChipKpi Icone={TrendingUp} label="Recebido" valor={mv(k?.recebido)} nota="já em caixa" />
+        <ChipKpi Icone={AlertTriangle} label="A receber vencido" valor={mv(k?.a_receber_vencido)} nota="em atraso" />
+      </div>
+
+      <div className="finRow2" style={{ marginBottom: 16 }}>
+        <Bloco titulo="Receita mensal da loja" canto="R$ · mês" altura={ALTURA_PAINEL}>
+          {recMensal.isLoading
+            ? <Estado carregando />
+            : evolSemFonte
+              ? <Estado vazio />
+              : <LinhaEvolucao serie={evol} idGrad="fillLoja" />}
+        </Bloco>
+        <Bloco titulo="Formas de pagamento" canto="acumulado" altura={ALTURA_PAINEL}>
+          <Estado carregando={rec.isLoading} erro={rec.error} vazio={!formas.length}>
+            <Donut segmentos={formas} size={118} centroSize={17} centroValor={formas[0] ? abreviaForma(formas[0].rotulo) : "—"} centroLabel={`${leaderPct}% líder`} centroCor={C.gold} />
+          </Estado>
+        </Bloco>
+      </div>
+
+      <Bloco titulo="Produtos e estoque" canto="aguardando integração">
+        <div style={{ display: "flex", gap: 10, padding: "6px 0" }}>
+          <Package size={16} style={{ color: C.faint, marginTop: 2, flexShrink: 0 }} />
+          <div>
+            <div style={{ fontSize: 13, color: C.muted, fontWeight: 700 }}>Aguardando integração Omie</div>
+            <div style={{ fontSize: 11.5, color: C.faint, marginTop: 4, lineHeight: 1.55, maxWidth: 620 }}>
+              A loja já entrega venda, receita e recebimento. <b style={{ color: C.muted }}>Produto vendido e saldo de estoque só existem no Omie</b> — enquanto a integração não vier, esses números não aparecem aqui em vez de serem estimados.
+            </div>
+          </div>
+        </div>
+      </Bloco>
+    </>
   );
 }
 
@@ -1047,7 +1216,7 @@ function Shell({ perfil }) {
       case "marketing":  return <HubMarketing />;
       case "pedagogico": return <HubPedagogico />;
       case "eventos":    return <HubEventos />;
-      case "loja":
+      case "loja":       return <HubLoja />;
       case "estoque":    return <SemFonte hub={hub} />;
       default:           return null;
     }
