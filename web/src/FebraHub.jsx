@@ -1,22 +1,22 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, createContext, useContext } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   TrendingUp, Wallet, Megaphone, GraduationCap, ShoppingBag, CalendarDays,
   LayoutDashboard, Lock, Mail, AlertTriangle, Package, LogOut, Power,
   Database, ShieldAlert, Loader2, ArrowRight, Sparkles, Bell,
-  Clock, Receipt, Hourglass,
+  Clock, Receipt, Hourglass, ChevronLeft, ChevronRight, ChevronDown,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
   useComercialFunil, useComercialRanking,
   useFinanceiroReceita, useFinanceiroQualid,
-  useFinanceiroPagamentos, useFinanceiroReceitaCategoria,
+  useFinanceiroPagamentos,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
   useFinanceiroReceitaMensal, useFinanceiroCaixaMensal,
   useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
-  useFinanceiroDespesaCategoria, useFinanceiroAPagarHorizonte,
-  useFinanceiroPagoMensal,
-  useLojaKpis, useLojaReceita, useLojaReceitaMensal,
+  useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
+  useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
+  useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
   useMarketingOrigem, usePedagogicoTurmas, useEventosDesempenho,
   useDiretoriaConsol,
   porMes, variacao, moeda, numero,
@@ -73,6 +73,95 @@ const agrupar = (linhas, chave, valor) => {
 // "Sem vínculo" não é categoria de produto: é pagamento que entrou sem
 // matrícula casada. Nunca disputa o topo do ranking como se fosse curso.
 const ehSemVinculo = (cat) => /sem[\s_]?v[ií]nculo|n[aã]o[_\s]?determinad|indefinid/i.test(cat ?? "");
+
+/* ============ PERÍODO GLOBAL ============
+   Recorta só métricas de FLUXO (receita/despesa por categoria, receita da
+   loja) pela coluna `data`. Métricas de ESTADO — inadimplência, a receber
+   e a pagar por horizonte, status de pagamento — são snapshot do agora e
+   ignoram o filtro. As linhas de evolução mostram a série inteira sempre. */
+const PERIODOS = [
+  { key: "ano", label: "Ano" },
+  { key: "mes", label: "Mês" },
+  { key: "7d", label: "7 dias" },
+];
+
+const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const chaveMes = (a, m) => `${a}-${String(m + 1).padStart(2, "0")}`;
+
+/* O recorte é ancorado em (ano, mês) escolhidos, não no "hoje" fixo.
+   `fim` nunca passa de hoje — mês/ano futuro não inventa dia que não veio. */
+function intervaloDe({ modo, ano, mesIdx }) {
+  const h = new Date();
+  const hoje = iso(new Date(h.getFullYear(), h.getMonth(), h.getDate()));
+  const menor = (a, b) => (a < b ? a : b);
+  if (modo === "mes") {
+    return {
+      inicio: iso(new Date(ano, mesIdx, 1)),
+      fim: menor(iso(new Date(ano, mesIdx + 1, 0)), hoje), // dia 0 = último do mês
+      rotulo: `${MESES[mesIdx]} ${ano}`,
+    };
+  }
+  if (modo === "7d") {
+    const f = new Date(h.getFullYear(), h.getMonth(), h.getDate());
+    return {
+      inicio: iso(new Date(f.getFullYear(), f.getMonth(), f.getDate() - 6)),
+      fim: hoje,
+      rotulo: "Últimos 7 dias",
+    };
+  }
+  return { inicio: iso(new Date(ano, 0, 1)), fim: menor(iso(new Date(ano, 11, 31)), hoje), rotulo: String(ano) };
+}
+
+/* Limites de navegação saem do DADO, não do calendário: o primeiro mês com
+   movimento (união das views _periodo) até o mês atual. Nada de 2024/2026
+   chumbado — se a base crescer pra trás, a navegação cresce junto. */
+function useRangeDatas() {
+  const a = useFinanceiroReceitaCategoriaPeriodo();
+  const b = useFinanceiroDespesaCategoriaPeriodo();
+  const c = useLojaReceitaPeriodo();
+  return useMemo(() => {
+    const h = new Date();
+    const maxMes = chaveMes(h.getFullYear(), h.getMonth());
+    let min = null;
+    const anos = new Set();
+    for (const src of [a.data, b.data, c.data]) {
+      for (const r of src ?? []) {
+        const d = String(r.data ?? "").slice(0, 10);
+        if (!d) continue;
+        if (!min || d < min) min = d;
+        anos.add(Number(d.slice(0, 4)));
+      }
+    }
+    const minMes = min ? min.slice(0, 7) : maxMes;
+    const lista = anos.size ? [...anos].sort((x, y) => y - x) : [h.getFullYear()];
+    return { minMes, maxMes: maxMes < minMes ? minMes : maxMes, anos: lista };
+  }, [a.data, b.data, c.data]);
+}
+
+const PeriodoCtx = createContext(null);
+const usePeriodo = () => useContext(PeriodoCtx);
+
+// Recorte de fluxo pela coluna `data` (data_pagamento). ISO compara como string.
+const noPeriodo = (linhas, { inicio, fim }) =>
+  (linhas ?? []).filter((r) => {
+    const d = String(r.data ?? "").slice(0, 10);
+    return d && d >= inicio && d <= fim;
+  });
+
+// Reagrega as linhas do período somando `campos` por `chave`.
+const somarPor = (linhas, chave, campos) => {
+  const m = new Map();
+  for (const l of linhas) {
+    const k = l[chave] ?? "—";
+    const a = m.get(k) ?? { [chave]: k, ...Object.fromEntries(campos.map((c) => [c, 0])) };
+    for (const c of campos) a[c] += Number(l[c] ?? 0);
+    m.set(k, a);
+  }
+  return [...m.values()];
+};
 
 // Série mensal padrão: {mes, valor, parcial}. O mês corrente tem só alguns
 // dias — fica marcado como parcial pra sair tracejado e fora do domínio Y.
@@ -170,6 +259,147 @@ function Bloco({ titulo, canto, children, sem, altura }) {
         }}
       >
         {children}
+      </div>
+    </div>
+  );
+}
+
+/* Popover ancorado — o pai precisa ser position:relative. O backdrop fixo
+   captura o clique fora pra fechar. */
+function Popover({ aberto, onFechar, children, largura = 150 }) {
+  if (!aberto) return null;
+  return (
+    <>
+      <div onClick={onFechar} style={{ position: "fixed", inset: 0, zIndex: 40 }} />
+      <div className="rolagem" style={{
+        position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 41,
+        background: "#15151a", border: `1px solid ${C.cardLine}`, borderRadius: 10,
+        padding: 4, minWidth: largura, maxHeight: 264, overflowY: "auto",
+        boxShadow: "0 12px 32px rgba(0,0,0,.5)",
+      }}>
+        {children}
+      </div>
+    </>
+  );
+}
+
+const itemPop = (ativo) => ({
+  display: "block", width: "100%", textAlign: "left", padding: "7px 10px",
+  borderRadius: 7, border: "none", cursor: "pointer", fontFamily: SANS,
+  fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
+  background: ativo ? `${C.gold}1F` : "transparent",
+  color: ativo ? C.gold : C.muted,
+});
+
+/* Ano: dropdown com os anos que têm dado. */
+function SeletorAno() {
+  const { ano, setAno, anos } = usePeriodo();
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div style={{ position: "relative" }}>
+      <button onClick={() => setAberto((v) => !v)} style={{
+        display: "flex", alignItems: "center", gap: 6, fontFamily: SANS, fontSize: 12,
+        fontWeight: 700, color: C.gold, background: "rgba(255,255,255,.04)",
+        border: `1px solid ${C.cardLine}`, borderRadius: 9, padding: "6px 10px", cursor: "pointer",
+      }}>
+        {ano} <ChevronDown size={13} />
+      </button>
+      <Popover aberto={aberto} onFechar={() => setAberto(false)} largura={110}>
+        {anos.map((a) => (
+          <button key={a} style={itemPop(a === ano)} onClick={() => { setAno(a); setAberto(false); }}>{a}</button>
+        ))}
+      </Popover>
+    </div>
+  );
+}
+
+/* Mês: ‹ Julho 2026 › — setas navegam com virada de ano; o rótulo abre a
+   lista pra pular direto. Os limites vêm do dado. */
+function SeletorMes() {
+  const { ano, mesIdx, irMes, setMesAno, minMes, maxMes, rotulo } = usePeriodo();
+  const [aberto, setAberto] = useState(false);
+
+  const vizinho = (delta) => {
+    let m = mesIdx + delta, a = ano;
+    if (m < 0) { m = 11; a -= 1; }
+    if (m > 11) { m = 0; a += 1; }
+    return chaveMes(a, m);
+  };
+  const podeVoltar = vizinho(-1) >= minMes;
+  const podeAvancar = vizinho(1) <= maxMes;
+
+  // Todos os meses navegáveis, do mais recente pro mais antigo.
+  const lista = useMemo(() => {
+    const out = [];
+    let a = Number(maxMes.slice(0, 4)), m = Number(maxMes.slice(5, 7)) - 1;
+    while (chaveMes(a, m) >= minMes && out.length < 360) {
+      out.push({ a, m });
+      m -= 1; if (m < 0) { m = 11; a -= 1; }
+    }
+    return out;
+  }, [minMes, maxMes]);
+
+  const seta = (ativo) => ({
+    display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 28,
+    borderRadius: 7, border: `1px solid ${C.cardLine}`, background: "rgba(255,255,255,.04)",
+    color: ativo ? C.muted : C.dim, cursor: ativo ? "pointer" : "default", opacity: ativo ? 1 : 0.45,
+  });
+
+  return (
+    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
+      <button style={seta(podeVoltar)} disabled={!podeVoltar} onClick={() => irMes(-1)} aria-label="Mês anterior">
+        <ChevronLeft size={14} />
+      </button>
+      <button onClick={() => setAberto((v) => !v)} style={{
+        display: "flex", alignItems: "center", gap: 6, fontFamily: SANS, fontSize: 12,
+        fontWeight: 700, color: C.gold, background: "rgba(255,255,255,.04)",
+        border: `1px solid ${C.cardLine}`, borderRadius: 9, padding: "6px 10px",
+        cursor: "pointer", minWidth: 118, justifyContent: "center",
+      }}>
+        {rotulo} <ChevronDown size={13} />
+      </button>
+      <button style={seta(podeAvancar)} disabled={!podeAvancar} onClick={() => irMes(1)} aria-label="Próximo mês">
+        <ChevronRight size={14} />
+      </button>
+      <Popover aberto={aberto} onFechar={() => setAberto(false)} largura={140}>
+        {lista.map(({ a, m }) => (
+          <button key={chaveMes(a, m)} style={itemPop(a === ano && m === mesIdx)}
+            onClick={() => { setMesAno(a, m); setAberto(false); }}>
+            {MESES[m]} {a}
+          </button>
+        ))}
+      </Popover>
+    </div>
+  );
+}
+
+/* Seletor de período — no topo, ao lado do sino. */
+function SeletorPeriodo() {
+  const { modo, escolherModo } = usePeriodo();
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+      {modo === "ano" && <SeletorAno />}
+      {modo === "mes" && <SeletorMes />}
+      {modo === "7d" && <span style={{ fontSize: 12, fontWeight: 700, color: C.gold, whiteSpace: "nowrap" }}>Últimos 7 dias</span>}
+      <div style={{ display: "flex", gap: 2, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, borderRadius: 10, padding: 3 }}>
+        {PERIODOS.map((p) => {
+          const ativo = p.key === modo;
+          return (
+            <button
+              key={p.key}
+              onClick={() => escolherModo(p.key)}
+              aria-pressed={ativo}
+              style={{
+                fontFamily: SANS, fontSize: 11.5, fontWeight: 700, padding: "6px 11px",
+                borderRadius: 7, border: "none", cursor: "pointer",
+                background: ativo ? `${C.gold}1F` : "transparent",
+                color: ativo ? C.gold : C.muted,
+              }}
+            >
+              {p.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -551,7 +781,7 @@ function Historia({ frases, cobertura }) {
   );
 }
 
-function Estado({ carregando, erro, vazio, children }) {
+function Estado({ carregando, erro, vazio, children, vazioTitulo, vazioDica }) {
   if (carregando)
     return (
       <div style={{ display: "flex", alignItems: "center", gap: 9, justifyContent: "center", padding: "56px 0" }}>
@@ -574,9 +804,9 @@ function Estado({ carregando, erro, vazio, children }) {
       <div style={{ display: "flex", gap: 11, padding: "28px 0" }}>
         <Database size={16} style={{ color: C.faint, marginTop: 2 }} />
         <div>
-          <div style={{ fontSize: 13.5, color: C.muted, fontWeight: 600 }}>Sem dados neste recorte</div>
-          <div style={{ fontSize: 12, color: C.faint, marginTop: 4 }}>
-            Ou a fonte não foi conectada, ou seu perfil não tem acesso a este setor.
+          <div style={{ fontSize: 13.5, color: C.muted, fontWeight: 600 }}>{vazioTitulo ?? "Sem dados neste recorte"}</div>
+          <div style={{ fontSize: 12, color: C.faint, marginTop: 4, lineHeight: 1.5 }}>
+            {vazioDica ?? "Ou a fonte não foi conectada, ou seu perfil não tem acesso a este setor."}
           </div>
         </div>
       </div>
@@ -714,7 +944,8 @@ const abreviaForma = (s) => {
 };
 
 function HubFinanceiro() {
-  const recCat = useFinanceiroReceitaCategoria();
+  const { inicio, fim, rotulo } = usePeriodo();
+  const recCat = useFinanceiroReceitaCategoriaPeriodo();
   const pag = useFinanceiroPagamentos();
   const caixaHor = useFinanceiroCaixaHorizonte();
   const fpag = useFinanceiroFormasPagamento();
@@ -722,7 +953,7 @@ function HubFinanceiro() {
   const caixaMensal = useFinanceiroCaixaMensal();
   const inadOrig = useFinanceiroInadimpOrigem();
   const aReceberHor = useFinanceiroAReceberHorizonte();
-  const despCat = useFinanceiroDespesaCategoria();
+  const despCat = useFinanceiroDespesaCategoriaPeriodo();
   const aPagarHor = useFinanceiroAPagarHorizonte();
   const pagoMensal = useFinanceiroPagoMensal();
 
@@ -730,7 +961,9 @@ function HubFinanceiro() {
   // "Sem vínculo" pra ele nunca aparecer no topo como se fosse produto,
   // e calculo a cobertura: quanto da receita tem categoria identificada.
   const categorias = useMemo(() => {
-    const rows = (recCat.data ?? []).map((r) => ({
+    const recorte = somarPor(noPeriodo(recCat.data, { inicio, fim }), "categoria",
+      ["receita_bruta", "receita_unidade", "repasse_coach", "vendas"]);
+    const rows = recorte.map((r) => ({
       categoria: ehSemVinculo(r.categoria) ? "Sem vínculo" : (r.categoria ?? "—"),
       vendas: Number(r.vendas ?? 0),
       bruto: Number(r.receita_bruta ?? 0),
@@ -744,7 +977,7 @@ function HubFinanceiro() {
     const vendasTot = rows.reduce((s, r) => s + r.vendas, 0);
     const semVinc = orfas.reduce((s, r) => s + r.unidade, 0);
     return { reais, orfas, total, vendasTot, semVinc, cobertura: total ? ((total - semVinc) / total) * 100 : null };
-  }, [recCat.data]);
+  }, [recCat.data, inicio, fim]);
 
   // Agrego pagos/pendentes/perdidos/sem_status somando todas as origens.
   // O donut usa o total INCLUINDO sem_status — assim "Sem status" aparece
@@ -800,11 +1033,11 @@ function HubFinanceiro() {
   /* ---- Despesa (Conta Azul) — "pra onde vai o dinheiro" ---- */
   // O prefixo "(-)" já vem do dado; ranqueio pelo total lançado.
   const despesas = useMemo(
-    () => (despCat.data ?? [])
+    () => somarPor(noPeriodo(despCat.data, { inicio, fim }), "categoria", ["total", "pago"])
       .map((r) => ({ rotulo: String(r.categoria ?? "—"), valor: Number(r.total ?? 0), pago: Number(r.pago ?? 0) }))
       .filter((r) => r.valor > 0)
       .sort((a, b) => b.valor - a.valor),
-    [despCat.data]
+    [despCat.data, inicio, fim]
   );
   const despesaTot = despesas.reduce((s, r) => s + r.valor, 0);
   const despesaPaga = despesas.reduce((s, r) => s + r.pago, 0);
@@ -829,17 +1062,23 @@ function HubFinanceiro() {
     <>
       {/* Faixa de KPIs compactos — âncora dourada + 4 métricas do mês */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
-        <ChipKpi hero Icone={Wallet} label="Receita reconhecida" valor={moeda(categorias.total)} nota="acumulado" />
-        <ChipKpi Icone={Clock} label="Sem status" valor={pagTot.pctSem != null ? pagTot.pctSem.toFixed(1) : "—"} unidade="%" nota="dos pagamentos" />
-        <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%" nota="a receber" />
-        <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota="receita ÷ vendas" />
-        <ChipKpi Icone={Hourglass} label="A receber" valor={moeda(aReceber)} nota="CisPay · a liquidar" />
+        <ChipKpi hero Icone={Wallet} label="Receita reconhecida" valor={moeda(categorias.total)} nota={rotulo} />
+        <ChipKpi Icone={Clock} label="Sem status" valor={pagTot.pctSem != null ? pagTot.pctSem.toFixed(1) : "—"} unidade="%" nota="snapshot" />
+        <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%" nota="snapshot" />
+        <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
+        <ChipKpi Icone={Hourglass} label="A receber" valor={moeda(aReceber)} nota="CisPay · snapshot" />
       </div>
 
       {/* Linha 1: categoria (larga) · status donut · caixa destaque */}
       <div className="finRow1" style={{ marginBottom: 16 }}>
-        <Bloco titulo="Receita por categoria" canto="por receita da unidade" altura={ALTURA_PAINEL}>
-          <Estado carregando={recCat.isLoading} erro={recCat.error} vazio={!categorias.reais.length && !categorias.orfas.length}>
+        <Bloco titulo="Receita por categoria" canto={rotulo} altura={ALTURA_PAINEL}>
+          <Estado
+            carregando={recCat.isLoading}
+            erro={recCat.error}
+            vazio={!categorias.reais.length && !categorias.orfas.length}
+            vazioTitulo="Nenhuma movimentação no período"
+            vazioDica={`Nenhuma receita com data entre ${inicio} e ${fim}. É normal: o negócio vende em lote — troque o período no topo.`}
+          >
             <BarrasCategoria reais={categorias.reais} orfas={categorias.orfas} semVinc={categorias.semVinc} cobertura={categorias.cobertura} />
           </Estado>
         </Bloco>
@@ -889,7 +1128,7 @@ function HubFinanceiro() {
       </div>
 
       {/* ============ INADIMPLÊNCIA ============ */}
-      <SecaoTitulo titulo="Inadimplência" canto="vencidos e a receber · nunca somado à receita" />
+      <SecaoTitulo titulo="Inadimplência" canto="snapshot do agora · não muda com o período · nunca somado à receita" />
       <div className="finRow2">
         <Bloco titulo="Vencidos por origem" canto={vencidoTot ? moeda(vencidoTot) + " vencido" : null} sem altura={ALTURA_PAINEL}>
           <Estado carregando={inadOrig.isLoading} erro={inadOrig.error} vazio={!vencidos.length}>
@@ -906,8 +1145,14 @@ function HubFinanceiro() {
       {/* ============ DESPESAS ============ */}
       <SecaoTitulo titulo="Despesas — para onde vai o dinheiro" canto="Conta Azul · despesa e caixa, não receita" />
       <div className="finRow2" style={{ marginBottom: 16 }}>
-        <Bloco titulo="Despesa por categoria" canto="maiores primeiro" sem altura={ALTURA_PAINEL}>
-          <Estado carregando={despCat.isLoading} erro={despCat.error} vazio={!despesas.length}>
+        <Bloco titulo="Despesa por categoria" canto={rotulo} sem altura={ALTURA_PAINEL}>
+          <Estado
+            carregando={despCat.isLoading}
+            erro={despCat.error}
+            vazio={!despesas.length}
+            vazioTitulo="Nenhuma movimentação no período"
+            vazioDica={`Nenhuma despesa com data entre ${inicio} e ${fim}. Troque o período no topo.`}
+          >
             <Lista linhas={despesas} total={despesaTot} top={6} />
             <div style={{ display: "flex", gap: 8, padding: "10px 20px", background: "rgba(255,255,255,.02)" }}>
               <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
@@ -918,7 +1163,7 @@ function HubFinanceiro() {
             </div>
           </Estado>
         </Bloco>
-        <Bloco titulo="A pagar por vencimento" canto={aPagarTot ? moeda(aPagarTot) + " a pagar" : null} sem altura={ALTURA_PAINEL}>
+        <Bloco titulo="A pagar por vencimento" canto={aPagarTot ? `${moeda(aPagarTot)} · snapshot` : "snapshot"} sem altura={ALTURA_PAINEL}>
           <Estado carregando={aPagarHor.isLoading} erro={aPagarHor.error} vazio={!aPagar.length}>
             <Lista linhas={aPagar} total={aPagarTot} />
           </Estado>
@@ -1023,21 +1268,34 @@ function HubEventos() {
    curso (unidades diferentes). Produto e estoque só existem no Omie, que
    ainda não está integrado: vazio honesto em vez de número inventado. */
 function HubLoja() {
+  const { inicio, fim, rotulo } = usePeriodo();
   const kpis = useLojaKpis();
-  const rec = useLojaReceita();
+  const rec = useLojaReceitaPeriodo();
   const recMensal = useLojaReceitaMensal();
 
   const k = kpis.data?.[0];
   const mv = (x) => (x == null ? "—" : moeda(Number(x)));
   const nv = (x) => (x == null ? "—" : numero(Number(x)));
 
+  // Fluxo da loja recortado pelo período e reagregado por forma.
+  const recorte = useMemo(() => noPeriodo(rec.data, { inicio, fim }), [rec.data, inicio, fim]);
+  const somaPeriodo = useMemo(() => recorte.reduce(
+    (a, r) => ({
+      receita: a.receita + Number(r.receita ?? 0),
+      recebido: a.recebido + Number(r.recebido ?? 0),
+      vendas: a.vendas + Number(r.vendas ?? 0),
+    }),
+    { receita: 0, recebido: 0, vendas: 0 }
+  ), [recorte]);
+  const ticket = somaPeriodo.vendas ? somaPeriodo.receita / somaPeriodo.vendas : null;
+
   const formas = useMemo(
-    () => (rec.data ?? [])
+    () => somarPor(recorte, "forma", ["receita"])
       .map((r) => ({ rotulo: String(r.forma ?? "—"), valor: Number(r.receita ?? 0) }))
       .filter((f) => f.valor > 0)
       .sort((a, b) => b.valor - a.valor)
       .map((f, i) => ({ ...f, cor: PALETA_FORMAS[i % PALETA_FORMAS.length] })),
-    [rec.data]
+    [recorte]
   );
   const formasTot = formas.reduce((s, f) => s + f.valor, 0);
   const leaderPct = formasTot ? Math.round((formas[0].valor / formasTot) * 100) : 0;
@@ -1048,11 +1306,11 @@ function HubLoja() {
   return (
     <>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
-        <ChipKpi hero Icone={Wallet} label="Receita da loja" valor={mv(k?.receita_total)} nota="acumulado" />
-        <ChipKpi Icone={ShoppingBag} label="Vendas" valor={nv(k?.vendas)} nota="no recorte" />
-        <ChipKpi Icone={Receipt} label="Ticket médio" valor={mv(k?.ticket_medio)} nota="receita ÷ vendas" />
-        <ChipKpi Icone={TrendingUp} label="Recebido" valor={mv(k?.recebido)} nota="já em caixa" />
-        <ChipKpi Icone={AlertTriangle} label="A receber vencido" valor={mv(k?.a_receber_vencido)} nota="em atraso" />
+        <ChipKpi hero Icone={Wallet} label="Receita da loja" valor={moeda(somaPeriodo.receita)} nota={rotulo} />
+        <ChipKpi Icone={ShoppingBag} label="Vendas" valor={numero(somaPeriodo.vendas)} nota={rotulo} />
+        <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
+        <ChipKpi Icone={TrendingUp} label="Recebido" valor={moeda(somaPeriodo.recebido)} nota={rotulo} />
+        <ChipKpi Icone={AlertTriangle} label="A receber vencido" valor={mv(k?.a_receber_vencido)} nota="snapshot" />
       </div>
 
       <div className="finRow2" style={{ marginBottom: 16 }}>
@@ -1063,8 +1321,14 @@ function HubLoja() {
               ? <Estado vazio />
               : <LinhaEvolucao serie={evol} idGrad="fillLoja" />}
         </Bloco>
-        <Bloco titulo="Formas de pagamento" canto="acumulado" altura={ALTURA_PAINEL}>
-          <Estado carregando={rec.isLoading} erro={rec.error} vazio={!formas.length}>
+        <Bloco titulo="Formas de pagamento" canto={rotulo} altura={ALTURA_PAINEL}>
+          <Estado
+            carregando={rec.isLoading}
+            erro={rec.error}
+            vazio={!formas.length}
+            vazioTitulo="Nenhuma movimentação no período"
+            vazioDica={`Nenhuma venda com data entre ${inicio} e ${fim}. É normal: a loja vende em lote — troque o período no topo.`}
+          >
             <Donut segmentos={formas} size={118} centroSize={17} centroValor={formas[0] ? abreviaForma(formas[0].rotulo) : "—"} centroLabel={`${leaderPct}% líder`} centroCor={C.gold} />
           </Estado>
         </Bloco>
@@ -1204,6 +1468,37 @@ function Login() {
 function Shell({ perfil }) {
   const admin = perfil.papel === "admin" || perfil.setor === "geral";
   const [tela, setTela] = useState(admin ? "executivo" : perfil.setor);
+  const [modo, setModo] = useState("ano");
+  const [ano, setAno] = useState(() => new Date().getFullYear());
+  const [mesIdx, setMesIdx] = useState(() => new Date().getMonth());
+  const { minMes, maxMes, anos } = useRangeDatas();
+
+  const ctxPeriodo = useMemo(() => {
+    const dentro = (k) => k >= minMes && k <= maxMes;
+    const aplicar = (a, m) => { setAno(a); setMesIdx(m); };
+    return {
+      modo, ano, mesIdx, anos, minMes, maxMes,
+      setAno,
+      setMesAno: aplicar,
+      // Navega mês a mês virando o ano (Jan ‹ vira Dez do ano anterior).
+      irMes: (delta) => {
+        let m = mesIdx + delta, a = ano;
+        if (m < 0) { m = 11; a -= 1; }
+        if (m > 11) { m = 0; a += 1; }
+        if (dentro(chaveMes(a, m))) aplicar(a, m);
+      },
+      // Ao entrar no modo Mês, puxa a âncora pra dentro dos limites do dado.
+      escolherModo: (k) => {
+        if (k === "mes") {
+          const atual = chaveMes(ano, mesIdx);
+          const alvo = atual > maxMes ? maxMes : atual < minMes ? minMes : null;
+          if (alvo) aplicar(Number(alvo.slice(0, 4)), Number(alvo.slice(5, 7)) - 1);
+        }
+        setModo(k);
+      },
+      ...intervaloDe({ modo, ano, mesIdx }),
+    };
+  }, [modo, ano, mesIdx, anos, minMes, maxMes]);
 
   const visiveis = admin ? HUBS : HUBS.filter((h) => h.key === perfil.setor);
   const hub = HUBS.find((h) => h.key === tela);
@@ -1249,6 +1544,7 @@ function Shell({ perfil }) {
   const saudacao = new Date().getHours() < 12 ? "Bom dia" : new Date().getHours() < 18 ? "Boa tarde" : "Boa noite";
 
   return (
+    <PeriodoCtx.Provider value={ctxPeriodo}>
     <div style={{
       minHeight: "100vh", display: "flex", color: C.text, fontFamily: SANS,
       background: `radial-gradient(1200px 600px at 78% -10%, ${C.gold}12, transparent 60%), ${C.void}`,
@@ -1362,12 +1658,15 @@ function Shell({ perfil }) {
               )}
             </div>
 
-            <div style={{
-              width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.cardLine}`,
-              background: "rgba(255,255,255,.04)", display: "flex", alignItems: "center",
-              justifyContent: "center", color: "#C9C9CE",
-            }}>
-              <Bell size={16} />
+            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <SeletorPeriodo />
+              <div style={{
+                width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.cardLine}`,
+                background: "rgba(255,255,255,.04)", display: "flex", alignItems: "center",
+                justifyContent: "center", color: "#C9C9CE", flexShrink: 0,
+              }}>
+                <Bell size={16} />
+              </div>
             </div>
           </div>
 
@@ -1375,6 +1674,7 @@ function Shell({ perfil }) {
         </div>
       </main>
     </div>
+    </PeriodoCtx.Provider>
   );
 }
 
