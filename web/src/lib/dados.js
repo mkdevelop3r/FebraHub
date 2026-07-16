@@ -58,18 +58,40 @@ export async function sair() {
    Tentar `from("fato_pagamento_base")` retorna permission denied.
    ============================================================ */
 
-function useView(nome, seletor = "*", opcoes = {}) {
+/* O PostgREST corta a resposta no "Max rows" do projeto (padrão 1000) —
+   silenciosamente, sem erro. As views com dimensão de data devolvem uma
+   linha por (chave, dia) e passam MUITO disso: sem paginar, o front
+   recebia um pedaço arbitrário e categorias inteiras sumiam do mês.
+   Aqui buscamos TODAS as páginas e conferimos com o count exato.
+
+   `ordem` é a chave natural da view. Paginar sem ORDER BY estável deixa
+   o Postgres livre pra repetir/pular linhas entre páginas. */
+const PAGINA = 1000;
+
+async function buscarTudo(nome, seletor, ordem) {
+  let todos = [], de = 0, total = null;
+  for (;;) {
+    let q = supabase
+      .from(nome)
+      .select(seletor, de === 0 ? { count: "exact" } : undefined);
+    for (const col of ordem ?? []) q = q.order(col, { ascending: true });
+    const { data, error, count } = await q.range(de, de + PAGINA - 1);
+    if (error) throw error;
+    const lote = data ?? [];
+    if (de === 0) total = count ?? lote.length;
+    todos = todos.concat(lote);
+    de += lote.length;
+    // Para quando o servidor esvazia ou já temos tudo que ele contou.
+    if (!lote.length || (total != null && todos.length >= total)) break;
+  }
+  return todos;
+}
+
+function useView(nome, opcoes = {}) {
   return useQuery({
     queryKey: ["view", nome],
     staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      let q = supabase.from(nome).select(seletor);
-      if (opcoes.ordenar) q = q.order(opcoes.ordenar, { ascending: false, nullsFirst: false });
-      if (opcoes.limite) q = q.limit(opcoes.limite);
-      const { data, error } = await q;
-      if (error) throw error;
-      return data ?? [];
-    },
+    queryFn: () => buscarTudo(nome, opcoes.seletor ?? "*", opcoes.ordem),
   });
 }
 
@@ -99,6 +121,17 @@ export const useFinanceiroPagoMensal = () => useView("vw_financeiro_pago_mensal"
 export const useLojaKpis = () => useView("vw_loja_kpis");
 export const useLojaReceita = () => useView("vw_loja_receita");
 export const useLojaReceitaMensal = () => useView("vw_loja_receita_mensal");
+
+/* Views com dimensão de data. Entregam as linhas com `data`; o front
+   recorta pelo período e reagrega. Só métricas de FLUXO — estado
+   (inadimplência, horizontes) é snapshot e não tem recorte. */
+// `ordem` = chave natural (uma linha por dia+categoria/forma): paginação estável.
+export const useFinanceiroReceitaCategoriaPeriodo = () =>
+  useView("vw_financeiro_receita_categoria_periodo", { ordem: ["data", "categoria"] });
+export const useFinanceiroDespesaCategoriaPeriodo = () =>
+  useView("vw_financeiro_despesa_categoria_periodo", { ordem: ["data", "categoria"] });
+export const useLojaReceitaPeriodo = () =>
+  useView("vw_loja_receita_periodo", { ordem: ["data", "forma"] });
 
 export const useMarketingOrigem   = () => useView("vw_marketing_origem");
 export const usePedagogicoTurmas  = () => useView("vw_pedagogico_turmas");
