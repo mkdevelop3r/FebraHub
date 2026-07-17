@@ -102,6 +102,17 @@ export const useComercialFunil    = () => useView("vw_comercial_funil");
 export const useComercialRankingGeral = () => useView("vw_comercial_ranking_geral");
 export const useComercialRankingPeriodo = () =>
   useView("vw_comercial_ranking_periodo", { ordem: ["data", "consultor_id", "valor"] });
+
+/* Ranking por categoria: uma linha por venda, com `categoria` e `data`.
+   Alimenta KPIs, YoY, evolução mensal e o pódio da categoria selecionada.
+   A view já aplica o split 50/50 do CI e a data de largada de cada
+   consultora — o front não recalcula nada disso. */
+export const useComercialRankingCategoria = () =>
+  useView("vw_comercial_ranking_categoria", { ordem: ["data", "categoria", "consultor_id", "valor"] });
+
+/* Sympla: já agregado e sem dimensão de data — só a Jennifer, porque o
+   dado do Sympla não tem vínculo de consultora. */
+export const useComercialSymplaJennifer = () => useView("vw_comercial_sympla_jennifer");
 /* Placar da gamificação: uma linha por VENDA (time GGB, desde jan/2025).
    O front recorta por data_pagamento e conta as cores no período.
    Sem coluna de id única: ordeno por todas as colunas discriminantes, então

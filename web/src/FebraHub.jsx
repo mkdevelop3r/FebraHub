@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
-  useComercialRankingGeral, useComercialRankingPeriodo, useComercialCarinhas,
+  useComercialRankingCategoria, useComercialSymplaJennifer, useComercialCarinhas,
   useFinanceiroReceita, useFinanceiroQualid,
   useFinanceiroPagamentos,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
@@ -119,6 +119,17 @@ function intervaloDe({ modo, ano, mesIdx }) {
 /* Limites de navegação saem do DADO, não do calendário: o primeiro mês com
    movimento (união das views _periodo) até o mês atual. Nada de 2024/2026
    chumbado — se a base crescer pra trás, a navegação cresce junto. */
+/* Lista de categorias derivada do dado + Sympla (que vive noutra view). */
+function useCategoriasDisponiveis() {
+  const r = useComercialRankingCategoria();
+  return useMemo(() => {
+    const set = new Set();
+    for (const x of r.data ?? []) if (x.categoria) set.add(String(x.categoria));
+    const ord = (c) => { const i = ORDEM_CAT.indexOf(c); return i < 0 ? 99 : i; };
+    return [...[...set].sort((a, b) => ord(a) - ord(b) || a.localeCompare(b)), CAT_SYMPLA];
+  }, [r.data]);
+}
+
 function useRangeDatas() {
   const a = useFinanceiroReceitaCategoriaPeriodo();
   const b = useFinanceiroDespesaCategoriaPeriodo();
@@ -144,6 +155,20 @@ function useRangeDatas() {
 
 const PeriodoCtx = createContext(null);
 const usePeriodo = () => useContext(PeriodoCtx);
+
+/* ============ CATEGORIA (só Hub Comercial) ============
+   Cada categoria é uma UNIDADE DE NEGÓCIO separada: o filtro recorta os
+   painéis pra uma delas, e não existe opção "todas" de propósito — somar
+   faturamento de categorias diferentes num total único não significa nada.
+   Os valores de `categoria` saem da própria view (não chumbados aqui);
+   só os rótulos feios ganham um nome apresentável. */
+const CAT_SYMPLA = "Sympla";
+const ROTULO_CAT = { CI: "Coach Individual", "Coaching Individual": "Coach Individual" };
+const rotuloCat = (c) => ROTULO_CAT[c] ?? c;
+const ORDEM_CAT = ["GGB", "CIS", "CI", "Coaching Individual"];
+
+const CategoriaCtx = createContext(null);
+const useCategoria = () => useContext(CategoriaCtx);
 
 // Recorte de fluxo pela coluna de data. ISO compara como string.
 // `campo` varia por view: as _periodo usam `data`; as carinhas, `data_pagamento`.
@@ -375,6 +400,34 @@ function SeletorMes() {
   );
 }
 
+/* Seletor de categoria — ao lado dos filtros de período. Só aparece no
+   Hub Comercial, único lugar onde a categoria recorta algo. */
+function SeletorCategoria() {
+  const { categoria, setCategoria, categorias } = useCategoria();
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: ".5px" }}>
+        Categoria
+      </span>
+      <div style={{ display: "flex", gap: 2, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, borderRadius: 10, padding: 3 }}>
+        {categorias.map((c) => {
+          const ativo = c === categoria;
+          return (
+            <button key={c} onClick={() => setCategoria(c)} aria-pressed={ativo} style={{
+              fontFamily: SANS, fontSize: 11.5, fontWeight: 700, padding: "6px 11px",
+              borderRadius: 7, border: "none", cursor: "pointer", whiteSpace: "nowrap",
+              background: ativo ? `${C.gold}1F` : "transparent",
+              color: ativo ? C.gold : C.muted,
+            }}>
+              {rotuloCat(c)}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* Seletor de período — no topo, ao lado do sino. */
 function SeletorPeriodo() {
   const { modo, escolherModo } = usePeriodo();
@@ -490,8 +543,10 @@ function CardPodio({ c, pos }) {
       }}>
         {moeda(c.receita)}
       </div>
+      {/* `sub` só é usado pelo Sympla (eventos/ingressos). Sem ela, o
+          texto original de vendas/ticket segue idêntico. */}
       <div style={{ fontSize: 11.5, color: C.faint }}>
-        {numero(c.vendas)} vendas · ticket {moeda(c.ticket_medio)}
+        {c.sub ?? <>{numero(c.vendas)} vendas · ticket {moeda(c.ticket_medio)}</>}
       </div>
     </div>
   );
@@ -859,6 +914,84 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
   );
 }
 
+// Rótulo curto de barra: "2,1 mi" / "550 mil" — adapta à ordem de grandeza.
+const compacto = (v) =>
+  new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(v ?? 0);
+const mesCurto = (ym) => {
+  const d = new Date(ym + "-01T00:00:00");
+  const s = d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+const AZUL_ANTERIOR = "#6BA8E5";
+
+/* Evolução do faturamento: barras do período + linha do MESMO PERÍODO do
+   ano anterior. A linha é comparação histórica, não meta — não existe meta
+   no banco, e pintar uma referência como meta seria inventar cobrança. */
+function BarrasEvolucao({ serie, anoAnterior }) {
+  if (!serie.length) return null;
+  const W = 720, H = 250, padL = 10, padR = 10, padT = 34, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
+  const max = Math.max(...serie.flatMap((s) => [s.valor, s.anterior]), 1);
+  const n = serie.length, slot = plotW / n, bw = Math.min(38, slot * 0.58);
+  const cx = (i) => padL + slot * i + slot / 2;
+  const y = (v) => base - (v / max) * plotH;
+  const ptsAnt = serie.map((s, i) => [cx(i), y(s.anterior)]);
+  const temAnterior = serie.some((s) => s.anterior > 0);
+
+  return (
+    <>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        <defs>
+          <linearGradient id="gradBarEvol" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={C.goldTop} />
+            <stop offset="1" stopColor={C.goldBase} />
+          </linearGradient>
+          <pattern id="hachBarEvol" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke={C.gold} strokeWidth="3" opacity="0.4" />
+          </pattern>
+        </defs>
+
+        {serie.map((s, i) => (
+          <g key={s.mes}>
+            <rect
+              x={cx(i) - bw / 2} y={y(s.valor)} width={bw} height={Math.max(0, base - y(s.valor))} rx="3"
+              fill={s.parcial ? "url(#hachBarEvol)" : "url(#gradBarEvol)"}
+              stroke={s.parcial ? C.gold : "none"}
+              strokeDasharray={s.parcial ? "4 3" : undefined}
+              strokeWidth={s.parcial ? 1 : 0}
+            />
+            <text x={cx(i)} y={y(s.valor) - 6} fontSize="10" fontWeight="700" textAnchor="middle"
+              fill={s.parcial ? C.faint : C.bright} fontFamily={GROTESK}>
+              {compacto(s.valor)}
+            </text>
+          </g>
+        ))}
+
+        {temAnterior && (
+          <>
+            <polyline points={ptsAnt.map((p) => p.join(",")).join(" ")} fill="none"
+              stroke={AZUL_ANTERIOR} strokeWidth="1.6" strokeDasharray="5 4" strokeLinecap="round" />
+            {ptsAnt.map(([x0, y0], i) => <circle key={i} cx={x0} cy={y0} r="2" fill={AZUL_ANTERIOR} />)}
+          </>
+        )}
+
+        {serie.map((s, i) => (
+          <text key={s.mes} x={cx(i)} y={H - 9} fontSize="10.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>
+            {mesCurto(s.mes)}
+          </text>
+        ))}
+      </svg>
+
+      <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6, lineHeight: 1.5 }}>
+        Último mês tracejado = <b style={{ color: C.muted }}>parcial</b> (em andamento).
+        {temAnterior
+          ? <> Linha azul = mesmo período de {anoAnterior} — <b style={{ color: C.muted }}>não é meta</b>.</>
+          : <> Sem histórico de {anoAnterior} nesta categoria para comparar.</>}
+      </div>
+    </>
+  );
+}
+
 /* Caixa recebido — card destaque verde. Cobre SÓ a CisPay; a Stone
    ainda não está integrada. Rotulado "Caixa CisPay (parcial)" — nunca
    como caixa total, senão vira número que engana. */
@@ -1060,16 +1193,74 @@ function HubExecutivo() {
 
 function HubComercial() {
   const { inicio, fim, rotulo } = usePeriodo();
+  const { categoria } = useCategoria();
   const [visao, setVisao] = useState("periodo");
-  const rankPer = useComercialRankingPeriodo();
-  const rankGer = useComercialRankingGeral();
+  const rankCat = useComercialRankingCategoria();
+  const sympla = useComercialSymplaJennifer();
   const carinhas = useComercialCarinhas();
 
-  // "Período": uma linha por venda — recorto por `data` e reagrupo. Como a
-  // receita muda com o recorte, a ORDEM do pódio muda junto.
-  const podioPeriodo = useMemo(() => {
+  const ehSympla = categoria === CAT_SYMPLA;
+  const anoAnterior = new Date().getFullYear() - 1;
+
+  // Todas as vendas da categoria selecionada (uma linha por venda).
+  const vendasCat = useMemo(
+    () => (rankCat.data ?? []).filter((r) => String(r.categoria) === categoria),
+    [rankCat.data, categoria]
+  );
+
+  /* KPIs do período. YoY compara o MESMO recorte um ano atrás — desloco as
+     bordas do intervalo, não o ano inteiro. */
+  const kpi = useMemo(() => {
+    const soma = (ls) => ls.reduce((s, r) => s + Number(r.valor ?? 0), 0);
+    const dentro = noPeriodo(vendasCat, { inicio, fim }, "data");
+    const menosUmAno = (d) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`;
+    const antes = noPeriodo(vendasCat, { inicio: menosUmAno(inicio), fim: menosUmAno(fim) }, "data");
+    const receita = soma(dentro), receitaAnt = soma(antes);
+    return {
+      receita,
+      matriculas: dentro.length,
+      ticket: dentro.length ? receita / dentro.length : null,
+      yoy: receitaAnt > 0 ? ((receita - receitaAnt) / receitaAnt) * 100 : null,
+    };
+  }, [vendasCat, inicio, fim]);
+
+  /* Evolução: últimos 12 meses da categoria + o mesmo mês do ano anterior.
+     Não responde ao filtro de período — é série histórica, como nos outros
+     hubs. O mês corrente é parcial. */
+  const evolucao = useMemo(() => {
+    const porMes = new Map();
+    for (const r of vendasCat) {
+      const m = String(r.data ?? "").slice(0, 7);
+      if (m) porMes.set(m, (porMes.get(m) ?? 0) + Number(r.valor ?? 0));
+    }
+    const h = new Date();
+    const chave = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const atual = chave(h);
+    return Array.from({ length: 12 }, (_, k) => {
+      const d = new Date(h.getFullYear(), h.getMonth() - (11 - k), 1);
+      const m = chave(d);
+      const mAnt = `${d.getFullYear() - 1}-${m.slice(5)}`;
+      return { mes: m, valor: porMes.get(m) ?? 0, anterior: porMes.get(mAnt) ?? 0, parcial: m === atual };
+    });
+  }, [vendasCat]);
+
+  const geral = visao === "geral";
+
+  /* Pódio. Sympla vem de outra view (agregada, sem data): uma consultora só,
+     medida em receita líquida/eventos/ingressos. */
+  const podio = useMemo(() => {
+    if (ehSympla) {
+      return (sympla.data ?? []).map((s) => ({
+        consultor_id: s.consultora,
+        consultora: s.consultora,
+        foto_url: s.foto_url,
+        receita: Number(s.receita_liquida ?? 0),
+        sub: `${numero(s.eventos)} eventos · ${numero(s.ingressos)} ingressos`,
+      }));
+    }
+    const base = geral ? vendasCat : noPeriodo(vendasCat, { inicio, fim }, "data");
     const m = new Map();
-    for (const r of noPeriodo(rankPer.data, { inicio, fim }, "data")) {
+    for (const r of base) {
       const k = r.consultor_id ?? r.consultora ?? "—";
       const a = m.get(k) ?? {
         consultor_id: r.consultor_id, consultora: r.consultora, foto_url: r.foto_url,
@@ -1082,25 +1273,9 @@ function HubComercial() {
     return [...m.values()]
       .map((a) => ({ ...a, ticket_medio: a.vendas ? a.receita / a.vendas : 0 }))
       .sort((x, y) => y.receita - x.receita);
-  }, [rankPer.data, inicio, fim]);
+  }, [ehSympla, sympla.data, vendasCat, geral, inicio, fim]);
 
-  // "Geral": hall da fama, já agregado. Reordeno mesmo assim pra não depender
-  // da ordem que o Postgres devolveu.
-  const podioGeral = useMemo(
-    () => (rankGer.data ?? [])
-      .map((r) => ({
-        ...r,
-        receita: Number(r.receita ?? 0),
-        vendas: Number(r.vendas ?? 0),
-        ticket_medio: Number(r.ticket_medio ?? 0),
-      }))
-      .sort((a, b) => b.receita - a.receita),
-    [rankGer.data]
-  );
-
-  const geral = visao === "geral";
-  const podio = geral ? podioGeral : podioPeriodo;
-  const fonte = geral ? rankGer : rankPer;
+  const fonte = ehSympla ? sympla : rankCat;
 
   /* A view entrega uma linha por venda. A identidade das 3 consultoras vem
      da base inteira (sem recorte) e as contagens, só do período — assim o
@@ -1133,12 +1308,58 @@ function HubComercial() {
 
   return (
     <>
+      {/* Cada categoria é uma unidade de negócio: nunca somo com as outras. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
+        <ChipKpi hero Icone={Wallet} label={`Faturamento · ${rotuloCat(categoria)}`}
+          valor={ehSympla ? moeda(podio[0]?.receita ?? 0) : moeda(kpi.receita)}
+          nota={ehSympla ? "receita líquida · todos os tempos" : rotulo} />
+        <ChipKpi Icone={Receipt} label={ehSympla ? "Ingressos" : "Total de matrículas"}
+          valor={ehSympla ? numero(sympla.data?.[0]?.ingressos ?? 0) : numero(kpi.matriculas)}
+          nota={ehSympla ? `${numero(sympla.data?.[0]?.eventos ?? 0)} eventos` : rotulo} />
+        <ChipKpi Icone={TrendingUp} label="Ticket médio"
+          valor={ehSympla ? "—" : (kpi.ticket != null ? moeda(kpi.ticket) : "—")}
+          nota={ehSympla ? "não medível no Sympla" : "receita ÷ matrículas"} />
+        <ChipKpi Icone={TrendingUp} label="vs. ano anterior"
+          valor={kpi.yoy != null ? `${kpi.yoy >= 0 ? "+" : ""}${kpi.yoy.toFixed(0)}%` : "—"}
+          delta={kpi.yoy != null ? `${Math.abs(kpi.yoy).toFixed(0)}%` : null}
+          up={kpi.yoy >= 0}
+          nota={kpi.yoy == null ? `sem base de ${anoAnterior}` : `mesmo período de ${anoAnterior}`} />
+        {/* Não existe meta no banco — chip fica honesto em vez de inventar. */}
+        <ChipKpi Icone={Clock} label="% da meta" valor="—" nota="EM BREVE · sem metas cadastradas" />
+        {/* A ponte lead→venda não é confiável — não dá pra medir conversão. */}
+        <ChipKpi Icone={Clock} label="Taxa de conversão" valor="—" nota="EM BREVE · ainda não medível" />
+      </div>
+
+      <Bloco titulo="Evolução do faturamento" canto={`${rotuloCat(categoria)} · últimos 12 meses`}>
+        <Estado
+          carregando={rankCat.isLoading}
+          erro={rankCat.error}
+          vazio={ehSympla || !vendasCat.length}
+          vazioTitulo={ehSympla ? "Sympla não tem série mensal" : undefined}
+          vazioDica={ehSympla ? "A view do Sympla é agregada e não traz data — sem dimensão temporal, não há evolução mensal honesta a mostrar." : undefined}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 6, fontSize: 11, color: C.muted, fontWeight: 600 }}>
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` }} /> Período
+            </span>
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 14, height: 0, borderTop: `2px dashed ${AZUL_ANTERIOR}` }} /> Mesmo período {anoAnterior}
+            </span>
+          </div>
+          <BarrasEvolucao serie={evolucao} anoAnterior={anoAnterior} />
+        </Estado>
+      </Bloco>
+
       <SecaoTitulo
-        titulo="Pódio de consultoras"
+        titulo={`Consultoras · ${rotuloCat(categoria)}`}
         canto={
           <span style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "flex-end" }}>
-            <span>{geral ? "hall da fama · todos os tempos" : `${rotulo} · a ordem muda com o período`}</span>
-            <ToggleVisao valor={visao} onChange={setVisao} />
+            <span>
+              {ehSympla
+                ? "única vendedora de eventos · todos os tempos"
+                : geral ? "hall da fama · todos os tempos" : `${rotulo} · a ordem muda com o período`}
+            </span>
+            {!ehSympla && <ToggleVisao valor={visao} onChange={setVisao} />}
           </span>
         }
       />
@@ -1146,8 +1367,8 @@ function HubComercial() {
         carregando={fonte.isLoading}
         erro={fonte.error}
         vazio={!podio.length}
-        vazioTitulo={geral ? undefined : "Nenhuma venda no período"}
-        vazioDica={geral ? undefined : `Nenhuma venda entre ${inicio} e ${fim}. Troque o período no topo, ou veja o ranking em "Geral".`}
+        vazioTitulo={ehSympla || geral ? undefined : "Nenhuma venda no período"}
+        vazioDica={ehSympla || geral ? undefined : `Nenhuma venda entre ${inicio} e ${fim}. Troque o período no topo, ou veja o ranking em "Geral".`}
       >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
           {podio.map((c, i) => (
@@ -1156,6 +1377,8 @@ function HubComercial() {
         </div>
       </Estado>
 
+      {/* Sympla não tem consultoras (o dado não traz vínculo) — sem placar. */}
+      {!ehSympla && <>
       <SecaoTitulo titulo="Placar" canto={`${rotulo} · time GGB`} />
       <Bloco titulo="Carinhas por consultora" canto={`${rotulo} · placar público`} sem altura={ALTURA_PAINEL}>
         <Estado
@@ -1178,6 +1401,7 @@ function HubComercial() {
           </div>
         </Estado>
       </Bloco>
+      </>}
     </>
   );
 }
@@ -1722,6 +1946,13 @@ function Shell({ perfil }) {
   const [mesIdx, setMesIdx] = useState(() => new Date().getMonth());
   const { minMes, maxMes, anos } = useRangeDatas();
 
+  // Categoria: só recorta o Hub Comercial. A lista vem do dado; sem opção
+  // "todas" de propósito (categorias são unidades de negócio separadas).
+  const categorias = useCategoriasDisponiveis();
+  const [catEscolhida, setCategoria] = useState(null);
+  const categoria = catEscolhida && categorias.includes(catEscolhida) ? catEscolhida : categorias[0];
+  const ctxCategoria = useMemo(() => ({ categoria, setCategoria, categorias }), [categoria, categorias]);
+
   const ctxPeriodo = useMemo(() => {
     const dentro = (k) => k >= minMes && k <= maxMes;
     const aplicar = (a, m) => { setAno(a); setMesIdx(m); };
@@ -1794,6 +2025,7 @@ function Shell({ perfil }) {
 
   return (
     <PeriodoCtx.Provider value={ctxPeriodo}>
+    <CategoriaCtx.Provider value={ctxCategoria}>
     <div style={{
       minHeight: "100vh", display: "flex", color: C.text, fontFamily: SANS,
       background: `radial-gradient(1200px 600px at 78% -10%, ${C.gold}12, transparent 60%), ${C.void}`,
@@ -1909,6 +2141,7 @@ function Shell({ perfil }) {
 
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <SeletorPeriodo />
+              {tela === "comercial" && <SeletorCategoria />}
               <div style={{
                 width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.cardLine}`,
                 background: "rgba(255,255,255,.04)", display: "flex", alignItems: "center",
@@ -1923,6 +2156,7 @@ function Shell({ perfil }) {
         </div>
       </main>
     </div>
+    </CategoriaCtx.Provider>
     </PeriodoCtx.Provider>
   );
 }
