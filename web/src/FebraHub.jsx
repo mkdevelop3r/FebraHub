@@ -11,6 +11,7 @@ import {
   useSessao, usePerfil, entrar, sair,
   useComercialRankingHistorico, useComercialSymplaJennifer, useComercialCarinhas,
   useComercialMatriculasFaturamento, useComercialCursosPorConsultora,
+  useComercialRankingGeralConsolidado, useComercialGeralMensal,
   useFinanceiroReceita, useFinanceiroQualid,
   useFinanceiroPagamentos,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
@@ -127,7 +128,8 @@ function useCategoriasDisponiveis() {
     const set = new Set();
     for (const x of r.data ?? []) if (x.categoria) set.add(String(x.categoria));
     const ord = (c) => { const i = ORDEM_CAT.indexOf(c); return i < 0 ? 99 : i; };
-    return [...[...set].sort((a, b) => ord(a) - ord(b) || a.localeCompare(b)), CAT_SYMPLA];
+    // Geral primeiro (padrão), depois as formações, Sympla por último.
+    return [CAT_GERAL, ...[...set].sort((a, b) => ord(a) - ord(b) || a.localeCompare(b)), CAT_SYMPLA];
   }, [r.data]);
 }
 
@@ -164,6 +166,7 @@ const usePeriodo = () => useContext(PeriodoCtx);
    Os valores de `categoria` saem da própria view (não chumbados aqui);
    só os rótulos feios ganham um nome apresentável. */
 const CAT_SYMPLA = "Sympla";
+const CAT_GERAL = "Geral"; // consolidado GGB + CI + CIS (padrão); Sympla fica fora
 const ROTULO_CAT = { CI: "Coach Individual", "Coaching Individual": "Coach Individual" };
 const rotuloCat = (c) => ROTULO_CAT[c] ?? c;
 const ORDEM_CAT = ["GGB", "CIS", "CI", "Coaching Individual"];
@@ -1349,26 +1352,35 @@ function HubComercial() {
   const carinhas = useComercialCarinhas();
   const matfat = useComercialMatriculasFaturamento();
   const cursos = useComercialCursosPorConsultora();
+  const geralCons = useComercialRankingGeralConsolidado();
+  const geralMensal = useComercialGeralMensal();
 
   const ehSympla = categoria === CAT_SYMPLA;
-  // Carinhas são exclusivas do time GGB — não existem nas outras categorias.
+  const ehGeral = categoria === CAT_GERAL;
+  // Carinhas são do time GGB; aparecem no GGB e no consolidado Geral.
   const ehGGB = String(categoria ?? "").toUpperCase() === "GGB";
+  const mostraCarinhas = ehGGB || ehGeral;
   const anoAnterior = new Date().getFullYear() - 1;
 
-  // Todas as vendas da categoria (uma linha por venda), incluindo as de quem
-  // já saiu: é isso que faz 2022 mostrar faturamento real em vez de zero.
+  // Vendas da categoria, uma linha por venda (inclui quem já saiu — é o que
+  // faz 2022 mostrar faturamento real). No Geral, a fonte de FLUXO (KPIs,
+  // evolução, matrículas) é a view consolidada mensal, que já soma as 3
+  // formações; nas categorias, é o histórico filtrado.
   const vendasCat = useMemo(
     () => (rankCat.data ?? []).filter((r) => String(r.categoria) === categoria),
     [rankCat.data, categoria]
   );
+  const linhasFluxo = ehGeral ? (geralMensal.data ?? []) : vendasCat;
+  const carregFluxo = ehGeral ? geralMensal.isLoading : rankCat.isLoading;
+  const erroFluxo = ehGeral ? geralMensal.error : rankCat.error;
 
   /* KPIs do período. YoY compara o MESMO recorte um ano atrás — desloco as
      bordas do intervalo, não o ano inteiro. */
   const kpi = useMemo(() => {
     const soma = (ls) => ls.reduce((s, r) => s + Number(r.valor ?? 0), 0);
-    const dentro = noPeriodo(vendasCat, { inicio, fim }, "data");
+    const dentro = noPeriodo(linhasFluxo, { inicio, fim }, "data");
     const menosUmAno = (d) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`;
-    const antes = noPeriodo(vendasCat, { inicio: menosUmAno(inicio), fim: menosUmAno(fim) }, "data");
+    const antes = noPeriodo(linhasFluxo, { inicio: menosUmAno(inicio), fim: menosUmAno(fim) }, "data");
     const receita = soma(dentro), receitaAnt = soma(antes);
     return {
       receita,
@@ -1376,14 +1388,14 @@ function HubComercial() {
       ticket: dentro.length ? receita / dentro.length : null,
       yoy: receitaAnt > 0 ? ((receita - receitaAnt) / receitaAnt) * 100 : null,
     };
-  }, [vendasCat, inicio, fim]);
+  }, [linhasFluxo, inicio, fim]);
 
   /* Evolução: últimos 12 meses da categoria + o mesmo mês do ano anterior.
      Não responde ao filtro de período — é série histórica, como nos outros
      hubs. O mês corrente é parcial. */
   const evolucao = useMemo(() => {
     const porMes = new Map();
-    for (const r of vendasCat) {
+    for (const r of linhasFluxo) {
       const m = String(r.data ?? "").slice(0, 7);
       if (m) porMes.set(m, (porMes.get(m) ?? 0) + Number(r.valor ?? 0));
     }
@@ -1396,7 +1408,7 @@ function HubComercial() {
       const mAnt = `${d.getFullYear() - 1}-${m.slice(5)}`;
       return { mes: m, valor: porMes.get(m) ?? 0, anterior: porMes.get(mAnt) ?? 0, parcial: m === atual };
     });
-  }, [vendasCat]);
+  }, [linhasFluxo]);
 
   const geral = visao === "geral";
 
@@ -1404,10 +1416,10 @@ function HubComercial() {
      (volume) e soma o valor (R$) — duas grandezas, dois eixos. */
   const matFat = useMemo(() => {
     if (ehSympla) return [];
-    const dentro = noPeriodo(
-      (matfat.data ?? []).filter((r) => String(r.categoria) === categoria),
-      { inicio, fim }, "data"
-    );
+    const origem = ehGeral
+      ? (geralMensal.data ?? [])
+      : (matfat.data ?? []).filter((r) => String(r.categoria) === categoria);
+    const dentro = noPeriodo(origem, { inicio, fim }, "data");
     const m = new Map();
     for (const r of dentro) {
       const k = String(r.mes ?? "").slice(0, 7);
@@ -1421,7 +1433,7 @@ function HubComercial() {
     const atual = `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, "0")}`;
     return [...m.values()].sort((a, b) => a.mes.localeCompare(b.mes))
       .map((x) => ({ ...x, parcial: x.mes === atual }));
-  }, [matfat.data, categoria, inicio, fim, ehSympla]);
+  }, [matfat.data, geralMensal.data, categoria, inicio, fim, ehSympla, ehGeral]);
 
   /* Top 5 cursos por consultora (só GGB). Uso o MESMO recorte do pódio: em
      "Geral" o card mostra receita de todos os tempos, então o tooltip
@@ -1460,10 +1472,13 @@ function HubComercial() {
         sub: `${numero(s.eventos)} eventos · ${numero(s.ingressos)} ingressos`,
       }));
     }
-    const base = geral ? vendasCat : noPeriodo(vendasCat, { inicio, fim }, "data");
+    // Geral usa a view consolidada (chave = consultora, sem coluna de
+    // exibição); as categorias usam o histórico (chave de exibição).
+    const origem = ehGeral ? (geralCons.data ?? []) : vendasCat;
+    const base = geral ? origem : noPeriodo(origem, { inicio, fim }, "data");
     const m = new Map();
     for (const r of base) {
-      const k = r.consultor_id_exibicao ?? r.consultora ?? "—";
+      const k = ehGeral ? (r.consultora ?? "—") : (r.consultor_id_exibicao ?? r.consultora ?? "—");
       const a = m.get(k) ?? {
         consultor_id: k, consultora: r.consultora, foto_url: r.foto_url,
         atual: r.atual !== false, receita: 0, vendas: 0,
@@ -1475,9 +1490,9 @@ function HubComercial() {
     return [...m.values()]
       .map((a) => ({ ...a, ticket_medio: a.vendas ? a.receita / a.vendas : 0 }))
       .sort((x, y) => y.receita - x.receita);
-  }, [ehSympla, sympla.data, vendasCat, geral, inicio, fim]);
+  }, [ehSympla, ehGeral, sympla.data, geralCons.data, vendasCat, geral, inicio, fim]);
 
-  const fonte = ehSympla ? sympla : rankCat;
+  const fonte = ehSympla ? sympla : ehGeral ? geralCons : rankCat;
 
   /* A view entrega uma linha por venda. A identidade das 3 consultoras vem
      da base inteira (sem recorte) e as contagens, só do período — assim o
@@ -1510,6 +1525,20 @@ function HubComercial() {
 
   return (
     <>
+      {/* No Geral, deixa explícito o que está somado — e o que fica de fora. */}
+      {ehGeral && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+          padding: "7px 12px", marginBottom: 10, borderRadius: 9,
+          background: `${C.gold}0F`, border: `1px solid ${C.gold}33`,
+        }}>
+          <span style={{ fontSize: 11.5, fontWeight: 800, color: C.gold }}>Formação (GGB + CI + CIS)</span>
+          <span style={{ fontSize: 10.5, color: C.faint }}>
+            total consolidado das 3 unidades de formação · Eventos/Sympla vistos à parte.
+          </span>
+        </div>
+      )}
+
       {/* Faixa compacta: cada categoria é uma unidade de negócio, nunca somada. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))", gap: 8, marginBottom: 10 }}>
         <ChipKpi compacto hero Icone={Wallet} label={`Faturamento · ${rotuloCat(categoria)}`}
@@ -1537,9 +1566,9 @@ function HubComercial() {
         <div>
         <Bloco titulo="Evolução do faturamento" canto={`${rotuloCat(categoria)} · 12 meses`}>
           <Estado
-            carregando={rankCat.isLoading}
-            erro={rankCat.error}
-            vazio={ehSympla || !vendasCat.length}
+            carregando={carregFluxo}
+            erro={erroFluxo}
+            vazio={ehSympla || !linhasFluxo.length}
             vazioTitulo={ehSympla ? "Sympla não tem série mensal" : undefined}
             vazioDica={ehSympla ? "A view do Sympla é agregada e não traz data — sem dimensão temporal, não há evolução mensal honesta a mostrar." : undefined}
           >
@@ -1559,11 +1588,11 @@ function HubComercial() {
         {!ehSympla && (
           <Bloco titulo="Matrículas vs. Faturamento" canto={`${rotuloCat(categoria)} · ${rotulo}`}>
             <Estado
-              carregando={matfat.isLoading}
-              erro={matfat.error}
+              carregando={ehGeral ? geralMensal.isLoading : matfat.isLoading}
+              erro={ehGeral ? geralMensal.error : matfat.error}
               vazio={!matFat.length}
               vazioTitulo="Nenhuma matrícula no período"
-              vazioDica={`Nada entre ${inicio} e ${fim} nesta categoria. Troque o período no topo.`}
+              vazioDica={`Nada entre ${inicio} e ${fim}. Troque o período no topo.`}
             >
               <MatriculasVsFaturamento serie={matFat} />
             </Estado>
@@ -1611,10 +1640,10 @@ function HubComercial() {
             </Estado>
           </Bloco>
 
-      {/* Carinhas são exclusivas do time GGB — nas outras categorias não
-          existem, então o bloco nem aparece (em vez de vir vazio). */}
-      {ehGGB && (
-      <Bloco titulo="Placar · carinhas" canto={`${rotulo} · público`} sem altura={210}>
+      {/* Carinhas são do time GGB. Aparecem no GGB e no consolidado Geral
+          (que inclui o GGB); nas demais categorias o bloco nem aparece. */}
+      {mostraCarinhas && (
+      <Bloco titulo="Placar · carinhas" canto={`${rotulo} · GGB · público`} sem altura={210}>
         <Estado
           carregando={carinhas.isLoading}
           erro={carinhas.error}

@@ -126,6 +126,14 @@ export const useComercialMatriculasFaturamento = () =>
 export const useComercialCursosPorConsultora = () =>
   useView("vw_comercial_cursos_por_consultora", { ordem: ["data", "consultora", "curso", "valor"] });
 
+/* "Geral": consolidado das 3 formações (GGB + CI + CIS). Sympla fica de
+   fora — evento é outra unidade. As views já aplicam o split 50/50 do CI e
+   o tratamento do Danilo; o front só soma. */
+export const useComercialRankingGeralConsolidado = () =>
+  useView("vw_comercial_ranking_geral_consolidado", { ordem: ["data", "consultora", "valor"] });
+export const useComercialGeralMensal = () =>
+  useView("vw_comercial_geral_mensal", { ordem: ["data", "valor"] });
+
 /* Sympla: já agregado e sem dimensão de data — só a Jennifer, porque o
    dado do Sympla não tem vínculo de consultora. */
 export const useComercialSymplaJennifer = () => useView("vw_comercial_sympla_jennifer");
