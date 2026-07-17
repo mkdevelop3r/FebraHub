@@ -110,6 +110,13 @@ export const useComercialRankingPeriodo = () =>
 export const useComercialRankingCategoria = () =>
   useView("vw_comercial_ranking_categoria", { ordem: ["data", "categoria", "consultor_id", "valor"] });
 
+/* Ranking histórico: uma linha por venda, incluindo quem já saiu da empresa
+   (`atual` = false). É a fonte do faturamento REAL de qualquer período —
+   2022 aparece com quem vendeu na época, não zerado por falta de
+   consultora atual. `consultor_id_exibicao` é a chave de agrupamento. */
+export const useComercialRankingHistorico = () =>
+  useView("vw_comercial_ranking_historico", { ordem: ["data", "categoria", "consultor_id_exibicao", "valor"] });
+
 /* Sympla: já agregado e sem dimensão de data — só a Jennifer, porque o
    dado do Sympla não tem vínculo de consultora. */
 export const useComercialSymplaJennifer = () => useView("vw_comercial_sympla_jennifer");

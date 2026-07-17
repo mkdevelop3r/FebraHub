@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
-  useComercialRankingCategoria, useComercialSymplaJennifer, useComercialCarinhas,
+  useComercialRankingHistorico, useComercialSymplaJennifer, useComercialCarinhas,
   useFinanceiroReceita, useFinanceiroQualid,
   useFinanceiroPagamentos,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
@@ -121,7 +121,7 @@ function intervaloDe({ modo, ano, mesIdx }) {
    chumbado — se a base crescer pra trás, a navegação cresce junto. */
 /* Lista de categorias derivada do dado + Sympla (que vive noutra view). */
 function useCategoriasDisponiveis() {
-  const r = useComercialRankingCategoria();
+  const r = useComercialRankingHistorico();
   return useMemo(() => {
     const set = new Set();
     for (const x of r.data ?? []) if (x.categoria) set.add(String(x.categoria));
@@ -515,19 +515,21 @@ function ToggleVisao({ valor, onChange }) {
    a Beatriz está muito à frente e o card precisa dizer isso de relance. */
 function CardPodio({ c, pos }) {
   const primeiro = pos === 1;
+  const ex = c.atual === false; // ex-consultor: sem foto, marcado discreto
   return (
     <div style={{
       background: primeiro ? `linear-gradient(150deg, ${C.gold}14, rgba(255,255,255,.02))` : C.card,
       border: `1px solid ${primeiro ? `${C.gold}55` : C.cardLine}`,
-      borderRadius: 16, padding: "20px 18px",
-      display: "flex", flexDirection: "column", alignItems: "center", gap: 9, textAlign: "center",
+      borderRadius: 12, padding: "12px 8px",
+      display: "flex", flexDirection: "column", alignItems: "center", gap: 5, textAlign: "center",
+      opacity: ex ? 0.78 : 1,
     }}>
-      {primeiro && <Crown size={16} style={{ color: C.gold }} />}
+      {primeiro && <Crown size={13} style={{ color: C.gold }} />}
       <div style={{ position: "relative", lineHeight: 0 }}>
-        <Avatar url={c.foto_url} nome={c.consultora} tam={primeiro ? 92 : 68} />
+        <Avatar url={ex ? null : c.foto_url} nome={c.consultora} tam={primeiro ? 58 : 46} />
         <span style={{
-          position: "absolute", bottom: 0, right: 0, minWidth: 22, height: 22, padding: "0 5px",
-          borderRadius: 11, fontSize: 11, fontWeight: 800, fontFamily: GROTESK,
+          position: "absolute", bottom: -2, right: -2, minWidth: 18, height: 18, padding: "0 4px",
+          borderRadius: 9, fontSize: 9.5, fontWeight: 800, fontFamily: GROTESK,
           display: "flex", alignItems: "center", justifyContent: "center",
           background: primeiro ? `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` : "#22222a",
           color: primeiro ? "#100c04" : C.muted,
@@ -536,16 +538,26 @@ function CardPodio({ c, pos }) {
           {pos}º
         </span>
       </div>
-      <div style={{ fontSize: primeiro ? 14.5 : 13, fontWeight: 700, color: C.bright }}>{c.consultora}</div>
+      <div style={{ fontSize: primeiro ? 12.5 : 11.5, fontWeight: 700, color: ex ? C.muted : C.bright, lineHeight: 1.25 }}>
+        {c.consultora}
+      </div>
+      {ex && (
+        <span style={{
+          fontSize: 8.5, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase",
+          color: C.dim, border: `1px solid ${C.cardLine}`, borderRadius: 4, padding: "0 4px",
+        }}>
+          ex-consultora
+        </span>
+      )}
       <div style={{
-        fontFamily: GROTESK, fontSize: primeiro ? 26 : 20, fontWeight: 700,
-        letterSpacing: "-.5px", color: primeiro ? C.gold : C.text,
+        fontFamily: GROTESK, fontSize: primeiro ? 19 : 16, fontWeight: 700,
+        letterSpacing: "-.5px", color: ex ? C.muted : (primeiro ? C.gold : C.text),
       }}>
         {moeda(c.receita)}
       </div>
       {/* `sub` só é usado pelo Sympla (eventos/ingressos). Sem ela, o
           texto original de vendas/ticket segue idêntico. */}
-      <div style={{ fontSize: 11.5, color: C.faint }}>
+      <div style={{ fontSize: 9.5, color: C.faint, lineHeight: 1.3 }}>
         {c.sub ?? <>{numero(c.vendas)} vendas · ticket {moeda(c.ticket_medio)}</>}
       </div>
     </div>
@@ -557,19 +569,19 @@ function CardPodio({ c, pos }) {
 function LinhaPlacar({ p }) {
   const MAX_CHIPS = 5;
   const contagem = (Icone, cor, n, titulo) => (
-    <span style={{ display: "flex", alignItems: "center", gap: 5 }} title={titulo}>
-      <Icone size={15} style={{ color: cor }} />
-      <b style={{ fontFamily: GROTESK, fontSize: 14, color: n > 0 ? C.text : C.dim }}>{n}</b>
+    <span style={{ display: "flex", alignItems: "center", gap: 4 }} title={titulo}>
+      <Icone size={13} style={{ color: cor }} />
+      <b style={{ fontFamily: GROTESK, fontSize: 13, color: n > 0 ? C.text : C.dim }}>{n}</b>
     </span>
   );
 
   return (
-    <div style={{ padding: "10px 20px", borderBottom: `1px solid ${C.hair}`, display: "flex", alignItems: "center", gap: 12 }}>
-      <Avatar url={p.foto_url} nome={p.consultora} tam={38} />
+    <div style={{ padding: "7px 14px", borderBottom: `1px solid ${C.hair}`, display: "flex", alignItems: "center", gap: 10 }}>
+      <Avatar url={p.foto_url} nome={p.consultora} tam={30} />
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {p.consultora}
           </span>
           {/* Um chip por presente. O "?" é o prêmio — brinde surpresa. */}
@@ -696,32 +708,32 @@ function Lista({ linhas, formatar = moeda, total, top }) {
 
 /* Chip de KPI compacto — faixa horizontal do design: ícone + label +
    valor + delta/nota. `hero` deixa o card dourado (o número-âncora). */
-function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero }) {
+function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto }) {
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: 12, minHeight: 78,
+      display: "flex", alignItems: "center", gap: compacto ? 9 : 12, minHeight: compacto ? 56 : 78,
       background: "rgba(255,255,255,.03)",
       border: `1px solid ${hero ? `${C.gold}38` : C.cardLine}`,
-      borderRadius: 13, padding: "13px 15px",
+      borderRadius: compacto ? 10 : 13, padding: compacto ? "8px 11px" : "13px 15px",
     }}>
       <span style={{
-        width: 30, height: 30, flexShrink: 0, borderRadius: 8,
+        width: compacto ? 25 : 30, height: compacto ? 25 : 30, flexShrink: 0, borderRadius: compacto ? 7 : 8,
         background: hero ? `${C.gold}24` : "rgba(255,255,255,.05)",
         color: hero ? C.gold : "#C9C9CE",
         display: "flex", alignItems: "center", justifyContent: "center",
       }}>
-        <Icone size={15} />
+        <Icone size={compacto ? 13 : 15} />
       </span>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: GROTESK, fontSize: 22, fontWeight: 700, letterSpacing: "-.5px", color: hero ? C.gold : C.text }}>
+        <div style={{ fontSize: compacto ? 10 : 11, color: C.muted, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: compacto ? 5 : 7, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: GROTESK, fontSize: compacto ? 18 : 22, fontWeight: 700, letterSpacing: "-.5px", color: hero ? C.gold : C.text }}>
             {valor}
-            {unidade && <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}> {unidade}</span>}
+            {unidade && <span style={{ fontSize: compacto ? 11 : 12, color: C.muted, fontWeight: 600 }}> {unidade}</span>}
           </span>
           {delta != null
-            ? <span style={{ fontSize: 11, fontWeight: 800, color: up ? C.up : C.down }}>{up ? "▲" : "▼"} {String(delta).replace(/[+-]/, "")}</span>
-            : nota && <span style={{ fontSize: 11, fontWeight: 800, color: C.muted }}>{nota}</span>}
+            ? <span style={{ fontSize: compacto ? 10 : 11, fontWeight: 800, color: up ? C.up : C.down }}>{up ? "▲" : "▼"} {String(delta).replace(/[+-]/, "")}</span>
+            : nota && <span style={{ fontSize: compacto ? 9.5 : 11, fontWeight: 800, color: C.muted }}>{nota}</span>}
         </div>
       </div>
     </div>
@@ -1195,14 +1207,17 @@ function HubComercial() {
   const { inicio, fim, rotulo } = usePeriodo();
   const { categoria } = useCategoria();
   const [visao, setVisao] = useState("periodo");
-  const rankCat = useComercialRankingCategoria();
+  const rankCat = useComercialRankingHistorico();
   const sympla = useComercialSymplaJennifer();
   const carinhas = useComercialCarinhas();
 
   const ehSympla = categoria === CAT_SYMPLA;
+  // Carinhas são exclusivas do time GGB — não existem nas outras categorias.
+  const ehGGB = String(categoria ?? "").toUpperCase() === "GGB";
   const anoAnterior = new Date().getFullYear() - 1;
 
-  // Todas as vendas da categoria selecionada (uma linha por venda).
+  // Todas as vendas da categoria (uma linha por venda), incluindo as de quem
+  // já saiu: é isso que faz 2022 mostrar faturamento real em vez de zero.
   const vendasCat = useMemo(
     () => (rankCat.data ?? []).filter((r) => String(r.categoria) === categoria),
     [rankCat.data, categoria]
@@ -1261,10 +1276,10 @@ function HubComercial() {
     const base = geral ? vendasCat : noPeriodo(vendasCat, { inicio, fim }, "data");
     const m = new Map();
     for (const r of base) {
-      const k = r.consultor_id ?? r.consultora ?? "—";
+      const k = r.consultor_id_exibicao ?? r.consultora ?? "—";
       const a = m.get(k) ?? {
-        consultor_id: r.consultor_id, consultora: r.consultora, foto_url: r.foto_url,
-        receita: 0, vendas: 0,
+        consultor_id: k, consultora: r.consultora, foto_url: r.foto_url,
+        atual: r.atual !== false, receita: 0, vendas: 0,
       };
       a.receita += Number(r.valor ?? 0);
       a.vendas += 1;
@@ -1308,79 +1323,89 @@ function HubComercial() {
 
   return (
     <>
-      {/* Cada categoria é uma unidade de negócio: nunca somo com as outras. */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
-        <ChipKpi hero Icone={Wallet} label={`Faturamento · ${rotuloCat(categoria)}`}
+      {/* Faixa compacta: cada categoria é uma unidade de negócio, nunca somada. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))", gap: 8, marginBottom: 10 }}>
+        <ChipKpi compacto hero Icone={Wallet} label={`Faturamento · ${rotuloCat(categoria)}`}
           valor={ehSympla ? moeda(podio[0]?.receita ?? 0) : moeda(kpi.receita)}
-          nota={ehSympla ? "receita líquida · todos os tempos" : rotulo} />
-        <ChipKpi Icone={Receipt} label={ehSympla ? "Ingressos" : "Total de matrículas"}
+          nota={ehSympla ? "líquida · todos os tempos" : rotulo} />
+        <ChipKpi compacto Icone={Receipt} label={ehSympla ? "Ingressos" : "Total de matrículas"}
           valor={ehSympla ? numero(sympla.data?.[0]?.ingressos ?? 0) : numero(kpi.matriculas)}
           nota={ehSympla ? `${numero(sympla.data?.[0]?.eventos ?? 0)} eventos` : rotulo} />
-        <ChipKpi Icone={TrendingUp} label="Ticket médio"
+        <ChipKpi compacto Icone={TrendingUp} label="Ticket médio"
           valor={ehSympla ? "—" : (kpi.ticket != null ? moeda(kpi.ticket) : "—")}
           nota={ehSympla ? "não medível no Sympla" : "receita ÷ matrículas"} />
-        <ChipKpi Icone={TrendingUp} label="vs. ano anterior"
+        <ChipKpi compacto Icone={TrendingUp} label="vs. ano anterior"
           valor={kpi.yoy != null ? `${kpi.yoy >= 0 ? "+" : ""}${kpi.yoy.toFixed(0)}%` : "—"}
           delta={kpi.yoy != null ? `${Math.abs(kpi.yoy).toFixed(0)}%` : null}
           up={kpi.yoy >= 0}
-          nota={kpi.yoy == null ? `sem base de ${anoAnterior}` : `mesmo período de ${anoAnterior}`} />
+          nota={kpi.yoy == null ? `sem base de ${anoAnterior}` : `vs. ${anoAnterior}`} />
         {/* Não existe meta no banco — chip fica honesto em vez de inventar. */}
-        <ChipKpi Icone={Clock} label="% da meta" valor="—" nota="EM BREVE · sem metas cadastradas" />
+        <ChipKpi compacto Icone={Clock} label="% da meta" valor="—" nota="EM BREVE · sem metas" />
         {/* A ponte lead→venda não é confiável — não dá pra medir conversão. */}
-        <ChipKpi Icone={Clock} label="Taxa de conversão" valor="—" nota="EM BREVE · ainda não medível" />
+        <ChipKpi compacto Icone={Clock} label="Taxa de conversão" valor="—" nota="EM BREVE · não medível" />
       </div>
 
-      <Bloco titulo="Evolução do faturamento" canto={`${rotuloCat(categoria)} · últimos 12 meses`}>
-        <Estado
-          carregando={rankCat.isLoading}
-          erro={rankCat.error}
-          vazio={ehSympla || !vendasCat.length}
-          vazioTitulo={ehSympla ? "Sympla não tem série mensal" : undefined}
-          vazioDica={ehSympla ? "A view do Sympla é agregada e não traz data — sem dimensão temporal, não há evolução mensal honesta a mostrar." : undefined}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 6, fontSize: 11, color: C.muted, fontWeight: 600 }}>
-            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 10, height: 10, borderRadius: 3, background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` }} /> Período
-            </span>
-            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 14, height: 0, borderTop: `2px dashed ${AZUL_ANTERIOR}` }} /> Mesmo período {anoAnterior}
-            </span>
-          </div>
-          <BarrasEvolucao serie={evolucao} anoAnterior={anoAnterior} />
-        </Estado>
-      </Bloco>
+      {/* Evolução à esquerda, consultoras à direita — cabe numa tela de TV. */}
+      <div className="gridCom">
+        <Bloco titulo="Evolução do faturamento" canto={`${rotuloCat(categoria)} · 12 meses`}>
+          <Estado
+            carregando={rankCat.isLoading}
+            erro={rankCat.error}
+            vazio={ehSympla || !vendasCat.length}
+            vazioTitulo={ehSympla ? "Sympla não tem série mensal" : undefined}
+            vazioDica={ehSympla ? "A view do Sympla é agregada e não traz data — sem dimensão temporal, não há evolução mensal honesta a mostrar." : undefined}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4, fontSize: 10.5, color: C.muted, fontWeight: 600 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 9, height: 9, borderRadius: 3, background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` }} /> Período
+              </span>
+              <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 13, height: 0, borderTop: `2px dashed ${AZUL_ANTERIOR}` }} /> Mesmo período {anoAnterior}
+              </span>
+            </div>
+            <BarrasEvolucao serie={evolucao} anoAnterior={anoAnterior} />
+          </Estado>
+        </Bloco>
 
-      <SecaoTitulo
-        titulo={`Consultoras · ${rotuloCat(categoria)}`}
-        canto={
-          <span style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "flex-end" }}>
-            <span>
-              {ehSympla
-                ? "única vendedora de eventos · todos os tempos"
-                : geral ? "hall da fama · todos os tempos" : `${rotulo} · a ordem muda com o período`}
-            </span>
-            {!ehSympla && <ToggleVisao valor={visao} onChange={setVisao} />}
-          </span>
-        }
-      />
-      <Estado
-        carregando={fonte.isLoading}
-        erro={fonte.error}
-        vazio={!podio.length}
-        vazioTitulo={ehSympla || geral ? undefined : "Nenhuma venda no período"}
-        vazioDica={ehSympla || geral ? undefined : `Nenhuma venda entre ${inicio} e ${fim}. Troque o período no topo, ou veja o ranking em "Geral".`}
-      >
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
-          {podio.map((c, i) => (
-            <CardPodio key={c.consultor_id ?? c.consultora} c={c} pos={i + 1} />
-          ))}
-        </div>
-      </Estado>
+        <div>
+          <Bloco
+            titulo={`Consultoras · ${rotuloCat(categoria)}`}
+            canto={
+              <span style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+                <span style={{ fontSize: 10 }}>
+                  {ehSympla ? "todos os tempos" : geral ? "todos os tempos" : rotulo}
+                </span>
+                {!ehSympla && <ToggleVisao valor={visao} onChange={setVisao} />}
+              </span>
+            }
+          >
+            <Estado
+              carregando={fonte.isLoading}
+              erro={fonte.error}
+              vazio={!podio.length}
+              vazioTitulo={ehSympla || geral ? undefined : "Nenhuma venda no período"}
+              vazioDica={ehSympla || geral ? undefined : `Nenhuma venda entre ${inicio} e ${fim}. Troque o período no topo, ou veja em "Geral".`}
+            >
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(Math.max(podio.length, 1), 3)}, 1fr)`, gap: 8 }}>
+                {podio.slice(0, 3).map((c, i) => (
+                  <CardPodio key={c.consultor_id ?? c.consultora} c={c} pos={i + 1} />
+                ))}
+              </div>
+              {podio.length > 3 && (
+                <div style={{ marginTop: 8 }}>
+                  <Lista
+                    linhas={podio.slice(3).map((c) => ({ rotulo: c.consultora, valor: c.receita, orfa: c.atual === false }))}
+                    top={4}
+                  />
+                </div>
+              )}
+            </Estado>
+          </Bloco>
 
-      {/* Sympla não tem consultoras (o dado não traz vínculo) — sem placar. */}
-      {!ehSympla && <>
-      <SecaoTitulo titulo="Placar" canto={`${rotulo} · time GGB`} />
-      <Bloco titulo="Carinhas por consultora" canto={`${rotulo} · placar público`} sem altura={ALTURA_PAINEL}>
+      {/* Carinhas são exclusivas do time GGB — nas outras categorias não
+          existem, então o bloco nem aparece (em vez de vir vazio). */}
+      {ehGGB && (
+      <Bloco titulo="Placar · carinhas" canto={`${rotulo} · público`} sem altura={210}>
         <Estado
           carregando={carinhas.isLoading}
           erro={carinhas.error}
@@ -1401,7 +1426,9 @@ function HubComercial() {
           </div>
         </Estado>
       </Bloco>
-      </>}
+      )}
+        </div>
+      </div>
     </>
   );
 }
@@ -2056,6 +2083,10 @@ function Shell({ perfil }) {
           .finRow1 { grid-template-columns: 5fr 4fr 3fr; }
           .finRow2 { grid-template-columns: 7fr 5fr; }
         }
+        /* Hub Comercial: evolução à esquerda, consultoras à direita. Denso
+           pra caber numa TV 16:9 sem rolagem. */
+        .gridCom { display: grid; grid-template-columns: 1fr; column-gap: 14px; align-items: start; }
+        @media (min-width: 1100px) { .gridCom { grid-template-columns: 7fr 5fr; } }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
       `}</style>
 
