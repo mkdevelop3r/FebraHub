@@ -1,4 +1,4 @@
-import { useState, useMemo, createContext, useContext } from "react";
+import { useState, useMemo, useRef, createContext, useContext } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   TrendingUp, Wallet, Megaphone, GraduationCap, ShoppingBag, CalendarDays,
@@ -10,6 +10,7 @@ import {
 import {
   useSessao, usePerfil, entrar, sair,
   useComercialRankingHistorico, useComercialSymplaJennifer, useComercialCarinhas,
+  useComercialMatriculasFaturamento, useComercialCursosPorConsultora,
   useFinanceiroReceita, useFinanceiroQualid,
   useFinanceiroPagamentos,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
@@ -564,6 +565,55 @@ function CardPodio({ c, pos }) {
   );
 }
 
+/* Envolve o CardPodio (sem tocar nele) e revela os cursos da consultora.
+   O tooltip é `fixed` porque o Bloco tem overflow:hidden e cortaria um
+   absolute. Clique também abre/fecha — TV não tem mouse. */
+function CardComCursos({ c, pos, cursos }) {
+  const [ancora, setAncora] = useState(null);
+  const ref = useRef(null);
+  const tem = cursos && cursos.length > 0;
+  const abrir = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setAncora({ x: r.left + r.width / 2, y: r.bottom + 6 });
+  };
+  const fechar = () => setAncora(null);
+  return (
+    <div
+      ref={ref}
+      style={{ position: "relative", cursor: tem ? "pointer" : "default" }}
+      onMouseEnter={tem ? abrir : undefined}
+      onMouseLeave={tem ? fechar : undefined}
+      onClick={tem ? () => (ancora ? fechar() : abrir()) : undefined}
+    >
+      <CardPodio c={c} pos={pos} />
+      {tem && ancora && (
+        <div style={{
+          position: "fixed", left: ancora.x, top: ancora.y, transform: "translateX(-50%)",
+          zIndex: 60, pointerEvents: "none",
+          background: "#15151a", border: `1px solid ${C.cardLine}`, borderRadius: 10,
+          padding: "9px 11px", minWidth: 220, maxWidth: 300,
+          boxShadow: "0 12px 32px rgba(0,0,0,.55)",
+        }}>
+          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gold, marginBottom: 5 }}>
+            Top cursos · {c.consultora}
+          </div>
+          {cursos.map((cu) => (
+            <div key={cu.curso} style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+              <span style={{ fontSize: 11, color: C.bright, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {cu.curso}
+              </span>
+              <span style={{ fontSize: 9.5, color: C.faint, flexShrink: 0 }}>{numero(cu.vendas)}×</span>
+              <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700, color: C.gold, flexShrink: 0 }}>
+                {moeda(cu.receita)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* Linha do placar. As verdes rendem brinde a cada 10; a barra mede só o
    progresso pro próximo. Vermelha é contador puro — sem punição visível. */
 function LinhaPlacar({ p }) {
@@ -1004,6 +1054,93 @@ function BarrasEvolucao({ serie, anoAnterior }) {
   );
 }
 
+/* Matrículas (volume) x Faturamento (R$) no mesmo gráfico, com DOIS eixos:
+   contagem e reais não dividem escala. Cruzar as duas séries responde "o
+   crescimento veio de vender mais ou de vender mais caro?". */
+function MatriculasVsFaturamento({ serie }) {
+  if (!serie.length) return null;
+  const W = 720, H = 200, padL = 34, padR = 44, padT = 18, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
+  const maxMat = Math.max(...serie.map((s) => s.matriculas), 1);
+  const maxFat = Math.max(...serie.map((s) => s.faturamento), 1);
+  const n = serie.length, slot = plotW / n, bw = Math.min(34, slot * 0.5);
+  const cx = (i) => padL + slot * i + slot / 2;
+  const yMat = (v) => base - (v / maxMat) * plotH;
+  const yFat = (v) => base - (v / maxFat) * plotH;
+  const ptsFat = serie.map((s, i) => [cx(i), yFat(s.faturamento)]);
+  const idxParcial = serie.findIndex((s) => s.parcial);
+  const ultSolido = idxParcial > 0 ? idxParcial : n - 1;
+  const solido = ptsFat.slice(0, ultSolido + 1).map((p) => p.join(",")).join(" ");
+  const tracejado = idxParcial > 0
+    ? [ptsFat[idxParcial - 1], ptsFat[idxParcial]].map((p) => p.join(",")).join(" ") : null;
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4, fontSize: 10.5, color: C.muted, fontWeight: 600 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 2, background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` }} /> Matrículas
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 13, height: 0, borderTop: `2px solid ${C.up}` }} /> Faturamento
+        </span>
+      </div>
+
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        <defs>
+          <linearGradient id="gradMat" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={C.goldTop} /><stop offset="1" stopColor={C.goldBase} />
+          </linearGradient>
+          <pattern id="hachMat" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke={C.gold} strokeWidth="3" opacity="0.4" />
+          </pattern>
+        </defs>
+
+        {/* eixo esquerdo = volume; direito = R$ */}
+        {[0, 0.5, 1].map((f, i) => {
+          const yy = base - f * plotH;
+          return (
+            <g key={i}>
+              <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
+              <text x={padL - 6} y={yy + 3} fontSize="9" textAnchor="end" fill={C.faint} fontFamily={SANS}>
+                {Math.round(maxMat * f)}
+              </text>
+              <text x={W - padR + 6} y={yy + 3} fontSize="9" textAnchor="start" fill={C.up} opacity="0.8" fontFamily={SANS}>
+                {compacto(maxFat * f)}
+              </text>
+            </g>
+          );
+        })}
+
+        {serie.map((s, i) => (
+          <rect key={s.mes} x={cx(i) - bw / 2} y={yMat(s.matriculas)} width={bw}
+            height={Math.max(0, base - yMat(s.matriculas))} rx="2"
+            fill={s.parcial ? "url(#hachMat)" : "url(#gradMat)"}
+            stroke={s.parcial ? C.gold : "none"} strokeDasharray={s.parcial ? "3 2" : undefined}
+            strokeWidth={s.parcial ? 1 : 0} />
+        ))}
+
+        <polyline points={solido} fill="none" stroke={C.up} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        {tracejado && <polyline points={tracejado} fill="none" stroke={C.up} strokeWidth="1.8" strokeDasharray="4 3" opacity="0.7" />}
+        {ptsFat.map(([x0, y0], i) => (
+          <circle key={i} cx={x0} cy={y0} r="2.2"
+            fill={serie[i].parcial ? C.void : C.up} stroke={C.up} strokeWidth={serie[i].parcial ? 1.2 : 0} />
+        ))}
+
+        {serie.map((s, i) => (
+          <text key={s.mes} x={cx(i)} y={H - 7} fontSize="9.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>
+            {mesCurto(s.mes)}
+          </text>
+        ))}
+      </svg>
+
+      <div style={{ fontSize: 10, color: C.faint, marginTop: 5, lineHeight: 1.45 }}>
+        Sobem juntas = crescimento por <b style={{ color: C.muted }}>volume</b> (mais vendas). Faturamento
+        subindo mais que as matrículas = <b style={{ color: C.muted }}>ticket maior</b>. Último mês tracejado = parcial.
+      </div>
+    </>
+  );
+}
+
 /* Caixa recebido — card destaque verde. Cobre SÓ a CisPay; a Stone
    ainda não está integrada. Rotulado "Caixa CisPay (parcial)" — nunca
    como caixa total, senão vira número que engana. */
@@ -1210,6 +1347,8 @@ function HubComercial() {
   const rankCat = useComercialRankingHistorico();
   const sympla = useComercialSymplaJennifer();
   const carinhas = useComercialCarinhas();
+  const matfat = useComercialMatriculasFaturamento();
+  const cursos = useComercialCursosPorConsultora();
 
   const ehSympla = categoria === CAT_SYMPLA;
   // Carinhas são exclusivas do time GGB — não existem nas outras categorias.
@@ -1260,6 +1399,54 @@ function HubComercial() {
   }, [vendasCat]);
 
   const geral = visao === "geral";
+
+  /* Matrículas x faturamento por mês, dentro do recorte. Conta as linhas
+     (volume) e soma o valor (R$) — duas grandezas, dois eixos. */
+  const matFat = useMemo(() => {
+    if (ehSympla) return [];
+    const dentro = noPeriodo(
+      (matfat.data ?? []).filter((r) => String(r.categoria) === categoria),
+      { inicio, fim }, "data"
+    );
+    const m = new Map();
+    for (const r of dentro) {
+      const k = String(r.mes ?? "").slice(0, 7);
+      if (!k) continue;
+      const a = m.get(k) ?? { mes: k, matriculas: 0, faturamento: 0 };
+      a.matriculas += 1;
+      a.faturamento += Number(r.valor ?? 0);
+      m.set(k, a);
+    }
+    const h = new Date();
+    const atual = `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, "0")}`;
+    return [...m.values()].sort((a, b) => a.mes.localeCompare(b.mes))
+      .map((x) => ({ ...x, parcial: x.mes === atual }));
+  }, [matfat.data, categoria, inicio, fim, ehSympla]);
+
+  /* Top 5 cursos por consultora (só GGB). Uso o MESMO recorte do pódio: em
+     "Geral" o card mostra receita de todos os tempos, então o tooltip
+     também — senão o detalhe contradiria o número acima dele. */
+  const cursosPorConsultora = useMemo(() => {
+    if (!ehGGB) return new Map();
+    const soGGB = (cursos.data ?? []).filter((r) => String(r.categoria).toUpperCase() === "GGB");
+    const base = geral ? soGGB : noPeriodo(soGGB, { inicio, fim }, "data");
+    const porNome = new Map();
+    for (const r of base) {
+      const nome = String(r.consultora ?? "");
+      if (!porNome.has(nome)) porNome.set(nome, new Map());
+      const cm = porNome.get(nome);
+      const k = String(r.curso ?? "—");
+      const a = cm.get(k) ?? { curso: k, vendas: 0, receita: 0 };
+      a.vendas += 1;
+      a.receita += Number(r.valor ?? 0);
+      cm.set(k, a);
+    }
+    const out = new Map();
+    for (const [nome, cm] of porNome) {
+      out.set(nome, [...cm.values()].sort((a, b) => b.receita - a.receita).slice(0, 5));
+    }
+    return out;
+  }, [cursos.data, ehGGB, geral, inicio, fim]);
 
   /* Pódio. Sympla vem de outra view (agregada, sem data): uma consultora só,
      medida em receita líquida/eventos/ingressos. */
@@ -1347,6 +1534,7 @@ function HubComercial() {
 
       {/* Evolução à esquerda, consultoras à direita — cabe numa tela de TV. */}
       <div className="gridCom">
+        <div>
         <Bloco titulo="Evolução do faturamento" canto={`${rotuloCat(categoria)} · 12 meses`}>
           <Estado
             carregando={rankCat.isLoading}
@@ -1367,6 +1555,22 @@ function HubComercial() {
           </Estado>
         </Bloco>
 
+        {/* Sympla é evento, outra natureza — não entra neste cruzamento. */}
+        {!ehSympla && (
+          <Bloco titulo="Matrículas vs. Faturamento" canto={`${rotuloCat(categoria)} · ${rotulo}`}>
+            <Estado
+              carregando={matfat.isLoading}
+              erro={matfat.error}
+              vazio={!matFat.length}
+              vazioTitulo="Nenhuma matrícula no período"
+              vazioDica={`Nada entre ${inicio} e ${fim} nesta categoria. Troque o período no topo.`}
+            >
+              <MatriculasVsFaturamento serie={matFat} />
+            </Estado>
+          </Bloco>
+        )}
+        </div>
+
         <div>
           <Bloco
             titulo={`Consultoras · ${rotuloCat(categoria)}`}
@@ -1386,9 +1590,14 @@ function HubComercial() {
               vazioTitulo={ehSympla || geral ? undefined : "Nenhuma venda no período"}
               vazioDica={ehSympla || geral ? undefined : `Nenhuma venda entre ${inicio} e ${fim}. Troque o período no topo, ou veja em "Geral".`}
             >
+              {/* Hover com cursos é exclusivo do GGB — nas outras categorias
+                  o card segue exatamente como antes, sem wrapper. */}
               <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(Math.max(podio.length, 1), 3)}, 1fr)`, gap: 8 }}>
                 {podio.slice(0, 3).map((c, i) => (
-                  <CardPodio key={c.consultor_id ?? c.consultora} c={c} pos={i + 1} />
+                  ehGGB
+                    ? <CardComCursos key={c.consultor_id ?? c.consultora} c={c} pos={i + 1}
+                        cursos={cursosPorConsultora.get(c.consultora)} />
+                    : <CardPodio key={c.consultor_id ?? c.consultora} c={c} pos={i + 1} />
                 ))}
               </div>
               {podio.length > 3 && (

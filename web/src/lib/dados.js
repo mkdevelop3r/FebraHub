@@ -117,6 +117,15 @@ export const useComercialRankingCategoria = () =>
 export const useComercialRankingHistorico = () =>
   useView("vw_comercial_ranking_historico", { ordem: ["data", "categoria", "consultor_id_exibicao", "valor"] });
 
+/* Uma linha por matrícula: o front conta (volume) e soma (faturamento)
+   por mês, pra cruzar as duas séries no mesmo gráfico. */
+export const useComercialMatriculasFaturamento = () =>
+  useView("vw_comercial_matriculas_faturamento", { ordem: ["data", "categoria", "valor"] });
+
+/* Cursos vendidos por consultora — alimenta o tooltip do ranking (só GGB). */
+export const useComercialCursosPorConsultora = () =>
+  useView("vw_comercial_cursos_por_consultora", { ordem: ["data", "consultora", "curso", "valor"] });
+
 /* Sympla: já agregado e sem dimensão de data — só a Jennifer, porque o
    dado do Sympla não tem vínculo de consultora. */
 export const useComercialSymplaJennifer = () => useView("vw_comercial_sympla_jennifer");
