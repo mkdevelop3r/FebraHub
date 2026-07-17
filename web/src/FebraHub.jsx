@@ -5,10 +5,11 @@ import {
   LayoutDashboard, Lock, Mail, AlertTriangle, Package, LogOut, Power,
   Database, ShieldAlert, Loader2, ArrowRight, Sparkles, Bell,
   Clock, Receipt, Hourglass, ChevronLeft, ChevronRight, ChevronDown,
+  Smile, Frown, Meh, Crown, Gift,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
-  useComercialFunil, useComercialRanking,
+  useComercialRankingGeral, useComercialRankingPeriodo, useComercialCarinhas,
   useFinanceiroReceita, useFinanceiroQualid,
   useFinanceiroPagamentos,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
@@ -55,7 +56,7 @@ const SANS = "'Manrope', system-ui, sans-serif";
 const ALTURA_PAINEL = 260;
 
 const HUBS = [
-  { key: "comercial",  nome: "Comercial",  Icone: TrendingUp,    desc: "Funil, conversão e consultores" },
+  { key: "comercial",  nome: "Comercial",  Icone: TrendingUp,    desc: "Pódio de consultoras e placar da semana" },
   { key: "financeiro", nome: "Financeiro", Icone: Wallet,        desc: "Receita por curso e cobertura" },
   { key: "marketing",  nome: "Marketing",  Icone: Megaphone,     desc: "Origem de leads e campanhas" },
   { key: "pedagogico", nome: "Pedagógico", Icone: GraduationCap, desc: "Turmas, matrículas e conclusão" },
@@ -144,10 +145,11 @@ function useRangeDatas() {
 const PeriodoCtx = createContext(null);
 const usePeriodo = () => useContext(PeriodoCtx);
 
-// Recorte de fluxo pela coluna `data` (data_pagamento). ISO compara como string.
-const noPeriodo = (linhas, { inicio, fim }) =>
+// Recorte de fluxo pela coluna de data. ISO compara como string.
+// `campo` varia por view: as _periodo usam `data`; as carinhas, `data_pagamento`.
+const noPeriodo = (linhas, { inicio, fim }, campo = "data") =>
   (linhas ?? []).filter((r) => {
-    const d = String(r.data ?? "").slice(0, 10);
+    const d = String(r[campo] ?? "").slice(0, 10);
     return d && d >= inicio && d <= fim;
   });
 
@@ -400,6 +402,156 @@ function SeletorPeriodo() {
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/* Foto da consultora. O PNG já vem circular e com moldura dourada própria,
+   então nada de borda/recorte extra — só dimensiona. Se a imagem falhar ou
+   não existir, cai nas iniciais em vez de quebrar o card. */
+function Avatar({ url, nome, tam = 64 }) {
+  const [erro, setErro] = useState(false);
+  const iniciais = (nome ?? "").split(/[\s.]+/).filter(Boolean).slice(0, 2)
+    .map((p) => p[0]?.toUpperCase()).join("") || "?";
+  if (!url || erro) {
+    return (
+      <div style={{
+        width: tam, height: tam, borderRadius: "50%", flexShrink: 0,
+        background: "linear-gradient(150deg,#3a3a40,#1c1c20)",
+        border: `1px solid ${C.gold}66`, color: C.gold,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontWeight: 700, fontSize: Math.round(tam * 0.34),
+      }}>
+        {iniciais}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt={nome ?? ""}
+      onError={() => setErro(true)}
+      style={{ width: tam, height: tam, objectFit: "contain", flexShrink: 0, display: "block" }}
+    />
+  );
+}
+
+/* Alterna a fonte do pódio: recorte do filtro global x hall da fama. */
+function ToggleVisao({ valor, onChange }) {
+  return (
+    <span style={{ display: "flex", gap: 2, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, borderRadius: 9, padding: 2, flexShrink: 0 }}>
+      {[{ key: "periodo", label: "Período" }, { key: "geral", label: "Geral" }].map((o) => {
+        const ativo = o.key === valor;
+        return (
+          <button key={o.key} onClick={() => onChange(o.key)} aria-pressed={ativo} style={{
+            fontFamily: SANS, fontSize: 11, fontWeight: 700, padding: "4px 10px",
+            borderRadius: 7, border: "none", cursor: "pointer",
+            background: ativo ? `${C.gold}1F` : "transparent",
+            color: ativo ? C.gold : C.muted,
+          }}>
+            {o.label}
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
+/* Card do pódio. O 1º lugar ganha moldura dourada, coroa e número maior —
+   a Beatriz está muito à frente e o card precisa dizer isso de relance. */
+function CardPodio({ c, pos }) {
+  const primeiro = pos === 1;
+  return (
+    <div style={{
+      background: primeiro ? `linear-gradient(150deg, ${C.gold}14, rgba(255,255,255,.02))` : C.card,
+      border: `1px solid ${primeiro ? `${C.gold}55` : C.cardLine}`,
+      borderRadius: 16, padding: "20px 18px",
+      display: "flex", flexDirection: "column", alignItems: "center", gap: 9, textAlign: "center",
+    }}>
+      {primeiro && <Crown size={16} style={{ color: C.gold }} />}
+      <div style={{ position: "relative", lineHeight: 0 }}>
+        <Avatar url={c.foto_url} nome={c.consultora} tam={primeiro ? 92 : 68} />
+        <span style={{
+          position: "absolute", bottom: 0, right: 0, minWidth: 22, height: 22, padding: "0 5px",
+          borderRadius: 11, fontSize: 11, fontWeight: 800, fontFamily: GROTESK,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: primeiro ? `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` : "#22222a",
+          color: primeiro ? "#100c04" : C.muted,
+          border: `1px solid ${primeiro ? C.goldTop : C.cardLine}`,
+        }}>
+          {pos}º
+        </span>
+      </div>
+      <div style={{ fontSize: primeiro ? 14.5 : 13, fontWeight: 700, color: C.bright }}>{c.consultora}</div>
+      <div style={{
+        fontFamily: GROTESK, fontSize: primeiro ? 26 : 20, fontWeight: 700,
+        letterSpacing: "-.5px", color: primeiro ? C.gold : C.text,
+      }}>
+        {moeda(c.receita)}
+      </div>
+      <div style={{ fontSize: 11.5, color: C.faint }}>
+        {numero(c.vendas)} vendas · ticket {moeda(c.ticket_medio)}
+      </div>
+    </div>
+  );
+}
+
+/* Linha do placar. As verdes rendem brinde a cada 10; a barra mede só o
+   progresso pro próximo. Vermelha é contador puro — sem punição visível. */
+function LinhaPlacar({ p }) {
+  const MAX_CHIPS = 5;
+  const contagem = (Icone, cor, n, titulo) => (
+    <span style={{ display: "flex", alignItems: "center", gap: 5 }} title={titulo}>
+      <Icone size={15} style={{ color: cor }} />
+      <b style={{ fontFamily: GROTESK, fontSize: 14, color: n > 0 ? C.text : C.dim }}>{n}</b>
+    </span>
+  );
+
+  return (
+    <div style={{ padding: "10px 20px", borderBottom: `1px solid ${C.hair}`, display: "flex", alignItems: "center", gap: 12 }}>
+      <Avatar url={p.foto_url} nome={p.consultora} tam={38} />
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {p.consultora}
+          </span>
+          {/* Um chip por presente. O "?" é o prêmio — brinde surpresa. */}
+          {p.presentes > 0 && (
+            <span style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+              {Array.from({ length: Math.min(p.presentes, MAX_CHIPS) }).map((_, i) => (
+                <span key={i} title="Brinde surpresa" style={{
+                  display: "flex", alignItems: "center", gap: 2, fontSize: 10, fontWeight: 800,
+                  color: "#100c04", background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})`,
+                  border: `1px solid ${C.goldTop}`, padding: "1px 5px", borderRadius: 5, flexShrink: 0,
+                }}>
+                  <Gift size={11} /> ?
+                </span>
+              ))}
+              {p.presentes > MAX_CHIPS && (
+                <b style={{ fontSize: 10.5, fontWeight: 800, color: C.gold }}>×{p.presentes}</b>
+              )}
+            </span>
+          )}
+        </div>
+
+        <div style={{ height: 3, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden", marginTop: 6, maxWidth: 300 }}>
+          <div style={{
+            width: `${((p.verdes % 10) / 10) * 100}%`, height: "100%", borderRadius: 3,
+            background: `linear-gradient(90deg, ${C.up}99, ${C.up})`,
+          }} />
+        </div>
+        <div style={{ fontSize: 10, color: C.faint, marginTop: 4, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          faltam <b style={{ color: C.muted }}>{p.faltam}</b> pro próximo
+          <Gift size={10} style={{ color: C.gold }} />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+        {contagem(Smile, C.up, p.verdes, "Verde — venda 100% Pix, transferência ou dinheiro")}
+        {contagem(Meh, C.warn, p.amarelas, "Amarela — venda mista (parte Pix, parte cartão)")}
+        {contagem(Frown, C.down, p.vermelhas, "Vermelha — venda 100% Stone")}
       </div>
     </div>
   );
@@ -907,29 +1059,126 @@ function HubExecutivo() {
 /* ============ HUBS SETORIAIS ============ */
 
 function HubComercial() {
-  const funil = useComercialFunil();
-  const rank = useComercialRanking();
-  const valor = useMemo(() => porMes(funil.data ?? [], "mes", "valor_total"), [funil.data]);
-  const negs = useMemo(() => porMes(funil.data ?? [], "mes", "negocios"), [funil.data]);
-  const ganhos = useMemo(() => porMes(funil.data ?? [], "mes", "ganhos"), [funil.data]);
-  const v = variacao(valor);
-  const consultores = useMemo(() => agrupar(rank.data ?? [], "consultor", "ganhos").slice(0, 8), [rank.data]);
-  const taxa = negs.at(-1)?.valor ? ((ganhos.at(-1)?.valor / negs.at(-1).valor) * 100).toFixed(1) : null;
+  const { inicio, fim, rotulo } = usePeriodo();
+  const [visao, setVisao] = useState("periodo");
+  const rankPer = useComercialRankingPeriodo();
+  const rankGer = useComercialRankingGeral();
+  const carinhas = useComercialCarinhas();
+
+  // "Período": uma linha por venda — recorto por `data` e reagrupo. Como a
+  // receita muda com o recorte, a ORDEM do pódio muda junto.
+  const podioPeriodo = useMemo(() => {
+    const m = new Map();
+    for (const r of noPeriodo(rankPer.data, { inicio, fim }, "data")) {
+      const k = r.consultor_id ?? r.consultora ?? "—";
+      const a = m.get(k) ?? {
+        consultor_id: r.consultor_id, consultora: r.consultora, foto_url: r.foto_url,
+        receita: 0, vendas: 0,
+      };
+      a.receita += Number(r.valor ?? 0);
+      a.vendas += 1;
+      m.set(k, a);
+    }
+    return [...m.values()]
+      .map((a) => ({ ...a, ticket_medio: a.vendas ? a.receita / a.vendas : 0 }))
+      .sort((x, y) => y.receita - x.receita);
+  }, [rankPer.data, inicio, fim]);
+
+  // "Geral": hall da fama, já agregado. Reordeno mesmo assim pra não depender
+  // da ordem que o Postgres devolveu.
+  const podioGeral = useMemo(
+    () => (rankGer.data ?? [])
+      .map((r) => ({
+        ...r,
+        receita: Number(r.receita ?? 0),
+        vendas: Number(r.vendas ?? 0),
+        ticket_medio: Number(r.ticket_medio ?? 0),
+      }))
+      .sort((a, b) => b.receita - a.receita),
+    [rankGer.data]
+  );
+
+  const geral = visao === "geral";
+  const podio = geral ? podioGeral : podioPeriodo;
+  const fonte = geral ? rankGer : rankPer;
+
+  /* A view entrega uma linha por venda. A identidade das 3 consultoras vem
+     da base inteira (sem recorte) e as contagens, só do período — assim o
+     time aparece completo mesmo num período em que alguém não vendeu, com
+     zero honesto em vez de sumir do placar. */
+  const { linhas, totalPeriodo } = useMemo(() => {
+    const time = new Map();
+    for (const r of carinhas.data ?? []) {
+      const k = r.consultor_id ?? r.consultora ?? "—";
+      if (!time.has(k)) {
+        time.set(k, {
+          consultor_id: r.consultor_id, consultora: r.consultora, foto_url: r.foto_url,
+          verdes: 0, amarelas: 0, vermelhas: 0,
+        });
+      }
+    }
+    for (const r of noPeriodo(carinhas.data, { inicio, fim }, "data_pagamento")) {
+      const a = time.get(r.consultor_id ?? r.consultora ?? "—");
+      if (!a) continue;
+      const cor = String(r.carinha ?? "").trim().toLowerCase();
+      if (cor === "verde") a.verdes += 1;
+      else if (cor === "amarelo") a.amarelas += 1;
+      else if (cor === "vermelho") a.vermelhas += 1;
+    }
+    const arr = [...time.values()]
+      .map((a) => ({ ...a, presentes: Math.floor(a.verdes / 10), faltam: 10 - (a.verdes % 10) }))
+      .sort((x, y) => y.verdes - x.verdes || x.vermelhas - y.vermelhas);
+    return { linhas: arr, totalPeriodo: arr.reduce((s, a) => s + a.verdes + a.amarelas + a.vermelhas, 0) };
+  }, [carinhas.data, inicio, fim]);
 
   return (
-    <Estado carregando={funil.isLoading} erro={funil.error} vazio={!funil.data?.length}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 26 }}>
-        <Kpi label="Em negócios" valor={moeda(v.atual)} delta={v.delta} up={v.up} serie={v.serie} parcial={v.parcial != null ? moeda(v.parcial) : null} />
-        <Kpi label="Negócios" valor={numero(negs.at(-1)?.valor)} delta={variacao(negs).delta} up={variacao(negs).up} serie={negs} />
-        <Kpi label="Ganhos" valor={numero(ganhos.at(-1)?.valor)} delta={variacao(ganhos).delta} up={variacao(ganhos).up} serie={ganhos} />
-        <Kpi label="Conversão" valor={taxa ?? "—"} unidade="%" nota="mês corrente" />
-      </div>
-      <Bloco titulo="Consultores por negócios ganhos" canto="acumulado" sem>
-        <Estado carregando={rank.isLoading} erro={rank.error} vazio={!consultores.length}>
-          <Lista linhas={consultores} formatar={numero} />
+    <>
+      <SecaoTitulo
+        titulo="Pódio de consultoras"
+        canto={
+          <span style={{ display: "flex", alignItems: "center", gap: 10, justifyContent: "flex-end" }}>
+            <span>{geral ? "hall da fama · todos os tempos" : `${rotulo} · a ordem muda com o período`}</span>
+            <ToggleVisao valor={visao} onChange={setVisao} />
+          </span>
+        }
+      />
+      <Estado
+        carregando={fonte.isLoading}
+        erro={fonte.error}
+        vazio={!podio.length}
+        vazioTitulo={geral ? undefined : "Nenhuma venda no período"}
+        vazioDica={geral ? undefined : `Nenhuma venda entre ${inicio} e ${fim}. Troque o período no topo, ou veja o ranking em "Geral".`}
+      >
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
+          {podio.map((c, i) => (
+            <CardPodio key={c.consultor_id ?? c.consultora} c={c} pos={i + 1} />
+          ))}
+        </div>
+      </Estado>
+
+      <SecaoTitulo titulo="Placar" canto={`${rotulo} · time GGB`} />
+      <Bloco titulo="Carinhas por consultora" canto={`${rotulo} · placar público`} sem altura={ALTURA_PAINEL}>
+        <Estado
+          carregando={carinhas.isLoading}
+          erro={carinhas.error}
+          vazio={!totalPeriodo}
+          vazioTitulo="Nenhuma movimentação no período"
+          vazioDica={`Nenhuma venda classificada entre ${inicio} e ${fim}. É normal: o negócio vende em lote — troque o período no topo.`}
+        >
+          {linhas.map((p) => <LinhaPlacar key={p.consultor_id ?? p.consultora} p={p} />)}
+          <div style={{ display: "flex", gap: 8, padding: "10px 20px", background: "rgba(255,255,255,.02)" }}>
+            <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+            <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+              <b style={{ color: C.up }}>Verde</b> = venda 100% Pix, transferência ou dinheiro.{" "}
+              <b style={{ color: C.warn }}>Amarela</b> = mistura (parte Pix, parte cartão).{" "}
+              <b style={{ color: C.down }}>Vermelha</b> = 100% Stone. A cada{" "}
+              <b style={{ color: C.muted }}>10 verdes</b>, um brinde surpresa. A base vai desde
+              jan/2025 e está recortada pelo período do topo. Placar público: todas veem o de todas.
+            </span>
+          </div>
         </Estado>
       </Bloco>
-    </Estado>
+    </>
   );
 }
 

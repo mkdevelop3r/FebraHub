@@ -96,7 +96,18 @@ function useView(nome, opcoes = {}) {
 }
 
 export const useComercialFunil    = () => useView("vw_comercial_funil");
-export const useComercialRanking  = () => useView("vw_comercial_ranking");
+/* Pódio, duas fontes. `_geral` é o hall da fama (já agregado, todos os
+   tempos, ignora o filtro). `_periodo` é uma linha por venda: o front
+   recorta por `data` e reagrupa, então a ordem muda com o período. */
+export const useComercialRankingGeral = () => useView("vw_comercial_ranking_geral");
+export const useComercialRankingPeriodo = () =>
+  useView("vw_comercial_ranking_periodo", { ordem: ["data", "consultor_id", "valor"] });
+/* Placar da gamificação: uma linha por VENDA (time GGB, desde jan/2025).
+   O front recorta por data_pagamento e conta as cores no período.
+   Sem coluna de id única: ordeno por todas as colunas discriminantes, então
+   linhas empatadas são idênticas e a paginação não altera a contagem. */
+export const useComercialCarinhas = () =>
+  useView("vw_comercial_carinhas_ggb", { ordem: ["data_pagamento", "consultor_id", "valor", "carinha"] });
 export const useFinanceiroReceita = () => useView("vw_financeiro_receita");
 export const useFinanceiroInadimp = () => useView("vw_financeiro_inadimplencia");
 export const useFinanceiroQualid  = () => useView("vw_financeiro_qualidade");
