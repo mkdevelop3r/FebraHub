@@ -96,7 +96,53 @@ function useView(nome, opcoes = {}) {
 }
 
 export const useComercialFunil    = () => useView("vw_comercial_funil");
-export const useComercialRanking  = () => useView("vw_comercial_ranking");
+/* Pódio, duas fontes. `_geral` é o hall da fama (já agregado, todos os
+   tempos, ignora o filtro). `_periodo` é uma linha por venda: o front
+   recorta por `data` e reagrupa, então a ordem muda com o período. */
+export const useComercialRankingGeral = () => useView("vw_comercial_ranking_geral");
+export const useComercialRankingPeriodo = () =>
+  useView("vw_comercial_ranking_periodo", { ordem: ["data", "consultor_id", "valor"] });
+
+/* Ranking por categoria: uma linha por venda, com `categoria` e `data`.
+   Alimenta KPIs, YoY, evolução mensal e o pódio da categoria selecionada.
+   A view já aplica o split 50/50 do CI e a data de largada de cada
+   consultora — o front não recalcula nada disso. */
+export const useComercialRankingCategoria = () =>
+  useView("vw_comercial_ranking_categoria", { ordem: ["data", "categoria", "consultor_id", "valor"] });
+
+/* Ranking histórico: uma linha por venda, incluindo quem já saiu da empresa
+   (`atual` = false). É a fonte do faturamento REAL de qualquer período —
+   2022 aparece com quem vendeu na época, não zerado por falta de
+   consultora atual. `consultor_id_exibicao` é a chave de agrupamento. */
+export const useComercialRankingHistorico = () =>
+  useView("vw_comercial_ranking_historico", { ordem: ["data", "categoria", "consultor_id_exibicao", "valor"] });
+
+/* Uma linha por matrícula: o front conta (volume) e soma (faturamento)
+   por mês, pra cruzar as duas séries no mesmo gráfico. */
+export const useComercialMatriculasFaturamento = () =>
+  useView("vw_comercial_matriculas_faturamento", { ordem: ["data", "categoria", "valor"] });
+
+/* Cursos vendidos por consultora — alimenta o tooltip do ranking (só GGB). */
+export const useComercialCursosPorConsultora = () =>
+  useView("vw_comercial_cursos_por_consultora", { ordem: ["data", "consultora", "curso", "valor"] });
+
+/* "Geral": consolidado das 3 formações (GGB + CI + CIS). Sympla fica de
+   fora — evento é outra unidade. As views já aplicam o split 50/50 do CI e
+   o tratamento do Danilo; o front só soma. */
+export const useComercialRankingGeralConsolidado = () =>
+  useView("vw_comercial_ranking_geral_consolidado", { ordem: ["data", "consultora", "valor"] });
+export const useComercialGeralMensal = () =>
+  useView("vw_comercial_geral_mensal", { ordem: ["data", "valor"] });
+
+/* Sympla: já agregado e sem dimensão de data — só a Jennifer, porque o
+   dado do Sympla não tem vínculo de consultora. */
+export const useComercialSymplaJennifer = () => useView("vw_comercial_sympla_jennifer");
+/* Placar da gamificação: uma linha por VENDA (time GGB, desde jan/2025).
+   O front recorta por data_pagamento e conta as cores no período.
+   Sem coluna de id única: ordeno por todas as colunas discriminantes, então
+   linhas empatadas são idênticas e a paginação não altera a contagem. */
+export const useComercialCarinhas = () =>
+  useView("vw_comercial_carinhas_ggb", { ordem: ["data_pagamento", "consultor_id", "valor", "carinha"] });
 export const useFinanceiroReceita = () => useView("vw_financeiro_receita");
 export const useFinanceiroInadimp = () => useView("vw_financeiro_inadimplencia");
 export const useFinanceiroQualid  = () => useView("vw_financeiro_qualidade");

@@ -1,14 +1,17 @@
-import { useState, useMemo, createContext, useContext } from "react";
+import { useState, useMemo, useRef, createContext, useContext } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   TrendingUp, Wallet, Megaphone, GraduationCap, ShoppingBag, CalendarDays,
   LayoutDashboard, Lock, Mail, AlertTriangle, Package, LogOut, Power,
   Database, ShieldAlert, Loader2, ArrowRight, Sparkles, Bell,
   Clock, Receipt, Hourglass, ChevronLeft, ChevronRight, ChevronDown,
+  Smile, Frown, Meh, Crown, Gift,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
-  useComercialFunil, useComercialRanking,
+  useComercialRankingHistorico, useComercialSymplaJennifer, useComercialCarinhas,
+  useComercialMatriculasFaturamento, useComercialCursosPorConsultora,
+  useComercialRankingGeralConsolidado, useComercialGeralMensal,
   useFinanceiroReceita, useFinanceiroQualid,
   useFinanceiroPagamentos,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
@@ -55,7 +58,7 @@ const SANS = "'Manrope', system-ui, sans-serif";
 const ALTURA_PAINEL = 260;
 
 const HUBS = [
-  { key: "comercial",  nome: "Comercial",  Icone: TrendingUp,    desc: "Funil, conversão e consultores" },
+  { key: "comercial",  nome: "Comercial",  Icone: TrendingUp,    desc: "Pódio de consultoras e placar da semana" },
   { key: "financeiro", nome: "Financeiro", Icone: Wallet,        desc: "Receita por curso e cobertura" },
   { key: "marketing",  nome: "Marketing",  Icone: Megaphone,     desc: "Origem de leads e campanhas" },
   { key: "pedagogico", nome: "Pedagógico", Icone: GraduationCap, desc: "Turmas, matrículas e conclusão" },
@@ -118,6 +121,18 @@ function intervaloDe({ modo, ano, mesIdx }) {
 /* Limites de navegação saem do DADO, não do calendário: o primeiro mês com
    movimento (união das views _periodo) até o mês atual. Nada de 2024/2026
    chumbado — se a base crescer pra trás, a navegação cresce junto. */
+/* Lista de categorias derivada do dado + Sympla (que vive noutra view). */
+function useCategoriasDisponiveis() {
+  const r = useComercialRankingHistorico();
+  return useMemo(() => {
+    const set = new Set();
+    for (const x of r.data ?? []) if (x.categoria) set.add(String(x.categoria));
+    const ord = (c) => { const i = ORDEM_CAT.indexOf(c); return i < 0 ? 99 : i; };
+    // Geral primeiro (padrão), depois as formações, Sympla por último.
+    return [CAT_GERAL, ...[...set].sort((a, b) => ord(a) - ord(b) || a.localeCompare(b)), CAT_SYMPLA];
+  }, [r.data]);
+}
+
 function useRangeDatas() {
   const a = useFinanceiroReceitaCategoriaPeriodo();
   const b = useFinanceiroDespesaCategoriaPeriodo();
@@ -144,10 +159,26 @@ function useRangeDatas() {
 const PeriodoCtx = createContext(null);
 const usePeriodo = () => useContext(PeriodoCtx);
 
-// Recorte de fluxo pela coluna `data` (data_pagamento). ISO compara como string.
-const noPeriodo = (linhas, { inicio, fim }) =>
+/* ============ CATEGORIA (só Hub Comercial) ============
+   Cada categoria é uma UNIDADE DE NEGÓCIO separada: o filtro recorta os
+   painéis pra uma delas, e não existe opção "todas" de propósito — somar
+   faturamento de categorias diferentes num total único não significa nada.
+   Os valores de `categoria` saem da própria view (não chumbados aqui);
+   só os rótulos feios ganham um nome apresentável. */
+const CAT_SYMPLA = "Sympla";
+const CAT_GERAL = "Geral"; // consolidado GGB + CI + CIS (padrão); Sympla fica fora
+const ROTULO_CAT = { CI: "Coach Individual", "Coaching Individual": "Coach Individual" };
+const rotuloCat = (c) => ROTULO_CAT[c] ?? c;
+const ORDEM_CAT = ["GGB", "CIS", "CI", "Coaching Individual"];
+
+const CategoriaCtx = createContext(null);
+const useCategoria = () => useContext(CategoriaCtx);
+
+// Recorte de fluxo pela coluna de data. ISO compara como string.
+// `campo` varia por view: as _periodo usam `data`; as carinhas, `data_pagamento`.
+const noPeriodo = (linhas, { inicio, fim }, campo = "data") =>
   (linhas ?? []).filter((r) => {
-    const d = String(r.data ?? "").slice(0, 10);
+    const d = String(r[campo] ?? "").slice(0, 10);
     return d && d >= inicio && d <= fim;
   });
 
@@ -373,6 +404,34 @@ function SeletorMes() {
   );
 }
 
+/* Seletor de categoria — ao lado dos filtros de período. Só aparece no
+   Hub Comercial, único lugar onde a categoria recorta algo. */
+function SeletorCategoria() {
+  const { categoria, setCategoria, categorias } = useCategoria();
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+      <span style={{ fontSize: 11, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: ".5px" }}>
+        Categoria
+      </span>
+      <div style={{ display: "flex", gap: 2, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, borderRadius: 10, padding: 3 }}>
+        {categorias.map((c) => {
+          const ativo = c === categoria;
+          return (
+            <button key={c} onClick={() => setCategoria(c)} aria-pressed={ativo} style={{
+              fontFamily: SANS, fontSize: 11.5, fontWeight: 700, padding: "6px 11px",
+              borderRadius: 7, border: "none", cursor: "pointer", whiteSpace: "nowrap",
+              background: ativo ? `${C.gold}1F` : "transparent",
+              color: ativo ? C.gold : C.muted,
+            }}>
+              {rotuloCat(c)}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* Seletor de período — no topo, ao lado do sino. */
 function SeletorPeriodo() {
   const { modo, escolherModo } = usePeriodo();
@@ -400,6 +459,219 @@ function SeletorPeriodo() {
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/* Foto da consultora. O PNG já vem circular e com moldura dourada própria,
+   então nada de borda/recorte extra — só dimensiona. Se a imagem falhar ou
+   não existir, cai nas iniciais em vez de quebrar o card. */
+function Avatar({ url, nome, tam = 64 }) {
+  const [erro, setErro] = useState(false);
+  const iniciais = (nome ?? "").split(/[\s.]+/).filter(Boolean).slice(0, 2)
+    .map((p) => p[0]?.toUpperCase()).join("") || "?";
+  if (!url || erro) {
+    return (
+      <div style={{
+        width: tam, height: tam, borderRadius: "50%", flexShrink: 0,
+        background: "linear-gradient(150deg,#3a3a40,#1c1c20)",
+        border: `1px solid ${C.gold}66`, color: C.gold,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontWeight: 700, fontSize: Math.round(tam * 0.34),
+      }}>
+        {iniciais}
+      </div>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt={nome ?? ""}
+      onError={() => setErro(true)}
+      style={{ width: tam, height: tam, objectFit: "contain", flexShrink: 0, display: "block" }}
+    />
+  );
+}
+
+/* Alterna a fonte do pódio: recorte do filtro global x hall da fama. */
+function ToggleVisao({ valor, onChange }) {
+  return (
+    <span style={{ display: "flex", gap: 2, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, borderRadius: 9, padding: 2, flexShrink: 0 }}>
+      {[{ key: "periodo", label: "Período" }, { key: "geral", label: "Geral" }].map((o) => {
+        const ativo = o.key === valor;
+        return (
+          <button key={o.key} onClick={() => onChange(o.key)} aria-pressed={ativo} style={{
+            fontFamily: SANS, fontSize: 11, fontWeight: 700, padding: "4px 10px",
+            borderRadius: 7, border: "none", cursor: "pointer",
+            background: ativo ? `${C.gold}1F` : "transparent",
+            color: ativo ? C.gold : C.muted,
+          }}>
+            {o.label}
+          </button>
+        );
+      })}
+    </span>
+  );
+}
+
+/* Card do pódio. O 1º lugar ganha moldura dourada, coroa e número maior —
+   a Beatriz está muito à frente e o card precisa dizer isso de relance. */
+function CardPodio({ c, pos }) {
+  const primeiro = pos === 1;
+  const ex = c.atual === false; // ex-consultor: sem foto, marcado discreto
+  return (
+    <div style={{
+      background: primeiro ? `linear-gradient(150deg, ${C.gold}14, rgba(255,255,255,.02))` : C.card,
+      border: `1px solid ${primeiro ? `${C.gold}55` : C.cardLine}`,
+      borderRadius: 12, padding: "12px 8px",
+      display: "flex", flexDirection: "column", alignItems: "center", gap: 5, textAlign: "center",
+      opacity: ex ? 0.78 : 1,
+    }}>
+      {primeiro && <Crown size={13} style={{ color: C.gold }} />}
+      <div style={{ position: "relative", lineHeight: 0 }}>
+        <Avatar url={ex ? null : c.foto_url} nome={c.consultora} tam={primeiro ? 58 : 46} />
+        <span style={{
+          position: "absolute", bottom: -2, right: -2, minWidth: 18, height: 18, padding: "0 4px",
+          borderRadius: 9, fontSize: 9.5, fontWeight: 800, fontFamily: GROTESK,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          background: primeiro ? `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` : "#22222a",
+          color: primeiro ? "#100c04" : C.muted,
+          border: `1px solid ${primeiro ? C.goldTop : C.cardLine}`,
+        }}>
+          {pos}º
+        </span>
+      </div>
+      <div style={{ fontSize: primeiro ? 12.5 : 11.5, fontWeight: 700, color: ex ? C.muted : C.bright, lineHeight: 1.25 }}>
+        {c.consultora}
+      </div>
+      {ex && (
+        <span style={{
+          fontSize: 8.5, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase",
+          color: C.dim, border: `1px solid ${C.cardLine}`, borderRadius: 4, padding: "0 4px",
+        }}>
+          ex-consultora
+        </span>
+      )}
+      <div style={{
+        fontFamily: GROTESK, fontSize: primeiro ? 19 : 16, fontWeight: 700,
+        letterSpacing: "-.5px", color: ex ? C.muted : (primeiro ? C.gold : C.text),
+      }}>
+        {moeda(c.receita)}
+      </div>
+      {/* `sub` só é usado pelo Sympla (eventos/ingressos). Sem ela, o
+          texto original de vendas/ticket segue idêntico. */}
+      <div style={{ fontSize: 9.5, color: C.faint, lineHeight: 1.3 }}>
+        {c.sub ?? <>{numero(c.vendas)} vendas · ticket {moeda(c.ticket_medio)}</>}
+      </div>
+    </div>
+  );
+}
+
+/* Envolve o CardPodio (sem tocar nele) e revela os cursos da consultora.
+   O tooltip é `fixed` porque o Bloco tem overflow:hidden e cortaria um
+   absolute. Clique também abre/fecha — TV não tem mouse. */
+function CardComCursos({ c, pos, cursos }) {
+  const [ancora, setAncora] = useState(null);
+  const ref = useRef(null);
+  const tem = cursos && cursos.length > 0;
+  const abrir = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setAncora({ x: r.left + r.width / 2, y: r.bottom + 6 });
+  };
+  const fechar = () => setAncora(null);
+  return (
+    <div
+      ref={ref}
+      style={{ position: "relative", cursor: tem ? "pointer" : "default" }}
+      onMouseEnter={tem ? abrir : undefined}
+      onMouseLeave={tem ? fechar : undefined}
+      onClick={tem ? () => (ancora ? fechar() : abrir()) : undefined}
+    >
+      <CardPodio c={c} pos={pos} />
+      {tem && ancora && (
+        <div style={{
+          position: "fixed", left: ancora.x, top: ancora.y, transform: "translateX(-50%)",
+          zIndex: 60, pointerEvents: "none",
+          background: "#15151a", border: `1px solid ${C.cardLine}`, borderRadius: 10,
+          padding: "9px 11px", minWidth: 220, maxWidth: 300,
+          boxShadow: "0 12px 32px rgba(0,0,0,.55)",
+        }}>
+          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gold, marginBottom: 5 }}>
+            Top cursos · {c.consultora}
+          </div>
+          {cursos.map((cu) => (
+            <div key={cu.curso} style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+              <span style={{ fontSize: 11, color: C.bright, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {cu.curso}
+              </span>
+              <span style={{ fontSize: 9.5, color: C.faint, flexShrink: 0 }}>{numero(cu.vendas)}×</span>
+              <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700, color: C.gold, flexShrink: 0 }}>
+                {moeda(cu.receita)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* Linha do placar. As verdes rendem brinde a cada 10; a barra mede só o
+   progresso pro próximo. Vermelha é contador puro — sem punição visível. */
+function LinhaPlacar({ p }) {
+  const MAX_CHIPS = 5;
+  const contagem = (Icone, cor, n, titulo) => (
+    <span style={{ display: "flex", alignItems: "center", gap: 4 }} title={titulo}>
+      <Icone size={13} style={{ color: cor }} />
+      <b style={{ fontFamily: GROTESK, fontSize: 13, color: n > 0 ? C.text : C.dim }}>{n}</b>
+    </span>
+  );
+
+  return (
+    <div style={{ padding: "7px 14px", borderBottom: `1px solid ${C.hair}`, display: "flex", alignItems: "center", gap: 10 }}>
+      <Avatar url={p.foto_url} nome={p.consultora} tam={30} />
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {p.consultora}
+          </span>
+          {/* Um chip por presente. O "?" é o prêmio — brinde surpresa. */}
+          {p.presentes > 0 && (
+            <span style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+              {Array.from({ length: Math.min(p.presentes, MAX_CHIPS) }).map((_, i) => (
+                <span key={i} title="Brinde surpresa" style={{
+                  display: "flex", alignItems: "center", gap: 2, fontSize: 10, fontWeight: 800,
+                  color: "#100c04", background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})`,
+                  border: `1px solid ${C.goldTop}`, padding: "1px 5px", borderRadius: 5, flexShrink: 0,
+                }}>
+                  <Gift size={11} /> ?
+                </span>
+              ))}
+              {p.presentes > MAX_CHIPS && (
+                <b style={{ fontSize: 10.5, fontWeight: 800, color: C.gold }}>×{p.presentes}</b>
+              )}
+            </span>
+          )}
+        </div>
+
+        <div style={{ height: 3, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden", marginTop: 6, maxWidth: 300 }}>
+          <div style={{
+            width: `${((p.verdes % 10) / 10) * 100}%`, height: "100%", borderRadius: 3,
+            background: `linear-gradient(90deg, ${C.up}99, ${C.up})`,
+          }} />
+        </div>
+        <div style={{ fontSize: 10, color: C.faint, marginTop: 4, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          faltam <b style={{ color: C.muted }}>{p.faltam}</b> pro próximo
+          <Gift size={10} style={{ color: C.gold }} />
+        </div>
+      </div>
+
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+        {contagem(Smile, C.up, p.verdes, "Verde — venda 100% Pix, transferência ou dinheiro")}
+        {contagem(Meh, C.warn, p.amarelas, "Amarela — venda mista (parte Pix, parte cartão)")}
+        {contagem(Frown, C.down, p.vermelhas, "Vermelha — venda 100% Stone")}
       </div>
     </div>
   );
@@ -489,32 +761,32 @@ function Lista({ linhas, formatar = moeda, total, top }) {
 
 /* Chip de KPI compacto — faixa horizontal do design: ícone + label +
    valor + delta/nota. `hero` deixa o card dourado (o número-âncora). */
-function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero }) {
+function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto }) {
   return (
     <div style={{
-      display: "flex", alignItems: "center", gap: 12, minHeight: 78,
+      display: "flex", alignItems: "center", gap: compacto ? 9 : 12, minHeight: compacto ? 56 : 78,
       background: "rgba(255,255,255,.03)",
       border: `1px solid ${hero ? `${C.gold}38` : C.cardLine}`,
-      borderRadius: 13, padding: "13px 15px",
+      borderRadius: compacto ? 10 : 13, padding: compacto ? "8px 11px" : "13px 15px",
     }}>
       <span style={{
-        width: 30, height: 30, flexShrink: 0, borderRadius: 8,
+        width: compacto ? 25 : 30, height: compacto ? 25 : 30, flexShrink: 0, borderRadius: compacto ? 7 : 8,
         background: hero ? `${C.gold}24` : "rgba(255,255,255,.05)",
         color: hero ? C.gold : "#C9C9CE",
         display: "flex", alignItems: "center", justifyContent: "center",
       }}>
-        <Icone size={15} />
+        <Icone size={compacto ? 13 : 15} />
       </span>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 11, color: C.muted, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 7, flexWrap: "wrap" }}>
-          <span style={{ fontFamily: GROTESK, fontSize: 22, fontWeight: 700, letterSpacing: "-.5px", color: hero ? C.gold : C.text }}>
+        <div style={{ fontSize: compacto ? 10 : 11, color: C.muted, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+        <div style={{ display: "flex", alignItems: "baseline", gap: compacto ? 5 : 7, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: GROTESK, fontSize: compacto ? 18 : 22, fontWeight: 700, letterSpacing: "-.5px", color: hero ? C.gold : C.text }}>
             {valor}
-            {unidade && <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}> {unidade}</span>}
+            {unidade && <span style={{ fontSize: compacto ? 11 : 12, color: C.muted, fontWeight: 600 }}> {unidade}</span>}
           </span>
           {delta != null
-            ? <span style={{ fontSize: 11, fontWeight: 800, color: up ? C.up : C.down }}>{up ? "▲" : "▼"} {String(delta).replace(/[+-]/, "")}</span>
-            : nota && <span style={{ fontSize: 11, fontWeight: 800, color: C.muted }}>{nota}</span>}
+            ? <span style={{ fontSize: compacto ? 10 : 11, fontWeight: 800, color: up ? C.up : C.down }}>{up ? "▲" : "▼"} {String(delta).replace(/[+-]/, "")}</span>
+            : nota && <span style={{ fontSize: compacto ? 9.5 : 11, fontWeight: 800, color: C.muted }}>{nota}</span>}
         </div>
       </div>
     </div>
@@ -702,6 +974,171 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
       </svg>
       <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6 }}>
         Último ponto = mês em curso (parcial), não comparável a mês fechado. Escala do eixo Y calculada só sobre meses fechados.
+      </div>
+    </>
+  );
+}
+
+// Rótulo curto de barra: "2,1 mi" / "550 mil" — adapta à ordem de grandeza.
+const compacto = (v) =>
+  new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(v ?? 0);
+const mesCurto = (ym) => {
+  const d = new Date(ym + "-01T00:00:00");
+  const s = d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+};
+const AZUL_ANTERIOR = "#6BA8E5";
+
+/* Evolução do faturamento: barras do período + linha do MESMO PERÍODO do
+   ano anterior. A linha é comparação histórica, não meta — não existe meta
+   no banco, e pintar uma referência como meta seria inventar cobrança. */
+function BarrasEvolucao({ serie, anoAnterior }) {
+  if (!serie.length) return null;
+  const W = 720, H = 250, padL = 10, padR = 10, padT = 34, padB = 28;
+  const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
+  const max = Math.max(...serie.flatMap((s) => [s.valor, s.anterior]), 1);
+  const n = serie.length, slot = plotW / n, bw = Math.min(38, slot * 0.58);
+  const cx = (i) => padL + slot * i + slot / 2;
+  const y = (v) => base - (v / max) * plotH;
+  const ptsAnt = serie.map((s, i) => [cx(i), y(s.anterior)]);
+  const temAnterior = serie.some((s) => s.anterior > 0);
+
+  return (
+    <>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        <defs>
+          <linearGradient id="gradBarEvol" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={C.goldTop} />
+            <stop offset="1" stopColor={C.goldBase} />
+          </linearGradient>
+          <pattern id="hachBarEvol" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke={C.gold} strokeWidth="3" opacity="0.4" />
+          </pattern>
+        </defs>
+
+        {serie.map((s, i) => (
+          <g key={s.mes}>
+            <rect
+              x={cx(i) - bw / 2} y={y(s.valor)} width={bw} height={Math.max(0, base - y(s.valor))} rx="3"
+              fill={s.parcial ? "url(#hachBarEvol)" : "url(#gradBarEvol)"}
+              stroke={s.parcial ? C.gold : "none"}
+              strokeDasharray={s.parcial ? "4 3" : undefined}
+              strokeWidth={s.parcial ? 1 : 0}
+            />
+            <text x={cx(i)} y={y(s.valor) - 6} fontSize="10" fontWeight="700" textAnchor="middle"
+              fill={s.parcial ? C.faint : C.bright} fontFamily={GROTESK}>
+              {compacto(s.valor)}
+            </text>
+          </g>
+        ))}
+
+        {temAnterior && (
+          <>
+            <polyline points={ptsAnt.map((p) => p.join(",")).join(" ")} fill="none"
+              stroke={AZUL_ANTERIOR} strokeWidth="1.6" strokeDasharray="5 4" strokeLinecap="round" />
+            {ptsAnt.map(([x0, y0], i) => <circle key={i} cx={x0} cy={y0} r="2" fill={AZUL_ANTERIOR} />)}
+          </>
+        )}
+
+        {serie.map((s, i) => (
+          <text key={s.mes} x={cx(i)} y={H - 9} fontSize="10.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>
+            {mesCurto(s.mes)}
+          </text>
+        ))}
+      </svg>
+
+      <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6, lineHeight: 1.5 }}>
+        Último mês tracejado = <b style={{ color: C.muted }}>parcial</b> (em andamento).
+        {temAnterior
+          ? <> Linha azul = mesmo período de {anoAnterior} — <b style={{ color: C.muted }}>não é meta</b>.</>
+          : <> Sem histórico de {anoAnterior} nesta categoria para comparar.</>}
+      </div>
+    </>
+  );
+}
+
+/* Matrículas (volume) x Faturamento (R$) no mesmo gráfico, com DOIS eixos:
+   contagem e reais não dividem escala. Cruzar as duas séries responde "o
+   crescimento veio de vender mais ou de vender mais caro?". */
+function MatriculasVsFaturamento({ serie }) {
+  if (!serie.length) return null;
+  const W = 720, H = 200, padL = 34, padR = 44, padT = 18, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
+  const maxMat = Math.max(...serie.map((s) => s.matriculas), 1);
+  const maxFat = Math.max(...serie.map((s) => s.faturamento), 1);
+  const n = serie.length, slot = plotW / n, bw = Math.min(34, slot * 0.5);
+  const cx = (i) => padL + slot * i + slot / 2;
+  const yMat = (v) => base - (v / maxMat) * plotH;
+  const yFat = (v) => base - (v / maxFat) * plotH;
+  const ptsFat = serie.map((s, i) => [cx(i), yFat(s.faturamento)]);
+  const idxParcial = serie.findIndex((s) => s.parcial);
+  const ultSolido = idxParcial > 0 ? idxParcial : n - 1;
+  const solido = ptsFat.slice(0, ultSolido + 1).map((p) => p.join(",")).join(" ");
+  const tracejado = idxParcial > 0
+    ? [ptsFat[idxParcial - 1], ptsFat[idxParcial]].map((p) => p.join(",")).join(" ") : null;
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4, fontSize: 10.5, color: C.muted, fontWeight: 600 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 2, background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` }} /> Matrículas
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 13, height: 0, borderTop: `2px solid ${C.up}` }} /> Faturamento
+        </span>
+      </div>
+
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        <defs>
+          <linearGradient id="gradMat" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={C.goldTop} /><stop offset="1" stopColor={C.goldBase} />
+          </linearGradient>
+          <pattern id="hachMat" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke={C.gold} strokeWidth="3" opacity="0.4" />
+          </pattern>
+        </defs>
+
+        {/* eixo esquerdo = volume; direito = R$ */}
+        {[0, 0.5, 1].map((f, i) => {
+          const yy = base - f * plotH;
+          return (
+            <g key={i}>
+              <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
+              <text x={padL - 6} y={yy + 3} fontSize="9" textAnchor="end" fill={C.faint} fontFamily={SANS}>
+                {Math.round(maxMat * f)}
+              </text>
+              <text x={W - padR + 6} y={yy + 3} fontSize="9" textAnchor="start" fill={C.up} opacity="0.8" fontFamily={SANS}>
+                {compacto(maxFat * f)}
+              </text>
+            </g>
+          );
+        })}
+
+        {serie.map((s, i) => (
+          <rect key={s.mes} x={cx(i) - bw / 2} y={yMat(s.matriculas)} width={bw}
+            height={Math.max(0, base - yMat(s.matriculas))} rx="2"
+            fill={s.parcial ? "url(#hachMat)" : "url(#gradMat)"}
+            stroke={s.parcial ? C.gold : "none"} strokeDasharray={s.parcial ? "3 2" : undefined}
+            strokeWidth={s.parcial ? 1 : 0} />
+        ))}
+
+        <polyline points={solido} fill="none" stroke={C.up} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        {tracejado && <polyline points={tracejado} fill="none" stroke={C.up} strokeWidth="1.8" strokeDasharray="4 3" opacity="0.7" />}
+        {ptsFat.map(([x0, y0], i) => (
+          <circle key={i} cx={x0} cy={y0} r="2.2"
+            fill={serie[i].parcial ? C.void : C.up} stroke={C.up} strokeWidth={serie[i].parcial ? 1.2 : 0} />
+        ))}
+
+        {serie.map((s, i) => (
+          <text key={s.mes} x={cx(i)} y={H - 7} fontSize="9.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>
+            {mesCurto(s.mes)}
+          </text>
+        ))}
+      </svg>
+
+      <div style={{ fontSize: 10, color: C.faint, marginTop: 5, lineHeight: 1.45 }}>
+        Sobem juntas = crescimento por <b style={{ color: C.muted }}>volume</b> (mais vendas). Faturamento
+        subindo mais que as matrículas = <b style={{ color: C.muted }}>ticket maior</b>. Último mês tracejado = parcial.
       </div>
     </>
   );
@@ -907,29 +1344,330 @@ function HubExecutivo() {
 /* ============ HUBS SETORIAIS ============ */
 
 function HubComercial() {
-  const funil = useComercialFunil();
-  const rank = useComercialRanking();
-  const valor = useMemo(() => porMes(funil.data ?? [], "mes", "valor_total"), [funil.data]);
-  const negs = useMemo(() => porMes(funil.data ?? [], "mes", "negocios"), [funil.data]);
-  const ganhos = useMemo(() => porMes(funil.data ?? [], "mes", "ganhos"), [funil.data]);
-  const v = variacao(valor);
-  const consultores = useMemo(() => agrupar(rank.data ?? [], "consultor", "ganhos").slice(0, 8), [rank.data]);
-  const taxa = negs.at(-1)?.valor ? ((ganhos.at(-1)?.valor / negs.at(-1).valor) * 100).toFixed(1) : null;
+  const { inicio, fim, rotulo } = usePeriodo();
+  const { categoria } = useCategoria();
+  const [visao, setVisao] = useState("periodo");
+  const rankCat = useComercialRankingHistorico();
+  const sympla = useComercialSymplaJennifer();
+  const carinhas = useComercialCarinhas();
+  const matfat = useComercialMatriculasFaturamento();
+  const cursos = useComercialCursosPorConsultora();
+  const geralCons = useComercialRankingGeralConsolidado();
+  const geralMensal = useComercialGeralMensal();
+
+  const ehSympla = categoria === CAT_SYMPLA;
+  const ehGeral = categoria === CAT_GERAL;
+  // Carinhas são do time GGB; aparecem no GGB e no consolidado Geral.
+  const ehGGB = String(categoria ?? "").toUpperCase() === "GGB";
+  const mostraCarinhas = ehGGB || ehGeral;
+  const anoAnterior = new Date().getFullYear() - 1;
+
+  // Vendas da categoria, uma linha por venda (inclui quem já saiu — é o que
+  // faz 2022 mostrar faturamento real). No Geral, a fonte de FLUXO (KPIs,
+  // evolução, matrículas) é a view consolidada mensal, que já soma as 3
+  // formações; nas categorias, é o histórico filtrado.
+  const vendasCat = useMemo(
+    () => (rankCat.data ?? []).filter((r) => String(r.categoria) === categoria),
+    [rankCat.data, categoria]
+  );
+  const linhasFluxo = ehGeral ? (geralMensal.data ?? []) : vendasCat;
+  const carregFluxo = ehGeral ? geralMensal.isLoading : rankCat.isLoading;
+  const erroFluxo = ehGeral ? geralMensal.error : rankCat.error;
+
+  /* KPIs do período. YoY compara o MESMO recorte um ano atrás — desloco as
+     bordas do intervalo, não o ano inteiro. */
+  const kpi = useMemo(() => {
+    const soma = (ls) => ls.reduce((s, r) => s + Number(r.valor ?? 0), 0);
+    const dentro = noPeriodo(linhasFluxo, { inicio, fim }, "data");
+    const menosUmAno = (d) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`;
+    const antes = noPeriodo(linhasFluxo, { inicio: menosUmAno(inicio), fim: menosUmAno(fim) }, "data");
+    const receita = soma(dentro), receitaAnt = soma(antes);
+    return {
+      receita,
+      matriculas: dentro.length,
+      ticket: dentro.length ? receita / dentro.length : null,
+      yoy: receitaAnt > 0 ? ((receita - receitaAnt) / receitaAnt) * 100 : null,
+    };
+  }, [linhasFluxo, inicio, fim]);
+
+  /* Evolução: últimos 12 meses da categoria + o mesmo mês do ano anterior.
+     Não responde ao filtro de período — é série histórica, como nos outros
+     hubs. O mês corrente é parcial. */
+  const evolucao = useMemo(() => {
+    const porMes = new Map();
+    for (const r of linhasFluxo) {
+      const m = String(r.data ?? "").slice(0, 7);
+      if (m) porMes.set(m, (porMes.get(m) ?? 0) + Number(r.valor ?? 0));
+    }
+    const h = new Date();
+    const chave = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const atual = chave(h);
+    return Array.from({ length: 12 }, (_, k) => {
+      const d = new Date(h.getFullYear(), h.getMonth() - (11 - k), 1);
+      const m = chave(d);
+      const mAnt = `${d.getFullYear() - 1}-${m.slice(5)}`;
+      return { mes: m, valor: porMes.get(m) ?? 0, anterior: porMes.get(mAnt) ?? 0, parcial: m === atual };
+    });
+  }, [linhasFluxo]);
+
+  const geral = visao === "geral";
+
+  /* Matrículas x faturamento por mês, dentro do recorte. Conta as linhas
+     (volume) e soma o valor (R$) — duas grandezas, dois eixos. */
+  const matFat = useMemo(() => {
+    if (ehSympla) return [];
+    const origem = ehGeral
+      ? (geralMensal.data ?? [])
+      : (matfat.data ?? []).filter((r) => String(r.categoria) === categoria);
+    const dentro = noPeriodo(origem, { inicio, fim }, "data");
+    const m = new Map();
+    for (const r of dentro) {
+      const k = String(r.mes ?? "").slice(0, 7);
+      if (!k) continue;
+      const a = m.get(k) ?? { mes: k, matriculas: 0, faturamento: 0 };
+      a.matriculas += 1;
+      a.faturamento += Number(r.valor ?? 0);
+      m.set(k, a);
+    }
+    const h = new Date();
+    const atual = `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, "0")}`;
+    return [...m.values()].sort((a, b) => a.mes.localeCompare(b.mes))
+      .map((x) => ({ ...x, parcial: x.mes === atual }));
+  }, [matfat.data, geralMensal.data, categoria, inicio, fim, ehSympla, ehGeral]);
+
+  /* Top 5 cursos por consultora (só GGB). Uso o MESMO recorte do pódio: em
+     "Geral" o card mostra receita de todos os tempos, então o tooltip
+     também — senão o detalhe contradiria o número acima dele. */
+  const cursosPorConsultora = useMemo(() => {
+    if (!ehGGB) return new Map();
+    const soGGB = (cursos.data ?? []).filter((r) => String(r.categoria).toUpperCase() === "GGB");
+    const base = geral ? soGGB : noPeriodo(soGGB, { inicio, fim }, "data");
+    const porNome = new Map();
+    for (const r of base) {
+      const nome = String(r.consultora ?? "");
+      if (!porNome.has(nome)) porNome.set(nome, new Map());
+      const cm = porNome.get(nome);
+      const k = String(r.curso ?? "—");
+      const a = cm.get(k) ?? { curso: k, vendas: 0, receita: 0 };
+      a.vendas += 1;
+      a.receita += Number(r.valor ?? 0);
+      cm.set(k, a);
+    }
+    const out = new Map();
+    for (const [nome, cm] of porNome) {
+      out.set(nome, [...cm.values()].sort((a, b) => b.receita - a.receita).slice(0, 5));
+    }
+    return out;
+  }, [cursos.data, ehGGB, geral, inicio, fim]);
+
+  /* Pódio. Sympla vem de outra view (agregada, sem data): uma consultora só,
+     medida em receita líquida/eventos/ingressos. */
+  const podio = useMemo(() => {
+    if (ehSympla) {
+      return (sympla.data ?? []).map((s) => ({
+        consultor_id: s.consultora,
+        consultora: s.consultora,
+        foto_url: s.foto_url,
+        receita: Number(s.receita_liquida ?? 0),
+        sub: `${numero(s.eventos)} eventos · ${numero(s.ingressos)} ingressos`,
+      }));
+    }
+    // Geral usa a view consolidada (chave = consultora, sem coluna de
+    // exibição); as categorias usam o histórico (chave de exibição).
+    const origem = ehGeral ? (geralCons.data ?? []) : vendasCat;
+    const base = geral ? origem : noPeriodo(origem, { inicio, fim }, "data");
+    const m = new Map();
+    for (const r of base) {
+      const k = ehGeral ? (r.consultora ?? "—") : (r.consultor_id_exibicao ?? r.consultora ?? "—");
+      const a = m.get(k) ?? {
+        consultor_id: k, consultora: r.consultora, foto_url: r.foto_url,
+        atual: r.atual !== false, receita: 0, vendas: 0,
+      };
+      a.receita += Number(r.valor ?? 0);
+      a.vendas += 1;
+      m.set(k, a);
+    }
+    return [...m.values()]
+      .map((a) => ({ ...a, ticket_medio: a.vendas ? a.receita / a.vendas : 0 }))
+      .sort((x, y) => y.receita - x.receita);
+  }, [ehSympla, ehGeral, sympla.data, geralCons.data, vendasCat, geral, inicio, fim]);
+
+  const fonte = ehSympla ? sympla : ehGeral ? geralCons : rankCat;
+
+  /* A view entrega uma linha por venda. A identidade das 3 consultoras vem
+     da base inteira (sem recorte) e as contagens, só do período — assim o
+     time aparece completo mesmo num período em que alguém não vendeu, com
+     zero honesto em vez de sumir do placar. */
+  const { linhas, totalPeriodo } = useMemo(() => {
+    const time = new Map();
+    for (const r of carinhas.data ?? []) {
+      const k = r.consultor_id ?? r.consultora ?? "—";
+      if (!time.has(k)) {
+        time.set(k, {
+          consultor_id: r.consultor_id, consultora: r.consultora, foto_url: r.foto_url,
+          verdes: 0, amarelas: 0, vermelhas: 0,
+        });
+      }
+    }
+    for (const r of noPeriodo(carinhas.data, { inicio, fim }, "data_pagamento")) {
+      const a = time.get(r.consultor_id ?? r.consultora ?? "—");
+      if (!a) continue;
+      const cor = String(r.carinha ?? "").trim().toLowerCase();
+      if (cor === "verde") a.verdes += 1;
+      else if (cor === "amarelo") a.amarelas += 1;
+      else if (cor === "vermelho") a.vermelhas += 1;
+    }
+    const arr = [...time.values()]
+      .map((a) => ({ ...a, presentes: Math.floor(a.verdes / 10), faltam: 10 - (a.verdes % 10) }))
+      .sort((x, y) => y.verdes - x.verdes || x.vermelhas - y.vermelhas);
+    return { linhas: arr, totalPeriodo: arr.reduce((s, a) => s + a.verdes + a.amarelas + a.vermelhas, 0) };
+  }, [carinhas.data, inicio, fim]);
 
   return (
-    <Estado carregando={funil.isLoading} erro={funil.error} vazio={!funil.data?.length}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 26 }}>
-        <Kpi label="Em negócios" valor={moeda(v.atual)} delta={v.delta} up={v.up} serie={v.serie} parcial={v.parcial != null ? moeda(v.parcial) : null} />
-        <Kpi label="Negócios" valor={numero(negs.at(-1)?.valor)} delta={variacao(negs).delta} up={variacao(negs).up} serie={negs} />
-        <Kpi label="Ganhos" valor={numero(ganhos.at(-1)?.valor)} delta={variacao(ganhos).delta} up={variacao(ganhos).up} serie={ganhos} />
-        <Kpi label="Conversão" valor={taxa ?? "—"} unidade="%" nota="mês corrente" />
+    <>
+      {/* No Geral, deixa explícito o que está somado — e o que fica de fora. */}
+      {ehGeral && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
+          padding: "7px 12px", marginBottom: 10, borderRadius: 9,
+          background: `${C.gold}0F`, border: `1px solid ${C.gold}33`,
+        }}>
+          <span style={{ fontSize: 11.5, fontWeight: 800, color: C.gold }}>Formação (GGB + CI + CIS)</span>
+          <span style={{ fontSize: 10.5, color: C.faint }}>
+            total consolidado das 3 unidades de formação · Eventos/Sympla vistos à parte.
+          </span>
+        </div>
+      )}
+
+      {/* Faixa compacta: cada categoria é uma unidade de negócio, nunca somada. */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))", gap: 8, marginBottom: 10 }}>
+        <ChipKpi compacto hero Icone={Wallet} label={`Faturamento · ${rotuloCat(categoria)}`}
+          valor={ehSympla ? moeda(podio[0]?.receita ?? 0) : moeda(kpi.receita)}
+          nota={ehSympla ? "líquida · todos os tempos" : rotulo} />
+        <ChipKpi compacto Icone={Receipt} label={ehSympla ? "Ingressos" : "Total de matrículas"}
+          valor={ehSympla ? numero(sympla.data?.[0]?.ingressos ?? 0) : numero(kpi.matriculas)}
+          nota={ehSympla ? `${numero(sympla.data?.[0]?.eventos ?? 0)} eventos` : rotulo} />
+        <ChipKpi compacto Icone={TrendingUp} label="Ticket médio"
+          valor={ehSympla ? "—" : (kpi.ticket != null ? moeda(kpi.ticket) : "—")}
+          nota={ehSympla ? "não medível no Sympla" : "receita ÷ matrículas"} />
+        <ChipKpi compacto Icone={TrendingUp} label="vs. ano anterior"
+          valor={kpi.yoy != null ? `${kpi.yoy >= 0 ? "+" : ""}${kpi.yoy.toFixed(0)}%` : "—"}
+          delta={kpi.yoy != null ? `${Math.abs(kpi.yoy).toFixed(0)}%` : null}
+          up={kpi.yoy >= 0}
+          nota={kpi.yoy == null ? `sem base de ${anoAnterior}` : `vs. ${anoAnterior}`} />
+        {/* Não existe meta no banco — chip fica honesto em vez de inventar. */}
+        <ChipKpi compacto Icone={Clock} label="% da meta" valor="—" nota="EM BREVE · sem metas" />
+        {/* A ponte lead→venda não é confiável — não dá pra medir conversão. */}
+        <ChipKpi compacto Icone={Clock} label="Taxa de conversão" valor="—" nota="EM BREVE · não medível" />
       </div>
-      <Bloco titulo="Consultores por negócios ganhos" canto="acumulado" sem>
-        <Estado carregando={rank.isLoading} erro={rank.error} vazio={!consultores.length}>
-          <Lista linhas={consultores} formatar={numero} />
+
+      {/* Evolução à esquerda, consultoras à direita — cabe numa tela de TV. */}
+      <div className="gridCom">
+        <div>
+        <Bloco titulo="Evolução do faturamento" canto={`${rotuloCat(categoria)} · 12 meses`}>
+          <Estado
+            carregando={carregFluxo}
+            erro={erroFluxo}
+            vazio={ehSympla || !linhasFluxo.length}
+            vazioTitulo={ehSympla ? "Sympla não tem série mensal" : undefined}
+            vazioDica={ehSympla ? "A view do Sympla é agregada e não traz data — sem dimensão temporal, não há evolução mensal honesta a mostrar." : undefined}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4, fontSize: 10.5, color: C.muted, fontWeight: 600 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 9, height: 9, borderRadius: 3, background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` }} /> Período
+              </span>
+              <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 13, height: 0, borderTop: `2px dashed ${AZUL_ANTERIOR}` }} /> Mesmo período {anoAnterior}
+              </span>
+            </div>
+            <BarrasEvolucao serie={evolucao} anoAnterior={anoAnterior} />
+          </Estado>
+        </Bloco>
+
+        {/* Sympla é evento, outra natureza — não entra neste cruzamento. */}
+        {!ehSympla && (
+          <Bloco titulo="Matrículas vs. Faturamento" canto={`${rotuloCat(categoria)} · ${rotulo}`}>
+            <Estado
+              carregando={ehGeral ? geralMensal.isLoading : matfat.isLoading}
+              erro={ehGeral ? geralMensal.error : matfat.error}
+              vazio={!matFat.length}
+              vazioTitulo="Nenhuma matrícula no período"
+              vazioDica={`Nada entre ${inicio} e ${fim}. Troque o período no topo.`}
+            >
+              <MatriculasVsFaturamento serie={matFat} />
+            </Estado>
+          </Bloco>
+        )}
+        </div>
+
+        <div>
+          <Bloco
+            titulo={`Consultoras · ${rotuloCat(categoria)}`}
+            canto={
+              <span style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
+                <span style={{ fontSize: 10 }}>
+                  {ehSympla ? "todos os tempos" : geral ? "todos os tempos" : rotulo}
+                </span>
+                {!ehSympla && <ToggleVisao valor={visao} onChange={setVisao} />}
+              </span>
+            }
+          >
+            <Estado
+              carregando={fonte.isLoading}
+              erro={fonte.error}
+              vazio={!podio.length}
+              vazioTitulo={ehSympla || geral ? undefined : "Nenhuma venda no período"}
+              vazioDica={ehSympla || geral ? undefined : `Nenhuma venda entre ${inicio} e ${fim}. Troque o período no topo, ou veja em "Geral".`}
+            >
+              {/* Hover com cursos é exclusivo do GGB — nas outras categorias
+                  o card segue exatamente como antes, sem wrapper. */}
+              <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(Math.max(podio.length, 1), 3)}, 1fr)`, gap: 8 }}>
+                {podio.slice(0, 3).map((c, i) => (
+                  ehGGB
+                    ? <CardComCursos key={c.consultor_id ?? c.consultora} c={c} pos={i + 1}
+                        cursos={cursosPorConsultora.get(c.consultora)} />
+                    : <CardPodio key={c.consultor_id ?? c.consultora} c={c} pos={i + 1} />
+                ))}
+              </div>
+              {podio.length > 3 && (
+                <div style={{ marginTop: 8 }}>
+                  <Lista
+                    linhas={podio.slice(3).map((c) => ({ rotulo: c.consultora, valor: c.receita, orfa: c.atual === false }))}
+                    top={4}
+                  />
+                </div>
+              )}
+            </Estado>
+          </Bloco>
+
+      {/* Carinhas são do time GGB. Aparecem no GGB e no consolidado Geral
+          (que inclui o GGB); nas demais categorias o bloco nem aparece. */}
+      {mostraCarinhas && (
+      <Bloco titulo="Placar · carinhas" canto={`${rotulo} · GGB · público`} sem altura={210}>
+        <Estado
+          carregando={carinhas.isLoading}
+          erro={carinhas.error}
+          vazio={!totalPeriodo}
+          vazioTitulo="Nenhuma movimentação no período"
+          vazioDica={`Nenhuma venda classificada entre ${inicio} e ${fim}. É normal: o negócio vende em lote — troque o período no topo.`}
+        >
+          {linhas.map((p) => <LinhaPlacar key={p.consultor_id ?? p.consultora} p={p} />)}
+          <div style={{ display: "flex", gap: 8, padding: "10px 20px", background: "rgba(255,255,255,.02)" }}>
+            <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+            <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+              <b style={{ color: C.up }}>Verde</b> = venda 100% Pix, transferência ou dinheiro.{" "}
+              <b style={{ color: C.warn }}>Amarela</b> = mistura (parte Pix, parte cartão).{" "}
+              <b style={{ color: C.down }}>Vermelha</b> = 100% Stone. A cada{" "}
+              <b style={{ color: C.muted }}>10 verdes</b>, um brinde surpresa. A base vai desde
+              jan/2025 e está recortada pelo período do topo. Placar público: todas veem o de todas.
+            </span>
+          </div>
         </Estado>
       </Bloco>
-    </Estado>
+      )}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -1473,6 +2211,13 @@ function Shell({ perfil }) {
   const [mesIdx, setMesIdx] = useState(() => new Date().getMonth());
   const { minMes, maxMes, anos } = useRangeDatas();
 
+  // Categoria: só recorta o Hub Comercial. A lista vem do dado; sem opção
+  // "todas" de propósito (categorias são unidades de negócio separadas).
+  const categorias = useCategoriasDisponiveis();
+  const [catEscolhida, setCategoria] = useState(null);
+  const categoria = catEscolhida && categorias.includes(catEscolhida) ? catEscolhida : categorias[0];
+  const ctxCategoria = useMemo(() => ({ categoria, setCategoria, categorias }), [categoria, categorias]);
+
   const ctxPeriodo = useMemo(() => {
     const dentro = (k) => k >= minMes && k <= maxMes;
     const aplicar = (a, m) => { setAno(a); setMesIdx(m); };
@@ -1545,6 +2290,7 @@ function Shell({ perfil }) {
 
   return (
     <PeriodoCtx.Provider value={ctxPeriodo}>
+    <CategoriaCtx.Provider value={ctxCategoria}>
     <div style={{
       minHeight: "100vh", display: "flex", color: C.text, fontFamily: SANS,
       background: `radial-gradient(1200px 600px at 78% -10%, ${C.gold}12, transparent 60%), ${C.void}`,
@@ -1575,6 +2321,10 @@ function Shell({ perfil }) {
           .finRow1 { grid-template-columns: 5fr 4fr 3fr; }
           .finRow2 { grid-template-columns: 7fr 5fr; }
         }
+        /* Hub Comercial: evolução à esquerda, consultoras à direita. Denso
+           pra caber numa TV 16:9 sem rolagem. */
+        .gridCom { display: grid; grid-template-columns: 1fr; column-gap: 14px; align-items: start; }
+        @media (min-width: 1100px) { .gridCom { grid-template-columns: 7fr 5fr; } }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
       `}</style>
 
@@ -1660,6 +2410,7 @@ function Shell({ perfil }) {
 
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               <SeletorPeriodo />
+              {tela === "comercial" && <SeletorCategoria />}
               <div style={{
                 width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.cardLine}`,
                 background: "rgba(255,255,255,.04)", display: "flex", alignItems: "center",
@@ -1674,6 +2425,7 @@ function Shell({ perfil }) {
         </div>
       </main>
     </div>
+    </CategoriaCtx.Provider>
     </PeriodoCtx.Provider>
   );
 }
