@@ -2258,8 +2258,12 @@ function Login() {
 /* ============ SHELL ============ */
 
 function Shell({ perfil }) {
-  const admin = perfil.papel === "admin" || perfil.setor === "geral";
-  const [tela, setTela] = useState(admin ? "executivo" : perfil.setor);
+  // União de setores: o setor do perfil + os de perfil_setores (já vêm em
+  // perfil.setores). Admin/geral seguem vendo tudo, agora também se "geral"
+  // estiver entre os múltiplos setores.
+  const setores = perfil.setores?.length ? perfil.setores : [perfil.setor].filter(Boolean);
+  const admin = perfil.papel === "admin" || setores.includes("geral");
+  const [tela, setTela] = useState(admin ? "executivo" : (perfil.setor || setores[0]));
   const [modo, setModo] = useState("ano");
   const [ano, setAno] = useState(() => new Date().getFullYear());
   const [mesIdx, setMesIdx] = useState(() => new Date().getMonth());
@@ -2299,7 +2303,7 @@ function Shell({ perfil }) {
     };
   }, [modo, ano, mesIdx, anos, minMes, maxMes]);
 
-  const visiveis = admin ? HUBS : HUBS.filter((h) => h.key === perfil.setor);
+  const visiveis = admin ? HUBS : HUBS.filter((h) => setores.includes(h.key));
   const hub = HUBS.find((h) => h.key === tela);
 
   const conteudo = () => {

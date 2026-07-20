@@ -33,7 +33,20 @@ export function usePerfil(sessao) {
         .eq("id", sessao.user.id)
         .single();
       if (error) throw error;
-      return data;
+
+      // Um usuário pode ter acesso a mais de um setor (tabela perfil_setores).
+      // A RLS já libera só as linhas do próprio perfil; aqui só unimos com o
+      // setor do perfil. Se essa leitura falhar, o login não pode cair — no
+      // pior caso o menu fica com o setor único de antes.
+      const { data: extras, error: errExtras } = await supabase
+        .from("perfil_setores")
+        .select("setor")
+        .eq("perfil_id", sessao.user.id);
+      const setores = [...new Set(
+        [data.setor, ...(errExtras ? [] : (extras ?? []).map((r) => r.setor))].filter(Boolean)
+      )];
+
+      return { ...data, setores };
     },
   });
 }
