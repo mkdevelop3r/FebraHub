@@ -175,8 +175,11 @@ const ROTULO_CAT = { CI: "Coach Individual", "Coaching Individual": "Coach Indiv
 const rotuloCat = (c) => ROTULO_CAT[c] ?? c;
 const ORDEM_CAT = ["GGB", "CIS", "CI", "Coaching Individual", "Mentoria"];
 // Categorias que somam no Geral (backend) mas não viram botão próprio: "Sem
-// categoria" é bucket de qualidade e "Evento" já aparece via Sympla.
-const CAT_SEM_BOTAO = (c) => /sem[\s_]?categoria|^\s*evento\s*$|indefinid|n[aã]o[_\s]?determinad/i.test(c ?? "");
+// categoria" é bucket de qualidade, "Evento" já aparece via Sympla, e
+// "Franquia"/"Outro" foram tirados da barra a pedido. Só oculta o botão —
+// os dados e o total do Geral seguem intactos.
+const CAT_SEM_BOTAO = (c) =>
+  /sem[\s_]?categoria|^\s*evento\s*$|^\s*franquia\s*$|^\s*outros?\s*$|indefinid|n[aã]o[_\s]?determinad/i.test(c ?? "");
 
 const CategoriaCtx = createContext(null);
 const useCategoria = () => useContext(CategoriaCtx);
