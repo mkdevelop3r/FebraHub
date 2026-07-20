@@ -86,6 +86,7 @@ const PERIODOS = [
   { key: "ano", label: "Ano" },
   { key: "mes", label: "Mês" },
   { key: "7d", label: "7 dias" },
+  { key: "hoje", label: "Hoje" },
 ];
 
 const MESES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -115,6 +116,9 @@ function intervaloDe({ modo, ano, mesIdx }) {
       rotulo: "Últimos 7 dias",
     };
   }
+  if (modo === "hoje") {
+    return { inicio: hoje, fim: hoje, rotulo: "Hoje" };
+  }
   return { inicio: iso(new Date(ano, 0, 1)), fim: menor(iso(new Date(ano, 11, 31)), hoje), rotulo: String(ano) };
 }
 
@@ -126,9 +130,9 @@ function useCategoriasDisponiveis() {
   const r = useComercialRankingHistorico();
   return useMemo(() => {
     const set = new Set();
-    for (const x of r.data ?? []) if (x.categoria) set.add(String(x.categoria));
+    for (const x of r.data ?? []) if (x.categoria && !CAT_SEM_BOTAO(x.categoria)) set.add(String(x.categoria));
     const ord = (c) => { const i = ORDEM_CAT.indexOf(c); return i < 0 ? 99 : i; };
-    // Geral primeiro (padrão), depois as formações, Sympla por último.
+    // Geral primeiro (padrão), depois as formações + Mentoria, Sympla por último.
     return [CAT_GERAL, ...[...set].sort((a, b) => ord(a) - ord(b) || a.localeCompare(b)), CAT_SYMPLA];
   }, [r.data]);
 }
@@ -169,10 +173,16 @@ const CAT_SYMPLA = "Sympla";
 const CAT_GERAL = "Geral"; // consolidado GGB + CI + CIS (padrão); Sympla fica fora
 const ROTULO_CAT = { CI: "Coach Individual", "Coaching Individual": "Coach Individual" };
 const rotuloCat = (c) => ROTULO_CAT[c] ?? c;
-const ORDEM_CAT = ["GGB", "CIS", "CI", "Coaching Individual"];
+const ORDEM_CAT = ["GGB", "CIS", "CI", "Coaching Individual", "Mentoria"];
+// Categorias que somam no Geral (backend) mas não viram botão próprio: "Sem
+// categoria" é bucket de qualidade e "Evento" já aparece via Sympla.
+const CAT_SEM_BOTAO = (c) => /sem[\s_]?categoria|^\s*evento\s*$|indefinid|n[aã]o[_\s]?determinad/i.test(c ?? "");
 
 const CategoriaCtx = createContext(null);
 const useCategoria = () => useContext(CategoriaCtx);
+
+// Título de vazio de fluxo, ciente do "Hoje" (que vem vazio com frequência).
+const tituloVazioFluxo = (modo) => modo === "hoje" ? "Sem movimentação hoje" : "Nenhuma movimentação no período";
 
 // Recorte de fluxo pela coluna de data. ISO compara como string.
 // `campo` varia por view: as _periodo usam `data`; as carinhas, `data_pagamento`.
@@ -440,6 +450,7 @@ function SeletorPeriodo() {
       {modo === "ano" && <SeletorAno />}
       {modo === "mes" && <SeletorMes />}
       {modo === "7d" && <span style={{ fontSize: 12, fontWeight: 700, color: C.gold, whiteSpace: "nowrap" }}>Últimos 7 dias</span>}
+      {modo === "hoje" && <span style={{ fontSize: 12, fontWeight: 700, color: C.gold, whiteSpace: "nowrap" }}>Hoje</span>}
       <div style={{ display: "flex", gap: 2, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, borderRadius: 10, padding: 3 }}>
         {PERIODOS.map((p) => {
           const ativo = p.key === modo;
@@ -602,8 +613,8 @@ function CardComCursos({ c, pos, cursos }) {
           </div>
           {cursos.map((cu) => (
             <div key={cu.curso} style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
-              <span style={{ fontSize: 11, color: C.bright, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {cu.curso}
+              <span style={{ fontSize: 11, color: C.bright, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={cu.curso}>
+                {cu.curso_curto ?? cu.curso}
               </span>
               <span style={{ fontSize: 9.5, color: C.faint, flexShrink: 0 }}>{numero(cu.vendas)}×</span>
               <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700, color: C.gold, flexShrink: 0 }}>
@@ -761,7 +772,7 @@ function Lista({ linhas, formatar = moeda, total, top }) {
 
 /* Chip de KPI compacto — faixa horizontal do design: ícone + label +
    valor + delta/nota. `hero` deixa o card dourado (o número-âncora). */
-function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto }) {
+function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto, sub }) {
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: compacto ? 9 : 12, minHeight: compacto ? 56 : 78,
@@ -788,6 +799,9 @@ function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto
             ? <span style={{ fontSize: compacto ? 10 : 11, fontWeight: 800, color: up ? C.up : C.down }}>{up ? "▲" : "▼"} {String(delta).replace(/[+-]/, "")}</span>
             : nota && <span style={{ fontSize: compacto ? 9.5 : 11, fontWeight: 800, color: C.muted }}>{nota}</span>}
         </div>
+        {/* Linha secundária opcional (ex.: líquido abaixo do bruto). Sem
+            `sub`, o chip renderiza igual a antes. */}
+        {sub && <div style={{ fontSize: compacto ? 9.5 : 10.5, color: C.faint, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
       </div>
     </div>
   );
@@ -1344,7 +1358,7 @@ function HubExecutivo() {
 /* ============ HUBS SETORIAIS ============ */
 
 function HubComercial() {
-  const { inicio, fim, rotulo } = usePeriodo();
+  const { inicio, fim, rotulo, modo } = usePeriodo();
   const { categoria } = useCategoria();
   const [visao, setVisao] = useState("periodo");
   const rankCat = useComercialRankingHistorico();
@@ -1374,19 +1388,25 @@ function HubComercial() {
   const carregFluxo = ehGeral ? geralMensal.isLoading : rankCat.isLoading;
   const erroFluxo = ehGeral ? geralMensal.error : rankCat.error;
 
-  /* KPIs do período. YoY compara o MESMO recorte um ano atrás — desloco as
-     bordas do intervalo, não o ano inteiro. */
+  /* KPIs do período. O Comercial mostra o BRUTO (valor_bruto = valor
+     vendido): a consultora vendeu o valor cheio, o repasse não é decisão
+     dela. O líquido (valor, após repasses) vai como linha secundária. As
+     matrículas somam conta_matricula — comprador de vaga é receita, mas não
+     é aluno, e vem com 0. YoY compara o MESMO recorte um ano atrás. */
   const kpi = useMemo(() => {
-    const soma = (ls) => ls.reduce((s, r) => s + Number(r.valor ?? 0), 0);
+    const somaB = (ls) => ls.reduce((s, r) => s + Number(r.valor_bruto ?? 0), 0);
+    const somaL = (ls) => ls.reduce((s, r) => s + Number(r.valor ?? 0), 0);
+    const somaM = (ls) => ls.reduce((s, r) => s + Number(r.conta_matricula ?? 0), 0);
     const dentro = noPeriodo(linhasFluxo, { inicio, fim }, "data");
     const menosUmAno = (d) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`;
     const antes = noPeriodo(linhasFluxo, { inicio: menosUmAno(inicio), fim: menosUmAno(fim) }, "data");
-    const receita = soma(dentro), receitaAnt = soma(antes);
+    const bruto = somaB(dentro), brutoAnt = somaB(antes), matriculas = somaM(dentro);
     return {
-      receita,
-      matriculas: dentro.length,
-      ticket: dentro.length ? receita / dentro.length : null,
-      yoy: receitaAnt > 0 ? ((receita - receitaAnt) / receitaAnt) * 100 : null,
+      receita: bruto,
+      liquido: somaL(dentro),
+      matriculas,
+      ticket: matriculas ? bruto / matriculas : null,
+      yoy: brutoAnt > 0 ? ((bruto - brutoAnt) / brutoAnt) * 100 : null,
     };
   }, [linhasFluxo, inicio, fim]);
 
@@ -1397,7 +1417,7 @@ function HubComercial() {
     const porMes = new Map();
     for (const r of linhasFluxo) {
       const m = String(r.data ?? "").slice(0, 7);
-      if (m) porMes.set(m, (porMes.get(m) ?? 0) + Number(r.valor ?? 0));
+      if (m) porMes.set(m, (porMes.get(m) ?? 0) + Number(r.valor_bruto ?? 0)); // Comercial = bruto
     }
     const h = new Date();
     const chave = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -1425,8 +1445,8 @@ function HubComercial() {
       const k = String(r.mes ?? "").slice(0, 7);
       if (!k) continue;
       const a = m.get(k) ?? { mes: k, matriculas: 0, faturamento: 0 };
-      a.matriculas += 1;
-      a.faturamento += Number(r.valor ?? 0);
+      a.matriculas += Number(r.conta_matricula ?? 0); // soma conta_matricula, não conta linha
+      a.faturamento += Number(r.valor_bruto ?? 0);     // Comercial = bruto
       m.set(k, a);
     }
     const h = new Date();
@@ -1435,22 +1455,26 @@ function HubComercial() {
       .map((x) => ({ ...x, parcial: x.mes === atual }));
   }, [matfat.data, geralMensal.data, categoria, inicio, fim, ehSympla, ehGeral]);
 
-  /* Top 5 cursos por consultora (só GGB). Uso o MESMO recorte do pódio: em
-     "Geral" o card mostra receita de todos os tempos, então o tooltip
-     também — senão o detalhe contradiria o número acima dele. */
+  /* Top 5 cursos por consultora — em TODAS as categorias (menos Sympla, que
+     é evento). No Geral, junta os cursos de todas as categorias que a
+     consultora vendeu; na categoria, só os dela. Receita em BRUTO, pra bater
+     com o número do card. Exibe curso_curto (abreviação oficial). Mesmo
+     recorte do pódio: em "Geral" (visão) é todos os tempos, senão o período. */
   const cursosPorConsultora = useMemo(() => {
-    if (!ehGGB) return new Map();
-    const soGGB = (cursos.data ?? []).filter((r) => String(r.categoria).toUpperCase() === "GGB");
-    const base = geral ? soGGB : noPeriodo(soGGB, { inicio, fim }, "data");
+    if (ehSympla) return new Map();
+    const doFiltro = ehGeral
+      ? (cursos.data ?? [])
+      : (cursos.data ?? []).filter((r) => String(r.categoria) === categoria);
+    const base = geral ? doFiltro : noPeriodo(doFiltro, { inicio, fim }, "data");
     const porNome = new Map();
     for (const r of base) {
       const nome = String(r.consultora ?? "");
       if (!porNome.has(nome)) porNome.set(nome, new Map());
       const cm = porNome.get(nome);
       const k = String(r.curso ?? "—");
-      const a = cm.get(k) ?? { curso: k, vendas: 0, receita: 0 };
+      const a = cm.get(k) ?? { curso: k, curso_curto: r.curso_curto ?? r.curso, vendas: 0, receita: 0 };
       a.vendas += 1;
-      a.receita += Number(r.valor ?? 0);
+      a.receita += Number(r.valor_bruto ?? 0);
       cm.set(k, a);
     }
     const out = new Map();
@@ -1458,7 +1482,7 @@ function HubComercial() {
       out.set(nome, [...cm.values()].sort((a, b) => b.receita - a.receita).slice(0, 5));
     }
     return out;
-  }, [cursos.data, ehGGB, geral, inicio, fim]);
+  }, [cursos.data, ehSympla, ehGeral, categoria, geral, inicio, fim]);
 
   /* Pódio. Sympla vem de outra view (agregada, sem data): uma consultora só,
      medida em receita líquida/eventos/ingressos. */
@@ -1483,7 +1507,7 @@ function HubComercial() {
         consultor_id: k, consultora: r.consultora, foto_url: r.foto_url,
         atual: r.atual !== false, receita: 0, vendas: 0,
       };
-      a.receita += Number(r.valor ?? 0);
+      a.receita += Number(r.valor_bruto ?? 0); // Comercial ranqueia por bruto (valor vendido)
       a.vendas += 1;
       m.set(k, a);
     }
@@ -1523,27 +1547,52 @@ function HubComercial() {
     return { linhas: arr, totalPeriodo: arr.reduce((s, a) => s + a.verdes + a.amarelas + a.vermelhas, 0) };
   }, [carinhas.data, inicio, fim]);
 
+  /* "Hoje" tende a vir vazio (poucas vendas/dia). Em vez de uma tela de
+     zeros que parece erro, um estado honesto. Sympla ignora o período, então
+     não entra nessa regra. */
+  const semMovimentoHoje = modo === "hoje" && !ehSympla && !carregFluxo && !erroFluxo
+    && kpi.receita === 0 && kpi.matriculas === 0;
+  if (semMovimentoHoje) {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        textAlign: "center", gap: 8, padding: "64px 24px",
+        background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 16,
+      }}>
+        <Database size={22} style={{ color: C.faint }} />
+        <div style={{ fontSize: 15, fontWeight: 800, color: C.bright }}>Sem movimentação hoje</div>
+        <div style={{ fontSize: 12.5, color: C.faint, maxWidth: 420, lineHeight: 1.55 }}>
+          Nenhuma venda registrada em {rotuloCat(categoria)} hoje ({fim}). O volume é de poucas vendas por dia —
+          troque o período no topo (Mês/Ano) pra ver o histórico.
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
-      {/* No Geral, deixa explícito o que está somado — e o que fica de fora. */}
+      {/* No Geral, deixa explícito o que está somado. Migration 27: passou a
+          incluir todas as categorias comerciais (não só GGB+CI+CIS). */}
       {ehGeral && (
         <div style={{
           display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap",
           padding: "7px 12px", marginBottom: 10, borderRadius: 9,
           background: `${C.gold}0F`, border: `1px solid ${C.gold}33`,
         }}>
-          <span style={{ fontSize: 11.5, fontWeight: 800, color: C.gold }}>Formação (GGB + CI + CIS)</span>
+          <span style={{ fontSize: 11.5, fontWeight: 800, color: C.gold }}>Geral · todas as categorias</span>
           <span style={{ fontSize: 10.5, color: C.faint }}>
-            total consolidado das 3 unidades de formação · Eventos/Sympla vistos à parte.
+            consolidado do Comercial (GGB, CI, CIS, Mentoria, eventos, sem categoria) · bruto vendido; o líquido, após repasses, na linha de baixo.
           </span>
         </div>
       )}
 
       {/* Faixa compacta: cada categoria é uma unidade de negócio, nunca somada. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))", gap: 8, marginBottom: 10 }}>
-        <ChipKpi compacto hero Icone={Wallet} label={`Faturamento · ${rotuloCat(categoria)}`}
+        <ChipKpi compacto hero Icone={Wallet}
+          label={ehSympla ? "Receita · Sympla" : "Faturamento bruto · valor vendido"}
           valor={ehSympla ? moeda(podio[0]?.receita ?? 0) : moeda(kpi.receita)}
-          nota={ehSympla ? "líquida · todos os tempos" : rotulo} />
+          nota={ehSympla ? "líquida · todos os tempos" : rotulo}
+          sub={ehSympla ? undefined : `${moeda(kpi.liquido)} líquido · após repasses`} />
         <ChipKpi compacto Icone={Receipt} label={ehSympla ? "Ingressos" : "Total de matrículas"}
           valor={ehSympla ? numero(sympla.data?.[0]?.ingressos ?? 0) : numero(kpi.matriculas)}
           nota={ehSympla ? `${numero(sympla.data?.[0]?.eventos ?? 0)} eventos` : rotulo} />
@@ -1619,14 +1668,14 @@ function HubComercial() {
               vazioTitulo={ehSympla || geral ? undefined : "Nenhuma venda no período"}
               vazioDica={ehSympla || geral ? undefined : `Nenhuma venda entre ${inicio} e ${fim}. Troque o período no topo, ou veja em "Geral".`}
             >
-              {/* Hover com cursos é exclusivo do GGB — nas outras categorias
-                  o card segue exatamente como antes, sem wrapper. */}
+              {/* Hover com cursos em todas as categorias, menos Sympla (evento,
+                  sem cursos). Sympla usa o card puro, sem wrapper. */}
               <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(Math.max(podio.length, 1), 3)}, 1fr)`, gap: 8 }}>
                 {podio.slice(0, 3).map((c, i) => (
-                  ehGGB
-                    ? <CardComCursos key={c.consultor_id ?? c.consultora} c={c} pos={i + 1}
+                  ehSympla
+                    ? <CardPodio key={c.consultor_id ?? c.consultora} c={c} pos={i + 1} />
+                    : <CardComCursos key={c.consultor_id ?? c.consultora} c={c} pos={i + 1}
                         cursos={cursosPorConsultora.get(c.consultora)} />
-                    : <CardPodio key={c.consultor_id ?? c.consultora} c={c} pos={i + 1} />
                 ))}
               </div>
               {podio.length > 3 && (
@@ -1648,7 +1697,7 @@ function HubComercial() {
           carregando={carinhas.isLoading}
           erro={carinhas.error}
           vazio={!totalPeriodo}
-          vazioTitulo="Nenhuma movimentação no período"
+          vazioTitulo={tituloVazioFluxo(modo)}
           vazioDica={`Nenhuma venda classificada entre ${inicio} e ${fim}. É normal: o negócio vende em lote — troque o período no topo.`}
         >
           {linhas.map((p) => <LinhaPlacar key={p.consultor_id ?? p.consultora} p={p} />)}
@@ -1682,7 +1731,7 @@ const abreviaForma = (s) => {
 };
 
 function HubFinanceiro() {
-  const { inicio, fim, rotulo } = usePeriodo();
+  const { inicio, fim, rotulo, modo } = usePeriodo();
   const recCat = useFinanceiroReceitaCategoriaPeriodo();
   const pag = useFinanceiroPagamentos();
   const caixaHor = useFinanceiroCaixaHorizonte();
@@ -1699,14 +1748,16 @@ function HubFinanceiro() {
   // "Sem vínculo" pra ele nunca aparecer no topo como se fosse produto,
   // e calculo a cobertura: quanto da receita tem categoria identificada.
   const categorias = useMemo(() => {
+    // `repasse` (migration 27) cobre coach, holding do CIS e treinadores de
+    // mentoria — não só o coach. Nome antigo era repasse_coach.
     const recorte = somarPor(noPeriodo(recCat.data, { inicio, fim }), "categoria",
-      ["receita_bruta", "receita_unidade", "repasse_coach", "vendas"]);
+      ["receita_bruta", "receita_unidade", "repasse", "vendas"]);
     const rows = recorte.map((r) => ({
       categoria: ehSemVinculo(r.categoria) ? "Sem vínculo" : (r.categoria ?? "—"),
       vendas: Number(r.vendas ?? 0),
       bruto: Number(r.receita_bruta ?? 0),
       unidade: Number(r.receita_unidade ?? 0),
-      repasse: Number(r.repasse_coach ?? 0),
+      repasse: Number(r.repasse ?? 0),
       orfa: ehSemVinculo(r.categoria),
     }));
     const reais = rows.filter((r) => !r.orfa).sort((a, b) => b.unidade - a.unidade);
@@ -1814,7 +1865,7 @@ function HubFinanceiro() {
             carregando={recCat.isLoading}
             erro={recCat.error}
             vazio={!categorias.reais.length && !categorias.orfas.length}
-            vazioTitulo="Nenhuma movimentação no período"
+            vazioTitulo={tituloVazioFluxo(modo)}
             vazioDica={`Nenhuma receita com data entre ${inicio} e ${fim}. É normal: o negócio vende em lote — troque o período no topo.`}
           >
             <BarrasCategoria reais={categorias.reais} orfas={categorias.orfas} semVinc={categorias.semVinc} cobertura={categorias.cobertura} />
@@ -1888,7 +1939,7 @@ function HubFinanceiro() {
             carregando={despCat.isLoading}
             erro={despCat.error}
             vazio={!despesas.length}
-            vazioTitulo="Nenhuma movimentação no período"
+            vazioTitulo={tituloVazioFluxo(modo)}
             vazioDica={`Nenhuma despesa com data entre ${inicio} e ${fim}. Troque o período no topo.`}
           >
             <Lista linhas={despesas} total={despesaTot} top={6} />
@@ -2006,7 +2057,7 @@ function HubEventos() {
    curso (unidades diferentes). Produto e estoque só existem no Omie, que
    ainda não está integrado: vazio honesto em vez de número inventado. */
 function HubLoja() {
-  const { inicio, fim, rotulo } = usePeriodo();
+  const { inicio, fim, rotulo, modo } = usePeriodo();
   const kpis = useLojaKpis();
   const rec = useLojaReceitaPeriodo();
   const recMensal = useLojaReceitaMensal();
@@ -2064,7 +2115,7 @@ function HubLoja() {
             carregando={rec.isLoading}
             erro={rec.error}
             vazio={!formas.length}
-            vazioTitulo="Nenhuma movimentação no período"
+            vazioTitulo={tituloVazioFluxo(modo)}
             vazioDica={`Nenhuma venda com data entre ${inicio} e ${fim}. É normal: a loja vende em lote — troque o período no topo.`}
           >
             <Donut segmentos={formas} size={118} centroSize={17} centroValor={formas[0] ? abreviaForma(formas[0].rotulo) : "—"} centroLabel={`${leaderPct}% líder`} centroCor={C.gold} />
