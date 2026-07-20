@@ -156,6 +156,11 @@ export const useComercialSymplaJennifer = () => useView("vw_comercial_sympla_jen
    linhas empatadas são idênticas e a paginação não altera a contagem. */
 export const useComercialCarinhas = () =>
   useView("vw_comercial_carinhas_ggb", { ordem: ["data_pagamento", "consultor_id", "valor", "carinha"] });
+
+/* Detalhe das vendas verdes (auditoria da classificação). Uma linha por
+   venda; a coluna `formas` mostra as formas de pagamento que a compuseram. */
+export const useComercialVerdesDetalhe = () =>
+  useView("vw_comercial_verdes_detalhe", { ordem: ["data", "consultora", "valor"] });
 export const useFinanceiroReceita = () => useView("vw_financeiro_receita");
 export const useFinanceiroInadimp = () => useView("vw_financeiro_inadimplencia");
 export const useFinanceiroQualid  = () => useView("vw_financeiro_qualidade");
