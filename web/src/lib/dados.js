@@ -202,6 +202,10 @@ export const usePedagogicoTurmas  = () => useView("vw_pedagogico_turmas");
 export const useEventosDesempenho = () => useView("vw_eventos_desempenho");
 export const useDiretoriaConsol   = () => useView("vw_diretoria_consolidado");
 
+/* Status de atualização das integrações — uma linha por fonte. O `rotulo`
+   já vem formatado ("Atualizado hoje", "Nunca sincronizado", etc.). */
+export const useIntegracaoStatus  = () => useView("vw_integracao_status");
+
 /* ============================================================
    AGREGAÇÃO — as views vem agrupadas por mes.
    O KPI compara o ultimo mes fechado com o anterior.

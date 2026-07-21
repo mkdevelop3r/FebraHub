@@ -22,7 +22,7 @@ import {
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
   useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
   useMarketingOrigem, usePedagogicoTurmas, useEventosDesempenho,
-  useDiretoriaConsol,
+  useDiretoriaConsol, useIntegracaoStatus,
   porMes, variacao, moeda, numero,
 } from "./lib/dados";
 
@@ -278,6 +278,53 @@ function Kpi({ label, valor, unidade, delta, up, serie, nota, destaque, parcial 
           Mês em curso: <b style={{ color: C.muted }}>{parcial}</b> (parcial)
         </div>
       )}
+    </div>
+  );
+}
+
+/* Rodapé discreto: quando cada fonte que alimenta o hub foi atualizada.
+   Usa o `rotulo` já formatado da view. Neutro quando fresco (hoje/ontem);
+   alerta quando velho (ha_dias), com erro/parcial (falha real) ou nunca.
+   "Nunca sincronizado" do Salesforce é manual (import de CSV), não falha —
+   por isso sai âmbar com nota "manual", nunca vermelho como um erro. */
+const FONTES_MANUAIS = new Set(["salesforce"]); // sync registrado à mão
+
+function visualFonte(r) {
+  if (r.status === "erro" || r.status === "parcial")
+    return { cor: C.down, alerta: true, nota: "falha na última sincronização" };
+  if (r.frescor === "nunca")
+    return { cor: C.warn, alerta: true, manual: FONTES_MANUAIS.has(r.fonte) };
+  if (r.frescor === "ha_dias")
+    return { cor: C.warn, alerta: true };
+  return { cor: C.up, alerta: false }; // hoje / ontem, ok
+}
+
+function RodapeIntegracoes({ fontes }) {
+  const st = useIntegracaoStatus();
+  const mapa = new Map((st.data ?? []).map((r) => [r.fonte, r]));
+  const itens = fontes.map((f) => mapa.get(f)).filter(Boolean);
+  if (!itens.length) return null;
+  return (
+    <div style={{
+      display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 18px",
+      marginTop: 20, paddingTop: 12, borderTop: `1px solid ${C.hair}`,
+    }}>
+      <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", color: C.dim }}>
+        Atualização das fontes
+      </span>
+      {itens.map((r) => {
+        const v = visualFonte(r);
+        return (
+          <span key={r.fonte} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11 }}
+            title={r.ultima_sync ? `Última sincronização: ${new Date(r.ultima_sync).toLocaleString("pt-BR")}` : "Sem registro de sincronização"}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: v.cor, flexShrink: 0 }} />
+            <span style={{ color: C.muted, fontWeight: 600 }}>{r.nome_exibicao}</span>
+            <span style={{ color: v.alerta ? v.cor : C.faint }}>{r.rotulo}</span>
+            {v.manual && <span style={{ color: C.faint }}>· atualização manual (CSV)</span>}
+            {v.nota && <span style={{ color: v.cor }}>· {v.nota}</span>}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -1830,6 +1877,8 @@ function HubComercial() {
         </div>
       </div>
 
+      <RodapeIntegracoes fontes={ehSympla ? ["sympla"] : ["salesforce", "cispay"]} />
+
       {verdesDe && (
         <PainelVerdes
           consultora={verdesDe}
@@ -2092,6 +2141,8 @@ function HubFinanceiro() {
           <LinhaEvolucao serie={evolDespesa} cor={C.down} idGrad="fillDesp" inverso />
         )}
       </Bloco>
+
+      <RodapeIntegracoes fontes={["salesforce", "conta_azul", "cispay"]} />
     </>
   );
 }
@@ -2163,17 +2214,20 @@ function HubEventos() {
   const comp = t.ingressos ? ((t.check / t.ingressos) * 100).toFixed(1) : null;
 
   return (
-    <Estado carregando={ev.isLoading} erro={ev.error} vazio={!ev.data?.length}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 26 }}>
-        <Kpi label="Receita líquida" valor={moeda(t.liquida)} nota="já sem a taxa" />
-        <Kpi label="Taxa Sympla" valor={moeda(t.bruta - t.liquida)} nota="retido na fonte" destaque={C.warn} />
-        <Kpi label="Ingressos" valor={numero(t.ingressos)} nota="acumulado" />
-        <Kpi label="Comparecimento" valor={comp ?? "—"} unidade="%" nota="check-in / ingresso" />
-      </div>
-      <Bloco titulo="Eventos por receita líquida" canto="acumulado" sem>
-        <Lista linhas={top} total={t.liquida} />
-      </Bloco>
-    </Estado>
+    <>
+      <Estado carregando={ev.isLoading} erro={ev.error} vazio={!ev.data?.length}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 26 }}>
+          <Kpi label="Receita líquida" valor={moeda(t.liquida)} nota="já sem a taxa" />
+          <Kpi label="Taxa Sympla" valor={moeda(t.bruta - t.liquida)} nota="retido na fonte" destaque={C.warn} />
+          <Kpi label="Ingressos" valor={numero(t.ingressos)} nota="acumulado" />
+          <Kpi label="Comparecimento" valor={comp ?? "—"} unidade="%" nota="check-in / ingresso" />
+        </div>
+        <Bloco titulo="Eventos por receita líquida" canto="acumulado" sem>
+          <Lista linhas={top} total={t.liquida} />
+        </Bloco>
+      </Estado>
+      <RodapeIntegracoes fontes={["sympla"]} />
+    </>
   );
 }
 
