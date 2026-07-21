@@ -1,24 +1,27 @@
 # FebraHub · .github/workflows/sync-diario.yml
 #
-# Roda os ETLs todo dia às 06:00 (Salvador) e registra o status no Supabase.
-# Gratuito em repositório público.
+# Roda os ETLs todo dia às 06:00 (Salvador) e registra no Supabase
+# quando cada integração sincronizou, para o hub mostrar
+# "Atualizado hoje / há N dias".
 #
-# Secrets já cadastrados em Settings > Secrets and variables > Actions:
-#   SUPABASE_URL, SUPABASE_SERVICE_KEY
+# Roda nos servidores do GitHub — não depende da máquina de ninguém.
+# Observações sobre o agendamento:
+#   - o horário não é exato (atrasos de 5 a 30 min são normais)
+#   - se o repositório ficar 60 dias sem commit, o agendamento é
+#     desativado; basta um commit qualquer para reativar
+#
+# Secrets em Settings > Secrets and variables > Actions:
+#   SUPABASE_URL, SUPABASE_SERVICE_KEY  (service_role, NÃO a anon)
 #   CISPAY_TOKEN, CISPAY_BASE_URL
 #   SYMPLA_TOKEN, SYMPLA_BASE_URL
 #   CONTAAZUL_CLIENT_ID, CONTAAZUL_CLIENT_SECRET
-#
-# Os scripts da Conta Azul precisam estar em etl/ para os últimos
-# dois passos funcionarem (copiar de Documentos/Meu/Conta azul,
-# SEM o arquivo .env).
 
 name: Sync diário
 
 on:
   schedule:
     - cron: '0 9 * * *'      # 09:00 UTC = 06:00 em Salvador
-  workflow_dispatch:          # botão para rodar manualmente pelo GitHub
+  workflow_dispatch:          # botão para rodar manualmente
 
 jobs:
   sync:
@@ -37,7 +40,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r etl/requirements.txt
 
+      # ---------------- CisPay ----------------
       - name: CisPay
+        id: cispay
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -46,7 +51,19 @@ jobs:
         run: python etl/cispay_sync.py
         continue-on-error: true
 
+      - name: Status — CisPay
+        if: always()
+        run: |
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"cispay\",\"nome_exibicao\":\"CisPay\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.cispay.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+
+      # ---------------- Sympla ----------------
       - name: Sympla
+        id: sympla
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -55,7 +72,19 @@ jobs:
         run: python etl/sympla_sync.py
         continue-on-error: true
 
+      - name: Status — Sympla
+        if: always()
+        run: |
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"sympla\",\"nome_exibicao\":\"Sympla\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.sympla.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+
+      # ---------------- Conta Azul ----------------
       - name: Conta Azul — contas a receber
+        id: ca_receber
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -65,6 +94,7 @@ jobs:
         continue-on-error: true
 
       - name: Conta Azul — contas a pagar
+        id: ca_pagar
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -72,3 +102,13 @@ jobs:
           CONTAAZUL_CLIENT_SECRET: ${{ secrets.CONTAAZUL_CLIENT_SECRET }}
         run: python etl/contaazul_pagar_sync.py --sync
         continue-on-error: true
+
+      - name: Status — Conta Azul
+        if: always()
+        run: |
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"conta_azul\",\"nome_exibicao\":\"Conta Azul\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.ca_receber.outcome == 'success' && steps.ca_pagar.outcome == 'success' && 'ok' || 'parcial' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
