@@ -22,7 +22,7 @@ import {
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
   useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
   useMarketingOrigem, usePedagogicoTurmas, useEventosDesempenho,
-  useDiretoriaConsol,
+  useDiretoriaConsol, useIntegracaoStatus,
   porMes, variacao, moeda, numero,
 } from "./lib/dados";
 
