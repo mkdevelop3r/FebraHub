@@ -1532,14 +1532,13 @@ function HubComercial() {
   const carregFluxo = ehGeral ? geralMensal.isLoading : rankCat.isLoading;
   const erroFluxo = ehGeral ? geralMensal.error : rankCat.error;
 
-  /* KPIs do período. O Comercial mostra o BRUTO (valor_bruto = valor
+  /* KPIs do período. O Comercial mostra só o BRUTO (valor_bruto = valor
      vendido): a consultora vendeu o valor cheio, o repasse não é decisão
-     dela. O líquido (valor, após repasses) vai como linha secundária. As
+     dela — e o líquido, após repasses, é assunto do Financeiro. As
      matrículas somam conta_matricula — comprador de vaga é receita, mas não
      é aluno, e vem com 0. YoY compara o MESMO recorte um ano atrás. */
   const kpi = useMemo(() => {
     const somaB = (ls) => ls.reduce((s, r) => s + Number(r.valor_bruto ?? 0), 0);
-    const somaL = (ls) => ls.reduce((s, r) => s + Number(r.valor ?? 0), 0);
     const somaM = (ls) => ls.reduce((s, r) => s + Number(r.conta_matricula ?? 0), 0);
     const dentro = noPeriodo(linhasFluxo, { inicio, fim }, "data");
     const menosUmAno = (d) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`;
@@ -1547,7 +1546,6 @@ function HubComercial() {
     const bruto = somaB(dentro), brutoAnt = somaB(antes), matriculas = somaM(dentro);
     return {
       receita: bruto,
-      liquido: somaL(dentro),
       matriculas,
       ticket: matriculas ? bruto / matriculas : null,
       yoy: brutoAnt > 0 ? ((bruto - brutoAnt) / brutoAnt) * 100 : null,
@@ -1745,11 +1743,12 @@ function HubComercial() {
 
       {/* Faixa compacta: cada categoria é uma unidade de negócio, nunca somada. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))", gap: 8, marginBottom: 10 }}>
+        {/* Só o bruto vendido: o líquido (após repasses) vive no Financeiro,
+            que é onde a informação faz sentido. */}
         <ChipKpi compacto hero Icone={Wallet}
           label={ehSympla ? "Receita · Sympla" : "Faturamento bruto · valor vendido"}
           valor={ehSympla ? moeda(podio[0]?.receita ?? 0) : moeda(kpi.receita)}
-          nota={ehSympla ? "líquida · todos os tempos" : rotulo}
-          sub={ehSympla ? undefined : `${moeda(kpi.liquido)} líquido · após repasses`} />
+          nota={ehSympla ? "líquida · todos os tempos" : rotulo} />
         <ChipKpi compacto Icone={Receipt} label={ehSympla ? "Ingressos" : "Total de matrículas"}
           valor={ehSympla ? numero(sympla.data?.[0]?.ingressos ?? 0) : numero(kpi.matriculas)}
           nota={ehSympla ? `${numero(sympla.data?.[0]?.eventos ?? 0)} eventos` : rotulo} />
@@ -2025,10 +2024,10 @@ function HubFinanceiro() {
       {/* Faixa de KPIs compactos — âncora dourada + 4 métricas do mês */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
         <ChipKpi hero Icone={Wallet} label="Receita reconhecida" valor={moeda(categorias.total)} nota={rotulo} />
-        <ChipKpi Icone={Clock} label="Sem status" valor={pagTot.pctSem != null ? pagTot.pctSem.toFixed(1) : "—"} unidade="%" nota="snapshot" />
-        <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%" nota="snapshot" />
+        <ChipKpi Icone={Clock} label="Sem status" valor={pagTot.pctSem != null ? pagTot.pctSem.toFixed(1) : "—"} unidade="%" nota="posição atual" />
+        <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%" nota="posição atual" />
         <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
-        <ChipKpi Icone={Hourglass} label="A receber" valor={moeda(aReceber)} nota="CisPay · snapshot" />
+        <ChipKpi Icone={Hourglass} label="A receber" valor={moeda(aReceber)} nota="CisPay · posição atual" />
       </div>
 
       {/* Linha 1: categoria (larga) · status donut · caixa destaque */}
@@ -2090,7 +2089,7 @@ function HubFinanceiro() {
       </div>
 
       {/* ============ INADIMPLÊNCIA ============ */}
-      <SecaoTitulo titulo="Inadimplência" canto="snapshot do agora · não muda com o período · nunca somado à receita" />
+      <SecaoTitulo titulo="Inadimplência" canto="posição atual · não muda com o período · nunca somado à receita" />
       <div className="finRow2">
         <Bloco titulo="Vencidos por origem" canto={vencidoTot ? moeda(vencidoTot) + " vencido" : null} sem altura={ALTURA_PAINEL}>
           <Estado carregando={inadOrig.isLoading} erro={inadOrig.error} vazio={!vencidos.length}>
@@ -2125,7 +2124,7 @@ function HubFinanceiro() {
             </div>
           </Estado>
         </Bloco>
-        <Bloco titulo="A pagar por vencimento" canto={aPagarTot ? `${moeda(aPagarTot)} · snapshot` : "snapshot"} sem altura={ALTURA_PAINEL}>
+        <Bloco titulo="A pagar por vencimento" canto={aPagarTot ? `${moeda(aPagarTot)} · posição atual` : "posição atual"} sem altura={ALTURA_PAINEL}>
           <Estado carregando={aPagarHor.isLoading} erro={aPagarHor.error} vazio={!aPagar.length}>
             <Lista linhas={aPagar} total={aPagarTot} />
           </Estado>
@@ -2277,7 +2276,7 @@ function HubLoja() {
         <ChipKpi Icone={ShoppingBag} label="Vendas" valor={numero(somaPeriodo.vendas)} nota={rotulo} />
         <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
         <ChipKpi Icone={TrendingUp} label="Recebido" valor={moeda(somaPeriodo.recebido)} nota={rotulo} />
-        <ChipKpi Icone={AlertTriangle} label="A receber vencido" valor={mv(k?.a_receber_vencido)} nota="snapshot" />
+        <ChipKpi Icone={AlertTriangle} label="A receber vencido" valor={mv(k?.a_receber_vencido)} nota="posição atual" />
       </div>
 
       <div className="finRow2" style={{ marginBottom: 16 }}>
