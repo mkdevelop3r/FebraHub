@@ -197,7 +197,40 @@ export const useFinanceiroDespesaCategoriaPeriodo = () =>
 export const useLojaReceitaPeriodo = () =>
   useView("vw_loja_receita_periodo", { ordem: ["data", "forma"] });
 
-export const useMarketingOrigem   = () => useView("vw_marketing_origem");
+/* ============ MARKETING ============
+   Meta Ads entrega gasto/impressão/lead por anúncio, agregado por MÊS —
+   não existe linha diária, e por isso o hub não tem recorte de 7 dias.
+
+   O que NÃO existe ainda: atribuição de venda a campanha. Nenhuma das
+   views abaixo tem coluna de venda, receita ou ROI — conferido por probe
+   (42703). O front marca esses campos como "em construção" e nunca
+   estima: dividir faturamento por investimento sem atribuição daria um
+   ROI inventado. */
+export const useMarketingResumoMensal = () =>
+  useView("vw_marketing_resumo_mensal", { ordem: ["mes"] });
+
+/* Uma linha por (mês, campanha). Reconcilia EXATAMENTE com a resumo_mensal
+   (investimento = Σ gasto; cpl_medio = Σ gasto_captação / Σ leads_captação),
+   então é ela que sustenta o filtro por produto sem divergir dos KPIs. */
+export const useMarketingDesempenho = () =>
+  useView("vw_marketing_desempenho", { ordem: ["mes", "campanha_nome"] });
+
+/* Origem das vendas por canal — cobertura começa em jun/2026 e cresce a
+   cada mês; a maioria das vendas ainda cai em "Pedido". */
+export const useMarketingOrigemVendas = () =>
+  useView("vw_marketing_origem_vendas", { ordem: ["mes", "canal"] });
+
+/* Atribuição: vendas cujo comprador foi lead de anúncio ANTES da compra.
+   É um PISO comprovável (~7% das vendas), não o faturamento do digital.
+   Vive à parte de propósito — dividir isto pelo investimento (que é cheio)
+   daria um ROI falso, comparando um parcial com um total.
+
+   Sem `ordem`: são poucas dezenas de linhas, e a view é pesada o bastante
+   pra estourar o statement timeout na primeira execução fria — o retry
+   padrão do QueryClient pega a segunda, já com o plano quente. */
+export const useMarketingAtribuicao = () =>
+  useView("vw_marketing_atribuicao_campanha");
+
 export const usePedagogicoTurmas  = () => useView("vw_pedagogico_turmas");
 export const useEventosDesempenho = () => useView("vw_eventos_desempenho");
 export const useDiretoriaConsol   = () => useView("vw_diretoria_consolidado");

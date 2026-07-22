@@ -6,6 +6,7 @@ import {
   Database, ShieldAlert, Loader2, ArrowRight, Sparkles, Bell,
   Clock, Receipt, Hourglass, ChevronLeft, ChevronRight, ChevronDown,
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
+  Users, Target, Construction, Percent, Filter, ChevronUp,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
@@ -21,7 +22,9 @@ import {
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
   useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
-  useMarketingOrigem, usePedagogicoTurmas, useEventosDesempenho,
+  useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
+  useMarketingAtribuicao,
+  usePedagogicoTurmas, useEventosDesempenho,
   useDiretoriaConsol, useIntegracaoStatus,
   porMes, variacao, moeda, numero,
 } from "./lib/dados";
@@ -299,11 +302,20 @@ function visualFonte(r) {
   return { cor: C.up, alerta: false }; // hoje / ontem, ok
 }
 
+// Nome de exibição de fonte que o hub cita mas a view ainda não registra.
+const NOME_FONTE = { clint: "Clint" };
+
 function RodapeIntegracoes({ fontes }) {
   const st = useIntegracaoStatus();
   const mapa = new Map((st.data ?? []).map((r) => [r.fonte, r]));
-  const itens = fontes.map((f) => mapa.get(f)).filter(Boolean);
-  if (!itens.length) return null;
+  // Fonte pedida que não está na view ainda não foi registrada no controle
+  // de sync. Some-la do rodapé esconderia a lacuna — aparece como "não
+  // registrado" em âmbar. Hubs cujas fontes existem seguem idênticos.
+  const itens = fontes.map((f) => mapa.get(f) ?? {
+    fonte: f, nome_exibicao: NOME_FONTE[f] ?? f,
+    rotulo: "Não registrado", frescor: "nunca", status: "ok", ausente: true,
+  });
+  if (!st.data || !itens.length) return null;
   return (
     <div style={{
       display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 18px",
@@ -321,6 +333,7 @@ function RodapeIntegracoes({ fontes }) {
             <span style={{ color: C.muted, fontWeight: 600 }}>{r.nome_exibicao}</span>
             <span style={{ color: v.alerta ? v.cor : C.faint }}>{r.rotulo}</span>
             {v.manual && <span style={{ color: C.faint }}>· atualização manual (CSV)</span>}
+            {r.ausente && <span style={{ color: C.faint }}>· integração ainda não registrada</span>}
             {v.nota && <span style={{ color: v.cor }}>· {v.nota}</span>}
           </span>
         );
@@ -1036,7 +1049,10 @@ function BarrasCategoria({ reais, orfas, semVinc, cobertura }) {
    elipses e a linha esmaga). O mês corrente é parcial: sai tracejado e o
    domínio do eixo Y IGNORA ele — poucos dias de receita não podem
    comprimir a escala dos meses fechados. */
-function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false }) {
+/* `formatar` existe porque nem toda série é dinheiro grande: custo por lead
+   vive na casa dos centavos e o `moeda` compacto arredondaria R$ 2,01 pra
+   R$ 2. Sem o prop, o comportamento é o de antes. */
+function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda }) {
   if (serie.length < 2) return null;
   const W = 720, H = 228, padL = 54, padR = 14, padT = 44, padB = 26;
   const plotW = W - padL - padR, plotH = H - padT - padB, plotBottom = padT + plotH;
@@ -1086,7 +1102,7 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
           return (
             <g key={i}>
               <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
-              <text x={padL - 9} y={yy + 3.5} fontSize="11" textAnchor="end" fill={C.faint} fontFamily={SANS}>{moeda(v)}</text>
+              <text x={padL - 9} y={yy + 3.5} fontSize="11" textAnchor="end" fill={C.faint} fontFamily={SANS}>{formatar(v)}</text>
             </g>
           );
         })}
@@ -1116,7 +1132,7 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
                     {d >= 0 ? "▲" : "▼"} {Math.abs(d).toFixed(0)}%
                   </text>
                 )}
-              <text x={lx} y={baseY} fontSize="11.5" fontWeight="700" textAnchor={anchor} fill={parc ? C.faint : C.bright} fontFamily={GROTESK}>{moeda(val)}</text>
+              <text x={lx} y={baseY} fontSize="11.5" fontWeight="700" textAnchor={anchor} fill={parc ? C.faint : C.bright} fontFamily={GROTESK}>{formatar(val)}</text>
             </g>
           );
         })}
@@ -2146,25 +2162,869 @@ function HubFinanceiro() {
   );
 }
 
-function HubMarketing() {
-  const org = useMarketingOrigem();
-  const leads = useMemo(() => porMes(org.data ?? [], "mes", "leads"), [org.data]);
-  const ganhos = useMemo(() => porMes(org.data ?? [], "mes", "ganhos"), [org.data]);
-  const v = variacao(leads);
-  const origens = useMemo(() => agrupar(org.data ?? [], "origem", "leads").slice(0, 8), [org.data]);
-  const conv = v.atual ? ((ganhos.at(-1)?.valor / v.atual) * 100).toFixed(1) : null;
+/* ============ MARKETING ============
+   O que é REAL: investimento, leads e custo por lead — vêm do Meta Ads.
+   O que NÃO existe: atribuição de venda a campanha. Sem ela não há venda
+   atribuída, faturamento atribuído, ROI nem conversão — e estimar qualquer
+   um deles seria inventar o número mais político do hub. Esses campos
+   aparecem desenhados e marcados "em construção", nunca preenchidos. */
+
+// Reais com centavos. O `moeda` global compacta e arredonda pra 1 casa —
+// bom pra R$ 415 mil, péssimo pra um CPL de R$ 2,01 (viraria "R$ 2").
+const reaisCent = (v) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v ?? 0);
+
+const somaMeses = (k, d) => {
+  let a = Number(k.slice(0, 4)), m = Number(k.slice(5, 7)) - 1 + d;
+  a += Math.floor(m / 12);
+  m = ((m % 12) + 12) % 12;
+  return chaveMes(a, m);
+};
+
+/* O Meta entrega gasto e leads agregados por MÊS — não existe linha diária.
+   "7 dias" e "Hoje" não têm recorte possível nesta fonte: devolver vazio se
+   leria como "não investimos nada", então o hub cai no mês corrente e diz
+   por quê (`diario`). O comparativo é o período equivalente anterior: ano
+   contra ano (mesmos meses), mês contra mês.
+
+   `geral` = todos os anos. Não tem período anterior (é a base inteira), e
+   por isso devolve `ant: null` — as variações somem em vez de comparar com
+   um passado que não existe. */
+function recorteMkt({ modo, ano, mesIdx }, geral) {
+  const h = new Date();
+  const mesAtual = chaveMes(h.getFullYear(), h.getMonth());
+  if (geral) {
+    return {
+      de: "0000-01", ate: mesAtual, rotulo: "Todos os anos",
+      rotuloAnt: null, ant: null, diario: false, geral: true,
+    };
+  }
+  if (modo === "ano") {
+    const ate = `${ano}-12` > mesAtual ? mesAtual : `${ano}-12`;
+    return {
+      de: `${ano}-01`, ate, rotulo: String(ano), rotuloAnt: String(ano - 1), diario: false,
+      ant: { de: `${ano - 1}-01`, ate: somaMeses(ate, -12) },
+    };
+  }
+  const k = modo === "mes" ? chaveMes(ano, mesIdx) : mesAtual;
+  const [ka, km] = [Number(k.slice(0, 4)), Number(k.slice(5, 7)) - 1];
+  return {
+    de: k, ate: k, rotulo: `${MESES[km]} ${ka}`, rotuloAnt: "mês anterior",
+    diario: modo !== "mes",
+    ant: { de: somaMeses(k, -1), ate: somaMeses(k, -1) },
+  };
+}
+
+// Janela nula = "não existe período anterior" (modo Todos os anos): devolve
+// vazio, e as variações somem em vez de comparar com um passado inventado.
+const noMesMkt = (linhas, janela) =>
+  !janela ? [] : (linhas ?? []).filter((r) => {
+    const k = String(r.mes ?? "").slice(0, 7);
+    return k && k >= janela.de && k <= janela.ate;
+  });
+
+/* Reduz as linhas por campanha ao MESMO formato da vw_marketing_resumo_mensal.
+   Conferido linha a linha: investimento = Σ gasto, leads = Σ leads,
+   gasto/leads de captação = Σ das campanhas de tipo "Captação". Por isso
+   filtrar por produto não muda a fórmula de nenhum KPI — só o conjunto. */
+const mensalDeCampanhas = (linhas) => {
+  const m = new Map();
+  for (const l of linhas ?? []) {
+    const k = String(l.mes ?? "").slice(0, 10);
+    if (!k) continue;
+    const a = m.get(k) ?? { mes: k, investimento: 0, leads: 0, gasto_captacao: 0, leads_captacao: 0 };
+    a.investimento += Number(l.gasto ?? 0);
+    a.leads += Number(l.leads ?? 0);
+    if (/capta/i.test(l.tipo ?? "")) {
+      a.gasto_captacao += Number(l.gasto ?? 0);
+      a.leads_captacao += Number(l.leads ?? 0);
+    }
+    m.set(k, a);
+  }
+  return [...m.values()].sort((a, b) => a.mes.localeCompare(b.mes));
+};
+
+/* CPL nunca é média de médias: é Σ gasto de captação ÷ Σ leads de captação.
+   Só campanha de captação gera lead — dividir pelo investimento TOTAL daria
+   um custo por lead inflado, e a cobertura (`pctCapt`) mostra a diferença. */
+const totaisMkt = (linhas) => {
+  const t = { investimento: 0, leads: 0, gastoCapt: 0, leadsCapt: 0, mesesSemLead: 0 };
+  for (const r of linhas) {
+    const inv = Number(r.investimento ?? 0);
+    t.investimento += inv;
+    t.leads += Number(r.leads ?? 0);
+    t.gastoCapt += Number(r.gasto_captacao ?? 0);
+    t.leadsCapt += Number(r.leads_captacao ?? 0);
+    if (inv > 0 && !Number(r.leads ?? 0)) t.mesesSemLead += 1;
+  }
+  t.cpl = t.leadsCapt ? t.gastoCapt / t.leadsCapt : null;
+  t.pctCapt = t.investimento ? (t.gastoCapt / t.investimento) * 100 : null;
+  return t;
+};
+
+const varMkt = (a, b) => (b ? ((a - b) / Math.abs(b)) * 100 : null);
+const rotuloVar = (p) => (p == null ? null : `${Math.abs(p).toFixed(0)}%`);
+
+/* KPI que ainda não tem fonte. Fica desenhado, esmaecido e com o motivo:
+   escondê-lo apagaria a lacuna, e preenchê-lo seria inventar. */
+function ChipEmBreve({ Icone, label, nota }) {
+  return (
+    <div title={nota} style={{
+      display: "flex", alignItems: "center", gap: 9, minHeight: 56,
+      background: "rgba(255,255,255,.015)", border: `1px dashed ${C.cardLine}`,
+      borderRadius: 10, padding: "8px 11px",
+    }}>
+      <span style={{
+        width: 25, height: 25, flexShrink: 0, borderRadius: 7, background: "rgba(255,255,255,.04)",
+        color: C.dim, display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <Icone size={13} />
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 10, color: C.faint, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+        <div style={{ fontFamily: GROTESK, fontSize: 14.5, fontWeight: 700, color: C.dim, letterSpacing: "-.3px" }}>em construção</div>
+        {nota && <div style={{ fontSize: 9.5, color: C.dim, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nota}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* Categorias da vw_marketing_desempenho. A ordem é fixa (as duas que geram
+   lead primeiro), mas a LISTA vem do dado — categoria nova no banco aparece
+   sozinha, sem passar por aqui. */
+const ORDEM_CAT_MKT = ["CIS", "GGB", "LL", "Eventos", "Outros"];
+
+/* Barra segmentada genérica, no mesmo desenho do seletor de período. */
+function Segmentado({ opcoes, valor, onChange, label }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+      {label && (
+        <span style={{ fontSize: 10, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: ".5px" }}>
+          {label}
+        </span>
+      )}
+      <div style={{ display: "flex", gap: 2, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, borderRadius: 10, padding: 3 }}>
+        {opcoes.map((o) => {
+          const ativo = o.key === valor;
+          return (
+            <button key={String(o.key)} onClick={() => onChange(o.key)} aria-pressed={ativo} style={{
+              fontFamily: SANS, fontSize: 11, fontWeight: 700, padding: "5px 9px",
+              borderRadius: 7, border: "none", cursor: "pointer", whiteSpace: "nowrap",
+              background: ativo ? `${C.gold}1F` : "transparent",
+              color: ativo ? C.gold : C.muted,
+            }}>
+              {o.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* Filtro travado — Canal e Status. O controle aparece porque foi pedido no
+   desenho, mas desabilitado: o dado que o alimentaria (canal da venda com
+   cobertura, status do lead) ainda não existe. */
+function FiltroTravado({ label }) {
+  return (
+    <button disabled title="em construção — sem fonte para este recorte" style={{
+      display: "flex", alignItems: "center", gap: 6, cursor: "not-allowed",
+      background: "rgba(255,255,255,.02)", border: `1px dashed ${C.cardLine}`,
+      borderRadius: 9, padding: "6px 10px", fontFamily: SANS,
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</span>
+      <span style={{ fontSize: 11.5, fontWeight: 700, color: C.dim }}>em construção</span>
+      <ChevronDown size={12} style={{ color: C.dim }} />
+    </button>
+  );
+}
+
+/* Categoria do Marketing = produto da campanha. Vocabulário próprio ("FCIS",
+   "EG", "CIS 247"…), sem interseção com as categorias do Comercial — por
+   isso não usa o seletor global. São dezenas de valores: dropdown, não
+   barra de botões. Aqui "todos" faz sentido (é um orçamento só de mídia),
+   ao contrário do Comercial, onde categoria é unidade de negócio separada. */
+function SeletorProduto({ produtos, valor, onChange }) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 7 }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: ".5px" }}>Categoria</span>
+      <button onClick={() => setAberto((v) => !v)} style={{
+        display: "flex", alignItems: "center", gap: 6, fontFamily: SANS, fontSize: 11.5,
+        fontWeight: 700, color: C.gold, background: "rgba(255,255,255,.04)",
+        border: `1px solid ${C.cardLine}`, borderRadius: 9, padding: "6px 10px",
+        cursor: "pointer", maxWidth: 240,
+      }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {valor ?? "Todos os produtos"}
+        </span>
+        <ChevronDown size={13} style={{ flexShrink: 0 }} />
+      </button>
+      <Popover aberto={aberto} onFechar={() => setAberto(false)} largura={252}>
+        <button style={itemPop(valor == null)} onClick={() => { onChange(null); setAberto(false); }}>
+          Todos os produtos
+        </button>
+        {produtos.map((p) => (
+          <button key={p.nome} style={itemPop(valor === p.nome)}
+            onClick={() => { onChange(p.nome); setAberto(false); }}>
+            {p.nome} · {moeda(p.gasto)}
+          </button>
+        ))}
+      </Popover>
+    </div>
+  );
+}
+
+/* Investimento (R$, barras) x Leads (volume, linha) mês a mês. Dois eixos —
+   reais e contagem não dividem escala. Responde "gastamos mais e trouxemos
+   mais lead, ou só gastamos mais?". */
+function InvestimentoXLeads({ serie }) {
+  if (!serie.length) return null;
+  const W = 720, H = 200, padL = 42, padR = 42, padT = 18, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
+  const maxInv = Math.max(...serie.map((s) => s.investimento), 1);
+  const maxLead = Math.max(...serie.map((s) => s.leads), 1);
+  const n = serie.length, slot = plotW / n, bw = Math.min(34, slot * 0.5);
+  const cx = (i) => padL + slot * i + slot / 2;
+  const yInv = (v) => base - (v / maxInv) * plotH;
+  const yLead = (v) => base - (v / maxLead) * plotH;
+  const pts = serie.map((s, i) => [cx(i), yLead(s.leads)]);
+  const idxParcial = serie.findIndex((s) => s.parcial);
+  const ultSolido = idxParcial > 0 ? idxParcial : n - 1;
+  const solido = pts.slice(0, ultSolido + 1).map((p) => p.join(",")).join(" ");
+  const tracejado = idxParcial > 0
+    ? [pts[idxParcial - 1], pts[idxParcial]].map((p) => p.join(",")).join(" ") : null;
+  const alvo = 12, passo = Math.max(1, Math.ceil(n / alvo));
 
   return (
-    <Estado carregando={org.isLoading} erro={org.error} vazio={!org.data?.length}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 26 }}>
-        <Kpi label="Leads" valor={numero(v.atual)} delta={v.delta} up={v.up} serie={v.serie} parcial={v.parcial != null ? numero(v.parcial) : null} />
-        <Kpi label="Convertidos" valor={numero(ganhos.at(-1)?.valor)} delta={variacao(ganhos).delta} up={variacao(ganhos).up} serie={ganhos} />
-        <Kpi label="Origens ativas" valor={numero(origens.length)} nota="no recorte" />
-        <Kpi label="Conversão" valor={conv ?? "—"} unidade="%" nota="lead → ganho" />
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4, fontSize: 10.5, color: C.muted, fontWeight: 600 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 2, background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` }} /> Investimento
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 13, height: 0, borderTop: `2px solid ${C.up}` }} /> Leads
+        </span>
       </div>
-      <Bloco titulo="Leads por origem" canto="acumulado" sem>
-        <Lista linhas={origens} formatar={numero} />
+
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        <defs>
+          <linearGradient id="gradInv" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={C.goldTop} /><stop offset="1" stopColor={C.goldBase} />
+          </linearGradient>
+          <pattern id="hachInv" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke={C.gold} strokeWidth="3" opacity="0.4" />
+          </pattern>
+        </defs>
+
+        {/* eixo esquerdo = R$ investido; direito = volume de leads */}
+        {[0, 0.5, 1].map((f, i) => {
+          const yy = base - f * plotH;
+          return (
+            <g key={i}>
+              <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
+              <text x={padL - 6} y={yy + 3} fontSize="9" textAnchor="end" fill={C.faint} fontFamily={SANS}>
+                {compacto(maxInv * f)}
+              </text>
+              <text x={W - padR + 6} y={yy + 3} fontSize="9" textAnchor="start" fill={C.up} opacity="0.8" fontFamily={SANS}>
+                {Math.round(maxLead * f)}
+              </text>
+            </g>
+          );
+        })}
+
+        {serie.map((s, i) => (
+          <rect key={s.mes} x={cx(i) - bw / 2} y={yInv(s.investimento)} width={bw}
+            height={Math.max(0, base - yInv(s.investimento))} rx="2"
+            fill={s.parcial ? "url(#hachInv)" : "url(#gradInv)"}
+            stroke={s.parcial ? C.gold : "none"} strokeDasharray={s.parcial ? "3 2" : undefined}
+            strokeWidth={s.parcial ? 1 : 0} />
+        ))}
+
+        <polyline points={solido} fill="none" stroke={C.up} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        {tracejado && <polyline points={tracejado} fill="none" stroke={C.up} strokeWidth="1.8" strokeDasharray="4 3" opacity="0.7" />}
+        {pts.map(([x0, y0], i) => (
+          <circle key={i} cx={x0} cy={y0} r="2.2"
+            fill={serie[i].parcial ? C.void : C.up} stroke={C.up} strokeWidth={serie[i].parcial ? 1.2 : 0} />
+        ))}
+
+        {serie.map((s, i) => (i % passo === 0 || i === n - 1) && (
+          <text key={s.mes} x={cx(i)} y={H - 7} fontSize="9.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>
+            {mesCurto(String(s.mes).slice(0, 7))}
+          </text>
+        ))}
+      </svg>
+    </>
+  );
+}
+
+/* Performance por campanha. Investimento, leads e CPL são reais. Vendas,
+   receita e ROI ficam na tabela como colunas vazias marcadas "em breve" —
+   o desenho já reserva o lugar, mas nenhuma delas existe na view (conferido
+   por probe: 42703). Agrupa por produto e expande sob clique. */
+function TabelaCampanhas({ grupos }) {
+  const [abertos, setAbertos] = useState(() => new Set());
+  const alternar = (p) => setAbertos((s) => {
+    const n = new Set(s);
+    n.has(p) ? n.delete(p) : n.add(p);
+    return n;
+  });
+  const cols = "minmax(130px,1fr) 78px 92px 92px 56px 80px 60px 74px 50px";
+  const cel = (extra) => ({ fontFamily: GROTESK, fontSize: 12.5, fontWeight: 700, textAlign: "right", ...extra });
+  const vazia = { fontSize: 11.5, textAlign: "right", color: C.dim, fontStyle: "italic" };
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <div style={{ minWidth: 780 }}>
+        <div style={{
+          display: "grid", gridTemplateColumns: cols, gap: 10, padding: "0 20px 9px",
+          borderBottom: `1px solid ${C.hair}`, fontSize: 9.5, fontWeight: 800,
+          letterSpacing: ".5px", textTransform: "uppercase", color: C.dim,
+        }}>
+          <span>Campanha</span>
+          <span>Categoria</span>
+          <span>Tipo</span>
+          <span style={{ textAlign: "right" }}>Investimento</span>
+          <span style={{ textAlign: "right" }}>Leads</span>
+          <span style={{ textAlign: "right" }}>Custo/lead</span>
+          <span style={{ textAlign: "right", color: C.faint }}>Vendas</span>
+          <span style={{ textAlign: "right", color: C.faint }}>Receita</span>
+          <span style={{ textAlign: "right", color: C.faint }}>ROI</span>
+        </div>
+
+        {grupos.map((g) => {
+          const aberto = abertos.has(g.produto);
+          return (
+            <div key={g.produto}>
+              <div onClick={() => alternar(g.produto)} role="button" tabIndex={0}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), alternar(g.produto))}
+                style={{
+                  display: "grid", gridTemplateColumns: cols, gap: 10, alignItems: "center",
+                  padding: "9px 20px", borderBottom: `1px solid ${C.hair}`, cursor: "pointer",
+                  background: aberto ? "rgba(255,255,255,.022)" : "transparent",
+                }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                  {aberto ? <ChevronUp size={13} style={{ color: C.gold, flexShrink: 0 }} /> : <ChevronDown size={13} style={{ color: C.faint, flexShrink: 0 }} />}
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={g.chave}>
+                    {g.chave}
+                  </span>
+                  <span style={{ fontSize: 10, color: C.dim, flexShrink: 0 }}>· {g.campanhas.length}</span>
+                </span>
+                <span style={{ fontSize: 11, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={g.categoria}>{g.categoria}</span>
+                <span style={{ fontSize: 11, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.tipo}</span>
+                <span style={cel({ color: C.gold })}>{moeda(g.gasto)}</span>
+                <span style={cel({ color: C.text })}>{g.leads ? numero(g.leads) : "—"}</span>
+                <span style={cel({ color: g.cpl != null ? C.text : C.dim })}>{g.cpl != null ? reaisCent(g.cpl) : "—"}</span>
+                <span style={vazia}>em breve</span>
+                <span style={vazia}>em breve</span>
+                <span style={vazia}>em breve</span>
+              </div>
+
+              {aberto && g.campanhas.map((c) => (
+                <div key={c.nome} style={{
+                  display: "grid", gridTemplateColumns: cols, gap: 10, alignItems: "center",
+                  padding: "7px 20px 7px 40px", borderBottom: `1px solid ${C.hair}`,
+                  background: "rgba(255,255,255,.012)",
+                }}>
+                  <span style={{ fontSize: 11.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.nome}>{c.nome}</span>
+                  <span style={{ fontSize: 10.5, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.categoria}>{c.categoria}</span>
+                  <span style={{ fontSize: 10.5, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.tipo}</span>
+                  <span style={cel({ fontSize: 11.5, color: C.muted })}>{moeda(c.gasto)}</span>
+                  <span style={cel({ fontSize: 11.5, color: C.muted })}>{c.leads ? numero(c.leads) : "—"}</span>
+                  <span style={cel({ fontSize: 11.5, color: c.cpl != null ? C.muted : C.dim })}>{c.cpl != null ? reaisCent(c.cpl) : "—"}</span>
+                  <span style={vazia}>—</span>
+                  <span style={vazia}>—</span>
+                  <span style={vazia}>—</span>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* Vendas com origem confirmada em anúncio.
+
+   BLOCO SEPARADO DA PERFORMANCE POR CAMPANHA, DE PROPÓSITO. O investimento
+   da tabela de performance é o valor CHEIO da campanha; o faturamento aqui
+   é um PISO (~7% das vendas — só as que casaram com um lead de anúncio).
+   Dividir um pelo outro daria um ROI falso: parcial sobre total. Por isso
+   os dois números convivem na tela sem nenhuma operação entre eles. */
+const ROTULO_SEM_CAMPANHA = "anúncio — campanha não identificada";
+
+function VendasAtribuidas({ linhas }) {
+  const cols = "minmax(150px,1fr) 88px 62px 96px";
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <div style={{ minWidth: 420 }}>
+        <div style={{
+          display: "grid", gridTemplateColumns: cols, gap: 10, padding: "0 20px 9px",
+          borderBottom: `1px solid ${C.hair}`, fontSize: 9.5, fontWeight: 800,
+          letterSpacing: ".5px", textTransform: "uppercase", color: C.dim,
+        }}>
+          <span>Campanha</span>
+          <span>Categoria</span>
+          <span style={{ textAlign: "right" }}>Vendas</span>
+          <span style={{ textAlign: "right" }}>Faturamento</span>
+        </div>
+        {linhas.map((l) => (
+          <div key={l.chave} style={{
+            display: "grid", gridTemplateColumns: cols, gap: 10, alignItems: "center",
+            padding: "8px 20px", borderBottom: `1px solid ${C.hair}`,
+          }}>
+            <span style={{
+              fontSize: 12, fontWeight: l.semCampanha ? 500 : 600,
+              color: l.semCampanha ? C.faint : C.bright,
+              fontStyle: l.semCampanha ? "italic" : "normal",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }} title={l.rotulo}>
+              {l.rotulo}
+            </span>
+            <span style={{ fontSize: 11, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {l.semCampanha ? "—" : l.categoria}
+            </span>
+            <span style={{ fontFamily: GROTESK, fontSize: 12.5, fontWeight: 700, textAlign: "right", color: l.semCampanha ? C.faint : C.text }}>
+              {numero(l.vendas)}
+            </span>
+            <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, textAlign: "right", color: l.semCampanha ? C.faint : C.gold }}>
+              {moeda(l.faturamento)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* Origem das vendas por canal. Duas grandezas por linha (quantas vendas e
+   quanto), então não cabe no `Lista` — a barra é pelo valor. */
+function CanaisVenda({ linhas }) {
+  const max = Math.max(...linhas.map((l) => l.valor), 1);
+  return (
+    <div>
+      {linhas.map((l) => (
+        <div key={l.canal} style={{ padding: "9px 20px", borderBottom: `1px solid ${C.hair}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.canal}>{l.canal}</span>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 8, flexShrink: 0 }}>
+              <span style={{ fontSize: 11, color: C.faint }}>{numero(l.vendas)} {l.vendas === 1 ? "venda" : "vendas"}</span>
+              <span style={{ fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, color: C.text }}>{moeda(l.valor)}</span>
+            </span>
+          </div>
+          <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+            <div style={{ width: `${(l.valor / max) * 100}%`, height: "100%", borderRadius: 3, background: `linear-gradient(90deg, ${C.goldBase}, ${C.gold})` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Funil desenhado, não medido. Só "Leads gerados" tem número: as etapas
+   seguintes dependem do acompanhamento do pedagógico, que ainda não entrega
+   dado. As larguras abaixo são DECORAÇÃO — por isso cada etapa sem fonte
+   sai tracejada, sem número e escrita "sem medição". */
+const ETAPAS_FUNIL = [
+  { nome: "Leads gerados", larg: 100 },
+  { nome: "Contato realizado", larg: 76 },
+  { nome: "Reunião / visita", larg: 54 },
+  { nome: "Matrícula", larg: 36 },
+];
+
+function FunilConversao({ leads }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {ETAPAS_FUNIL.map((e, i) => {
+        const real = i === 0;
+        return (
+          <div key={e.nome} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{
+              width: `${e.larg}%`, minWidth: 92, height: 34, borderRadius: 8,
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "0 12px", gap: 10,
+              background: real ? `linear-gradient(90deg, ${C.goldBase}, ${C.gold})` : "rgba(255,255,255,.025)",
+              border: real ? "none" : `1px dashed ${C.cardLine}`,
+            }}>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: real ? "#100c04" : C.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {e.nome}
+              </span>
+              <span style={{ fontFamily: GROTESK, fontSize: real ? 14 : 11.5, fontWeight: 700, color: real ? "#100c04" : C.dim, flexShrink: 0, fontStyle: real ? "normal" : "italic" }}>
+                {real ? numero(leads) : "sem medição"}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+      <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+        <Construction size={13} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+        <span style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5 }}>
+          Em construção — aguardando integração do pedagógico. Só <b style={{ color: C.bright }}>leads gerados</b> é
+          medido hoje; as etapas seguintes não têm fonte, e as larguras acima são desenho, não proporção.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function HubMarketing() {
+  const per = usePeriodo();
+  const resumo = useMarketingResumoMensal();
+  const desemp = useMarketingDesempenho();
+  const canais = useMarketingOrigemVendas();
+  const atrib = useMarketingAtribuicao();
+  const [produto, setProduto] = useState(null);
+  const [categoria, setCategoria] = useState(null);
+  const [geral, setGeral] = useState(false);
+  const [agruparPor, setAgruparPor] = useState("produto");
+
+  const r = useMemo(() => recorteMkt(per, geral), [per.modo, per.ano, per.mesIdx, geral]);
+
+  // Categorias vindas do dado, na ordem de leitura acordada.
+  const categorias = useMemo(() => {
+    const set = new Set();
+    for (const l of desemp.data ?? []) if (l.categoria) set.add(String(l.categoria));
+    const ord = (c) => { const i = ORDEM_CAT_MKT.indexOf(c); return i < 0 ? 99 : i; };
+    return [...set].sort((a, b) => ord(a) - ord(b) || a.localeCompare(b));
+  }, [desemp.data]);
+
+  // Produtos da categoria escolhida, ordenados pelo que mais consome verba.
+  const produtos = useMemo(() => {
+    const m = new Map();
+    for (const l of desemp.data ?? []) {
+      if (categoria != null && l.categoria !== categoria) continue;
+      const p = l.produto ?? "—";
+      m.set(p, (m.get(p) ?? 0) + Number(l.gasto ?? 0));
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([nome, gasto]) => ({ nome, gasto }));
+  }, [desemp.data, categoria]);
+
+  /* Trocar de categoria pode deixar o produto escolhido fora da lista. Em vez
+     de um efeito que zera o estado, o produto ATIVO é derivado: se não existe
+     na categoria atual, vale "todos". */
+  const prodAtivo = produto != null && produtos.some((p) => p.nome === produto) ? produto : null;
+
+  const campanhas = useMemo(
+    () => (desemp.data ?? []).filter((l) =>
+      (categoria == null || l.categoria === categoria) &&
+      (prodAtivo == null || l.produto === prodAtivo)),
+    [desemp.data, categoria, prodAtivo]
+  );
+
+  /* Sem recorte de categoria/produto a série vem da resumo_mensal (a view
+     oficial dos KPIs); com recorte, é reconstruída das campanhas. As duas
+     reconciliam exatamente, então o número não pula ao ligar o filtro. */
+  const serie = useMemo(() => {
+    if (categoria == null && prodAtivo == null && resumo.data?.length)
+      return [...resumo.data].sort((a, b) => String(a.mes).localeCompare(String(b.mes)));
+    return mensalDeCampanhas(campanhas); // também é o fallback se a resumo falhar
+  }, [categoria, prodAtivo, resumo.data, campanhas]);
+
+  const t = useMemo(() => totaisMkt(noMesMkt(serie, r)), [serie, r]);
+  const tAnt = useMemo(() => totaisMkt(noMesMkt(serie, r.ant)), [serie, r]);
+
+  const vInv = varMkt(t.investimento, tAnt.investimento);
+  const vLead = varMkt(t.leads, tAnt.leads);
+  const vCpl = t.cpl != null && tAnt.cpl != null ? varMkt(t.cpl, tAnt.cpl) : null;
+
+  // Linhas de campanha já recortadas pelo período — base de tudo que é
+  // "no recorte" (quebras, tabela, contador da barra de filtros).
+  const campanhasPeriodo = useMemo(() => noMesMkt(campanhas, r), [campanhas, r]);
+
+  /* Séries dos gráficos: RESPEITAM o período escolhido. Em "Todos os anos" a
+     janela cobre a base inteira, então o gráfico volta a mostrar tudo — é o
+     mesmo caminho de código, sem exceção. */
+  const serieGrafico = useMemo(() => {
+    const d = new Date();
+    const cm = chaveMes(d.getFullYear(), d.getMonth());
+    return noMesMkt(serie, r).map((x) => ({
+      mes: x.mes,
+      investimento: Number(x.investimento ?? 0),
+      leads: Number(x.leads ?? 0),
+      gastoCapt: Number(x.gasto_captacao ?? 0),
+      leadsCapt: Number(x.leads_captacao ?? 0),
+      parcial: String(x.mes).slice(0, 7) === cm,
+    }));
+  }, [serie, r]);
+
+  // CPL mês a mês: recalculado por mês (gasto de captação ÷ leads de
+  // captação), nunca a média das médias. Mês sem lead não vira ponto zero —
+  // fica fora da série, porque "R$ 0 por lead" seria mentira.
+  const serieCpl = useMemo(
+    () => serieGrafico
+      .filter((x) => x.leadsCapt > 0)
+      .map((x) => ({ mes: x.mes, valor: x.gastoCapt / x.leadsCapt, parcial: x.parcial })),
+    [serieGrafico]
+  );
+
+  const porCategoria = useMemo(() => agrupar(campanhasPeriodo, "categoria", "gasto"), [campanhasPeriodo]);
+
+  /* Tabela agrupada por produto ou por categoria — a chave é a única coisa
+     que muda, então a agregação é a mesma nos dois modos. */
+  const grupos = useMemo(() => {
+    const eCapt = (l) => /capta/i.test(l.tipo ?? "");
+    const m = new Map();
+    for (const l of campanhasPeriodo) {
+      const k = String(l[agruparPor] ?? "—");
+      const g = m.get(k) ?? {
+        chave: k, gasto: 0, leads: 0, gastoCapt: 0, leadsCapt: 0,
+        tipos: new Set(), cats: new Set(), campanhas: new Map(),
+      };
+      const gasto = Number(l.gasto ?? 0), leads = Number(l.leads ?? 0);
+      g.gasto += gasto; g.leads += leads;
+      if (eCapt(l)) { g.gastoCapt += gasto; g.leadsCapt += leads; }
+      if (l.tipo) g.tipos.add(l.tipo);
+      if (l.categoria) g.cats.add(String(l.categoria));
+      // Mesma campanha em meses diferentes vira uma linha só no recorte.
+      const nome = l.campanha_nome ?? "—";
+      const c = g.campanhas.get(nome) ?? {
+        nome, tipo: l.tipo ?? "—", categoria: l.categoria ?? "—",
+        gasto: 0, leads: 0, gastoCapt: 0, leadsCapt: 0,
+      };
+      c.gasto += gasto; c.leads += leads;
+      if (eCapt(l)) { c.gastoCapt += gasto; c.leadsCapt += leads; }
+      g.campanhas.set(nome, c);
+      m.set(k, g);
+    }
+    const resumir = (s, sufixo) => (s.size === 1 ? [...s][0] : s.size ? `${s.size} ${sufixo}` : "—");
+    return [...m.values()]
+      .map((g) => ({
+        ...g,
+        tipo: resumir(g.tipos, "tipos"),
+        categoria: resumir(g.cats, "categorias"),
+        cpl: g.leadsCapt ? g.gastoCapt / g.leadsCapt : null,
+        campanhas: [...g.campanhas.values()]
+          .map((c) => ({ ...c, cpl: c.leadsCapt ? c.gastoCapt / c.leadsCapt : null }))
+          .sort((a, b) => b.gasto - a.gasto),
+      }))
+      .sort((a, b) => b.gasto - a.gasto);
+  }, [campanhasPeriodo, agruparPor]);
+
+  /* Vendas atribuídas, agregadas por campanha dentro do recorte. Segue o
+     período e a categoria; NÃO segue o produto — a view não tem essa
+     dimensão, e filtrar por algo que ela não conhece devolveria vazio como
+     se não houvesse venda. "Sem campanha" é uma categoria própria da view
+     (nome_campanha vem nulo), então só aparece em "Todas". */
+  const atribuidas = useMemo(() => {
+    const m = new Map();
+    for (const l of noMesMkt(atrib.data ?? [], r)) {
+      if (categoria != null && l.categoria !== categoria) continue;
+      const semCampanha = !l.nome_campanha;
+      const chave = `${l.categoria ?? "—"}|${l.nome_campanha ?? ""}`;
+      const a = m.get(chave) ?? {
+        chave, semCampanha,
+        rotulo: semCampanha ? ROTULO_SEM_CAMPANHA : String(l.nome_campanha),
+        categoria: l.categoria ?? "—", vendas: 0, faturamento: 0,
+      };
+      a.vendas += Number(l.vendas_atribuidas ?? 0);
+      a.faturamento += Number(l.faturamento_atribuido ?? 0);
+      m.set(chave, a);
+    }
+    return [...m.values()].sort((a, b) => b.faturamento - a.faturamento);
+  }, [atrib.data, r, categoria]);
+
+  const totalAtrib = useMemo(() => atribuidas.reduce(
+    (s, a) => ({ vendas: s.vendas + a.vendas, faturamento: s.faturamento + a.faturamento }),
+    { vendas: 0, faturamento: 0 }
+  ), [atribuidas]);
+
+  const canaisPeriodo = useMemo(() => {
+    const m = new Map();
+    for (const l of noMesMkt(canais.data ?? [], r)) {
+      const k = l.canal ?? "—";
+      const a = m.get(k) ?? { canal: k, vendas: 0, valor: 0 };
+      a.vendas += Number(l.vendas ?? 0);
+      a.valor += Number(l.valor ?? 0);
+      m.set(k, a);
+    }
+    return [...m.values()].sort((a, b) => b.valor - a.valor);
+  }, [canais.data, r]);
+
+  const nota = (txt) => (
+    <div style={{ display: "flex", gap: 7, marginTop: 10 }}>
+      <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+      <span style={{ fontSize: 11, color: C.faint, lineHeight: 1.5 }}>{txt}</span>
+    </div>
+  );
+
+  return (
+    <Estado carregando={desemp.isLoading || resumo.isLoading} erro={desemp.error} vazio={!desemp.data?.length}
+      vazioTitulo="Sem dados de mídia"
+      vazioDica="A vw_marketing_desempenho não retornou linhas — ou a sincronização do Meta Ads não rodou, ou seu perfil não tem acesso a marketing.">
+
+      {/* filtros do hub: produto é real; canal e status ficam travados */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+        padding: "10px 14px", marginBottom: 16, borderRadius: 12,
+        background: "rgba(255,255,255,.022)", border: `1px solid ${C.cardLine}`,
+      }}>
+        <Filter size={13} style={{ color: C.faint, flexShrink: 0 }} />
+        <Segmentado label="Período" valor={geral} onChange={setGeral}
+          opcoes={[{ key: false, label: "Filtro do topo" }, { key: true, label: "Todos os anos" }]} />
+        {categorias.length > 0 && (
+          <Segmentado label="Categoria" valor={categoria} onChange={setCategoria}
+            opcoes={[{ key: null, label: "Todas" }, ...categorias.map((c) => ({ key: c, label: c }))]} />
+        )}
+        <SeletorProduto produtos={produtos} valor={prodAtivo} onChange={setProduto} />
+        <FiltroTravado label="Canal" />
+        <FiltroTravado label="Status" />
+        <span style={{ marginLeft: "auto", fontSize: 11, color: C.faint }}>
+          {r.rotulo} · {numero(campanhasPeriodo.length)} campanhas no recorte
+        </span>
+      </div>
+
+      {geral && nota(
+        <>Mostrando <b style={{ color: C.muted }}>todos os anos</b> (a base do Meta Ads começa em jan/2024).
+          O filtro de período do topo fica sem efeito neste hub enquanto isso estiver ligado, e as variações
+          somem — não existe período anterior à base inteira.</>
+      )}
+
+      {!geral && r.diario && nota(
+        <>O Meta Ads entrega gasto e leads <b style={{ color: C.muted }}>agregados por mês</b> — não existe
+          recorte diário nesta fonte. Mostrando <b style={{ color: C.muted }}>{r.rotulo}</b>. Use Ano ou Mês no filtro do topo.</>
+      )}
+
+      <SecaoTitulo titulo="Mídia paga"
+        canto={r.rotuloAnt ? `${r.rotulo} · variação vs ${r.rotuloAnt}` : `${r.rotulo} · base inteira, sem comparativo`} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginBottom: 12 }}>
+        <ChipKpi compacto hero Icone={Megaphone} label="Investimento em mídia"
+          valor={moeda(t.investimento)}
+          delta={rotuloVar(vInv)} up={vInv != null ? vInv >= 0 : undefined}
+          nota={vInv == null ? (r.geral ? "base inteira" : "sem base anterior") : undefined}
+          sub={`Meta Ads · ${r.rotulo}`} />
+        <ChipKpi compacto Icone={Users} label="Leads gerados"
+          valor={numero(t.leads)}
+          delta={rotuloVar(vLead)} up={vLead != null ? vLead >= 0 : undefined}
+          nota={vLead == null ? (r.geral ? "base inteira" : "sem base anterior") : undefined}
+          sub={t.mesesSemLead
+            ? `${t.mesesSemLead} ${t.mesesSemLead === 1 ? "mês" : "meses"} com verba e sem rastreio de lead`
+            : "formulário de lead do Meta"} />
+        <ChipKpi compacto Icone={Target} label="Custo por lead"
+          valor={t.cpl != null ? reaisCent(t.cpl) : "—"}
+          delta={rotuloVar(vCpl)} up={vCpl != null ? vCpl <= 0 : undefined}
+          nota={vCpl == null ? (t.cpl == null ? "sem lead no recorte" : r.geral ? "base inteira" : "sem base anterior") : undefined}
+          sub={t.pctCapt != null
+            ? `sobre ${moeda(t.gastoCapt)} de captação · ${t.pctCapt.toFixed(0)}% da verba`
+            : "sem verba de captação no recorte"} />
+      </div>
+      {t.pctCapt != null && t.pctCapt < 99 && nota(
+        <>O custo por lead usa <b style={{ color: C.muted }}>só a verba de captação</b> ({moeda(t.gastoCapt)} de {moeda(t.investimento)}).
+          Campanhas de venda, evento e live não geram lead de formulário — dividir o investimento total pelos
+          leads daria um custo por lead maior que o real.</>
+      )}
+
+      <SecaoTitulo titulo="Retorno" canto="não é calculável com a cobertura de hoje" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 6 }}>
+        <ChipEmBreve Icone={Percent} label="Conversão lead → venda" nota="status do lead no Clint é sempre OPEN" />
+        <ChipEmBreve Icone={TrendingUp} label="ROI total" nota="exigiria dividir piso por valor cheio" />
+      </div>
+      {nota(
+        <>Existe atribuição, mas só de <b style={{ color: C.muted }}>piso</b> — as vendas que casaram com um lead de
+          anúncio (bloco abaixo). O investimento é o valor <b style={{ color: C.muted }}>cheio</b> da campanha.
+          Dividir um pelo outro daria um ROI falso, parcial sobre total; por isso ele fica em branco em vez de
+          receber uma conta que parece certa.</>
+      )}
+
+      <SecaoTitulo titulo="Evolução" canto={`${r.rotulo} · segue o recorte escolhido`} />
+      <div className="gridCom">
+        <Bloco titulo="Investimento × Leads" canto={`mês a mês · ${r.rotulo}`}>
+          {serieGrafico.length < 2
+            ? <Estado vazio vazioTitulo="Um mês só não faz série"
+                vazioDica={`O recorte "${r.rotulo}" tem ${serieGrafico.length === 1 ? "um mês" : "nenhum mês"} com veiculação. Escolha Ano no filtro do topo, ou "Todos os anos" aqui, para ver a evolução.`} />
+            : <InvestimentoXLeads serie={serieGrafico} />}
+        </Bloco>
+        <Bloco titulo="Investimento por categoria" canto={r.rotulo} sem altura={ALTURA_PAINEL}>
+          {porCategoria.length
+            ? <Lista linhas={porCategoria} formatar={moeda} total={t.investimento} />
+            : <div style={{ padding: "16px 20px" }}>
+                <Estado vazio vazioTitulo={tituloVazioFluxo(per.modo)} vazioDica="Nenhuma campanha com gasto neste recorte." />
+              </div>}
+        </Bloco>
+      </div>
+
+      <Bloco titulo="Custo por lead" canto={`mês a mês · menor é melhor · ${r.rotulo}`}>
+        {serieCpl.length < 2
+          ? <Estado vazio vazioTitulo="Sem série de custo por lead"
+              vazioDica={`O custo por lead só existe em mês com campanha de captação e lead registrado — o recorte "${r.rotulo}" tem ${serieCpl.length === 1 ? "só um" : "nenhum"}.`} />
+          : <>
+              <LinhaEvolucao serie={serieCpl} cor={C.up} idGrad="fillCpl" inverso formatar={reaisCent} />
+              <div style={{ fontSize: 10.5, color: C.faint, marginTop: 2 }}>
+                Meses sem lead de captação ficam fora da série — “R$ 0 por lead” não existe.
+              </div>
+            </>}
       </Bloco>
+
+      <Bloco titulo="Performance por campanha" canto={`${r.rotulo} · clique na linha para abrir`} sem altura={340}>
+        <div style={{ padding: "12px 20px 4px" }}>
+          <Segmentado label="Agrupar por" valor={agruparPor} onChange={setAgruparPor}
+            opcoes={[{ key: "produto", label: "Produto" }, { key: "categoria", label: "Categoria" }]} />
+        </div>
+        {grupos.length
+          ? <TabelaCampanhas grupos={grupos} />
+          : <div style={{ padding: "16px 20px" }}>
+              <Estado vazio vazioTitulo={tituloVazioFluxo(per.modo)} vazioDica="Nenhuma campanha com veiculação neste recorte." />
+            </div>}
+      </Bloco>
+
+      {/* Bloco à parte da tabela acima, e assim deve continuar: aqui é piso
+          atribuído, lá é investimento cheio. Nenhuma conta entre os dois. */}
+      <Bloco titulo="Vendas com origem confirmada em anúncio"
+        canto={`${r.rotulo} · ordenado por faturamento`} sem altura={300}>
+        <div style={{ padding: "12px 20px 14px", display: "flex", gap: 8, borderBottom: `1px solid ${C.hair}` }}>
+          <AlertTriangle size={13} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+          <span style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.55 }}>
+            Vendas cujo comprador foi lead de anúncio antes da compra — <b style={{ color: C.bright }}>piso
+            comprovável, cerca de 7% das vendas</b>. A influência real do digital é maior; isto é o que se prova.
+            Não é ROI nem faturamento total.
+          </span>
+        </div>
+        {atrib.error
+          ? <div style={{ padding: "16px 20px" }}>
+              <Estado vazio vazioTitulo="Não foi possível carregar a atribuição"
+                vazioDica={`${atrib.error.message}. A vw_marketing_atribuicao_campanha é pesada e estoura o tempo limite na primeira execução fria — recarregar a página costuma resolver.`} />
+            </div>
+          : atribuidas.length
+            ? <>
+                <VendasAtribuidas linhas={atribuidas} />
+                <div style={{
+                  display: "grid", gridTemplateColumns: "minmax(150px,1fr) 88px 62px 96px", gap: 10,
+                  padding: "11px 20px", background: "rgba(255,255,255,.02)",
+                }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 800, color: C.bright }}>Total atribuído</span>
+                  <span />
+                  <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, textAlign: "right", color: C.text }}>{numero(totalAtrib.vendas)}</span>
+                  <span style={{ fontFamily: GROTESK, fontSize: 14, fontWeight: 700, textAlign: "right", color: C.gold }}>{moeda(totalAtrib.faturamento)}</span>
+                </div>
+              </>
+            : <div style={{ padding: "16px 20px" }}>
+                <Estado vazio vazioTitulo="Nenhuma venda atribuída neste recorte"
+                  vazioDica={categoria ? `Nenhuma venda da categoria ${categoria} casou com lead de anúncio no período. A atribuição só cobre CIS e GGB até agora.` : "Nenhuma venda casou com lead de anúncio no período escolhido."} />
+              </div>}
+      </Bloco>
+
+      <Bloco titulo="Origem das vendas por canal" canto="a partir de jun/2026" sem altura={ALTURA_PAINEL}>
+        {canais.error
+          ? <div style={{ padding: "16px 20px" }}><Estado erro={canais.error} /></div>
+          : canaisPeriodo.length
+            ? <>
+                <CanaisVenda linhas={canaisPeriodo} />
+                <div style={{ padding: "10px 20px", fontSize: 11, color: C.faint, lineHeight: 1.5 }}>
+                  Cobertura cresce a cada mês; a maioria ainda cai em <b style={{ color: C.muted }}>“Pedido”</b> quando
+                  o vendedor não marca a origem. Não leia como participação de mercado dos canais.
+                </div>
+              </>
+            : <div style={{ padding: "16px 20px" }}>
+                <Estado vazio vazioTitulo="Sem venda com canal neste recorte"
+                  vazioDica="A vw_marketing_origem_vendas só cobre de jun/2026 em diante, e a maioria das vendas ainda entra como “Pedido”, sem canal declarado." />
+              </div>}
+      </Bloco>
+
+      <Bloco titulo="Funil de conversão" canto="em construção · aguardando integração do pedagógico">
+        <FunilConversao leads={t.leads} />
+      </Bloco>
+
+      <RodapeIntegracoes fontes={["meta_ads", "clint"]} />
     </Estado>
   );
 }
@@ -2540,11 +3400,6 @@ function Shell({ perfil }) {
         @keyframes subir { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
         .girar { animation: girar 1s linear infinite; }
         .subir { animation: subir .4s ease; }
-        /* Cards do Hub: 1 coluna no mobile, 2 em telas médias/grandes.
-           O marginBottom do Bloco faz o ritmo vertical; a grade só cuida
-           das colunas (row-gap 0 pra não somar espaço). */
-        .gridFin { display: grid; grid-template-columns: 1fr; column-gap: 20px; align-items: start; }
-        @media (min-width: 1000px) { .gridFin { grid-template-columns: 1fr 1fr; } }
         /* Painéis do Hub Financeiro (design portado): 1 coluna no mobile,
            proporções do design (5:4:3 e 7:5) em telas largas. */
         .finRow1 { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
