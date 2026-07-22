@@ -6,6 +6,7 @@ import {
   Database, ShieldAlert, Loader2, ArrowRight, Sparkles, Bell,
   Clock, Receipt, Hourglass, ChevronLeft, ChevronRight, ChevronDown,
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
+  Users, Target, Construction, Percent, Filter, ChevronUp,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
@@ -21,6 +22,7 @@ import {
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
   useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
+  useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingOrigem, usePedagogicoTurmas, useEventosDesempenho,
   useDiretoriaConsol, useIntegracaoStatus,
   porMes, variacao, moeda, numero,
@@ -299,11 +301,20 @@ function visualFonte(r) {
   return { cor: C.up, alerta: false }; // hoje / ontem, ok
 }
 
+// Nome de exibição de fonte que o hub cita mas a view ainda não registra.
+const NOME_FONTE = { clint: "Clint" };
+
 function RodapeIntegracoes({ fontes }) {
   const st = useIntegracaoStatus();
   const mapa = new Map((st.data ?? []).map((r) => [r.fonte, r]));
-  const itens = fontes.map((f) => mapa.get(f)).filter(Boolean);
-  if (!itens.length) return null;
+  // Fonte pedida que não está na view ainda não foi registrada no controle
+  // de sync. Some-la do rodapé esconderia a lacuna — aparece como "não
+  // registrado" em âmbar. Hubs cujas fontes existem seguem idênticos.
+  const itens = fontes.map((f) => mapa.get(f) ?? {
+    fonte: f, nome_exibicao: NOME_FONTE[f] ?? f,
+    rotulo: "Não registrado", frescor: "nunca", status: "ok", ausente: true,
+  });
+  if (!st.data || !itens.length) return null;
   return (
     <div style={{
       display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 18px",
@@ -321,6 +332,7 @@ function RodapeIntegracoes({ fontes }) {
             <span style={{ color: C.muted, fontWeight: 600 }}>{r.nome_exibicao}</span>
             <span style={{ color: v.alerta ? v.cor : C.faint }}>{r.rotulo}</span>
             {v.manual && <span style={{ color: C.faint }}>· atualização manual (CSV)</span>}
+            {r.ausente && <span style={{ color: C.faint }}>· integração ainda não registrada</span>}
             {v.nota && <span style={{ color: v.cor }}>· {v.nota}</span>}
           </span>
         );
@@ -1036,7 +1048,10 @@ function BarrasCategoria({ reais, orfas, semVinc, cobertura }) {
    elipses e a linha esmaga). O mês corrente é parcial: sai tracejado e o
    domínio do eixo Y IGNORA ele — poucos dias de receita não podem
    comprimir a escala dos meses fechados. */
-function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false }) {
+/* `formatar` existe porque nem toda série é dinheiro grande: custo por lead
+   vive na casa dos centavos e o `moeda` compacto arredondaria R$ 2,01 pra
+   R$ 2. Sem o prop, o comportamento é o de antes. */
+function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda }) {
   if (serie.length < 2) return null;
   const W = 720, H = 228, padL = 54, padR = 14, padT = 44, padB = 26;
   const plotW = W - padL - padR, plotH = H - padT - padB, plotBottom = padT + plotH;
@@ -1086,7 +1101,7 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
           return (
             <g key={i}>
               <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
-              <text x={padL - 9} y={yy + 3.5} fontSize="11" textAnchor="end" fill={C.faint} fontFamily={SANS}>{moeda(v)}</text>
+              <text x={padL - 9} y={yy + 3.5} fontSize="11" textAnchor="end" fill={C.faint} fontFamily={SANS}>{formatar(v)}</text>
             </g>
           );
         })}
@@ -1116,7 +1131,7 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
                     {d >= 0 ? "▲" : "▼"} {Math.abs(d).toFixed(0)}%
                   </text>
                 )}
-              <text x={lx} y={baseY} fontSize="11.5" fontWeight="700" textAnchor={anchor} fill={parc ? C.faint : C.bright} fontFamily={GROTESK}>{moeda(val)}</text>
+              <text x={lx} y={baseY} fontSize="11.5" fontWeight="700" textAnchor={anchor} fill={parc ? C.faint : C.bright} fontFamily={GROTESK}>{formatar(val)}</text>
             </g>
           );
         })}
@@ -2146,25 +2161,687 @@ function HubFinanceiro() {
   );
 }
 
-function HubMarketing() {
-  const org = useMarketingOrigem();
-  const leads = useMemo(() => porMes(org.data ?? [], "mes", "leads"), [org.data]);
-  const ganhos = useMemo(() => porMes(org.data ?? [], "mes", "ganhos"), [org.data]);
-  const v = variacao(leads);
-  const origens = useMemo(() => agrupar(org.data ?? [], "origem", "leads").slice(0, 8), [org.data]);
-  const conv = v.atual ? ((ganhos.at(-1)?.valor / v.atual) * 100).toFixed(1) : null;
+/* ============ MARKETING ============
+   O que é REAL: investimento, leads e custo por lead — vêm do Meta Ads.
+   O que NÃO existe: atribuição de venda a campanha. Sem ela não há venda
+   atribuída, faturamento atribuído, ROI nem conversão — e estimar qualquer
+   um deles seria inventar o número mais político do hub. Esses campos
+   aparecem desenhados e marcados "em construção", nunca preenchidos. */
+
+// Reais com centavos. O `moeda` global compacta e arredonda pra 1 casa —
+// bom pra R$ 415 mil, péssimo pra um CPL de R$ 2,01 (viraria "R$ 2").
+const reaisCent = (v) =>
+  new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v ?? 0);
+
+const somaMeses = (k, d) => {
+  let a = Number(k.slice(0, 4)), m = Number(k.slice(5, 7)) - 1 + d;
+  a += Math.floor(m / 12);
+  m = ((m % 12) + 12) % 12;
+  return chaveMes(a, m);
+};
+
+/* O Meta entrega gasto e leads agregados por MÊS — não existe linha diária.
+   "7 dias" e "Hoje" não têm recorte possível nesta fonte: devolver vazio se
+   leria como "não investimos nada", então o hub cai no mês corrente e diz
+   por quê (`diario`). O comparativo é o período equivalente anterior: ano
+   contra ano (mesmos meses), mês contra mês. */
+function recorteMkt({ modo, ano, mesIdx }) {
+  const h = new Date();
+  const mesAtual = chaveMes(h.getFullYear(), h.getMonth());
+  if (modo === "ano") {
+    const ate = `${ano}-12` > mesAtual ? mesAtual : `${ano}-12`;
+    return {
+      de: `${ano}-01`, ate, rotulo: String(ano), rotuloAnt: String(ano - 1), diario: false,
+      ant: { de: `${ano - 1}-01`, ate: somaMeses(ate, -12) },
+    };
+  }
+  const k = modo === "mes" ? chaveMes(ano, mesIdx) : mesAtual;
+  const [ka, km] = [Number(k.slice(0, 4)), Number(k.slice(5, 7)) - 1];
+  return {
+    de: k, ate: k, rotulo: `${MESES[km]} ${ka}`, rotuloAnt: "mês anterior",
+    diario: modo !== "mes",
+    ant: { de: somaMeses(k, -1), ate: somaMeses(k, -1) },
+  };
+}
+
+const noMesMkt = (linhas, { de, ate }) =>
+  (linhas ?? []).filter((r) => {
+    const k = String(r.mes ?? "").slice(0, 7);
+    return k && k >= de && k <= ate;
+  });
+
+/* Reduz as linhas por campanha ao MESMO formato da vw_marketing_resumo_mensal.
+   Conferido linha a linha: investimento = Σ gasto, leads = Σ leads,
+   gasto/leads de captação = Σ das campanhas de tipo "Captação". Por isso
+   filtrar por produto não muda a fórmula de nenhum KPI — só o conjunto. */
+const mensalDeCampanhas = (linhas) => {
+  const m = new Map();
+  for (const l of linhas ?? []) {
+    const k = String(l.mes ?? "").slice(0, 10);
+    if (!k) continue;
+    const a = m.get(k) ?? { mes: k, investimento: 0, leads: 0, gasto_captacao: 0, leads_captacao: 0 };
+    a.investimento += Number(l.gasto ?? 0);
+    a.leads += Number(l.leads ?? 0);
+    if (/capta/i.test(l.tipo ?? "")) {
+      a.gasto_captacao += Number(l.gasto ?? 0);
+      a.leads_captacao += Number(l.leads ?? 0);
+    }
+    m.set(k, a);
+  }
+  return [...m.values()].sort((a, b) => a.mes.localeCompare(b.mes));
+};
+
+/* CPL nunca é média de médias: é Σ gasto de captação ÷ Σ leads de captação.
+   Só campanha de captação gera lead — dividir pelo investimento TOTAL daria
+   um custo por lead inflado, e a cobertura (`pctCapt`) mostra a diferença. */
+const totaisMkt = (linhas) => {
+  const t = { investimento: 0, leads: 0, gastoCapt: 0, leadsCapt: 0, mesesSemLead: 0 };
+  for (const r of linhas) {
+    const inv = Number(r.investimento ?? 0);
+    t.investimento += inv;
+    t.leads += Number(r.leads ?? 0);
+    t.gastoCapt += Number(r.gasto_captacao ?? 0);
+    t.leadsCapt += Number(r.leads_captacao ?? 0);
+    if (inv > 0 && !Number(r.leads ?? 0)) t.mesesSemLead += 1;
+  }
+  t.cpl = t.leadsCapt ? t.gastoCapt / t.leadsCapt : null;
+  t.pctCapt = t.investimento ? (t.gastoCapt / t.investimento) * 100 : null;
+  return t;
+};
+
+const varMkt = (a, b) => (b ? ((a - b) / Math.abs(b)) * 100 : null);
+const rotuloVar = (p) => (p == null ? null : `${Math.abs(p).toFixed(0)}%`);
+
+/* KPI que ainda não tem fonte. Fica desenhado, esmaecido e com o motivo:
+   escondê-lo apagaria a lacuna, e preenchê-lo seria inventar. */
+function ChipEmBreve({ Icone, label, nota }) {
+  return (
+    <div title={nota} style={{
+      display: "flex", alignItems: "center", gap: 9, minHeight: 56,
+      background: "rgba(255,255,255,.015)", border: `1px dashed ${C.cardLine}`,
+      borderRadius: 10, padding: "8px 11px",
+    }}>
+      <span style={{
+        width: 25, height: 25, flexShrink: 0, borderRadius: 7, background: "rgba(255,255,255,.04)",
+        color: C.dim, display: "flex", alignItems: "center", justifyContent: "center",
+      }}>
+        <Icone size={13} />
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 10, color: C.faint, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+        <div style={{ fontFamily: GROTESK, fontSize: 14.5, fontWeight: 700, color: C.dim, letterSpacing: "-.3px" }}>em construção</div>
+        {nota && <div style={{ fontSize: 9.5, color: C.dim, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nota}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* Filtro travado — Canal e Status. O controle aparece porque foi pedido no
+   desenho, mas desabilitado: o dado que o alimentaria (canal da venda com
+   cobertura, status do lead) ainda não existe. */
+function FiltroTravado({ label }) {
+  return (
+    <button disabled title="em construção — sem fonte para este recorte" style={{
+      display: "flex", alignItems: "center", gap: 6, cursor: "not-allowed",
+      background: "rgba(255,255,255,.02)", border: `1px dashed ${C.cardLine}`,
+      borderRadius: 9, padding: "6px 10px", fontFamily: SANS,
+    }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: ".5px" }}>{label}</span>
+      <span style={{ fontSize: 11.5, fontWeight: 700, color: C.dim }}>em construção</span>
+      <ChevronDown size={12} style={{ color: C.dim }} />
+    </button>
+  );
+}
+
+/* Categoria do Marketing = produto da campanha. Vocabulário próprio ("FCIS",
+   "EG", "CIS 247"…), sem interseção com as categorias do Comercial — por
+   isso não usa o seletor global. São dezenas de valores: dropdown, não
+   barra de botões. Aqui "todos" faz sentido (é um orçamento só de mídia),
+   ao contrário do Comercial, onde categoria é unidade de negócio separada. */
+function SeletorProduto({ produtos, valor, onChange }) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 7 }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: ".5px" }}>Categoria</span>
+      <button onClick={() => setAberto((v) => !v)} style={{
+        display: "flex", alignItems: "center", gap: 6, fontFamily: SANS, fontSize: 11.5,
+        fontWeight: 700, color: C.gold, background: "rgba(255,255,255,.04)",
+        border: `1px solid ${C.cardLine}`, borderRadius: 9, padding: "6px 10px",
+        cursor: "pointer", maxWidth: 240,
+      }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {valor ?? "Todos os produtos"}
+        </span>
+        <ChevronDown size={13} style={{ flexShrink: 0 }} />
+      </button>
+      <Popover aberto={aberto} onFechar={() => setAberto(false)} largura={252}>
+        <button style={itemPop(valor == null)} onClick={() => { onChange(null); setAberto(false); }}>
+          Todos os produtos
+        </button>
+        {produtos.map((p) => (
+          <button key={p.nome} style={itemPop(valor === p.nome)}
+            onClick={() => { onChange(p.nome); setAberto(false); }}>
+            {p.nome} · {moeda(p.gasto)}
+          </button>
+        ))}
+      </Popover>
+    </div>
+  );
+}
+
+/* Investimento (R$, barras) x Leads (volume, linha) mês a mês. Dois eixos —
+   reais e contagem não dividem escala. Responde "gastamos mais e trouxemos
+   mais lead, ou só gastamos mais?". */
+function InvestimentoXLeads({ serie }) {
+  if (!serie.length) return null;
+  const W = 720, H = 200, padL = 42, padR = 42, padT = 18, padB = 22;
+  const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
+  const maxInv = Math.max(...serie.map((s) => s.investimento), 1);
+  const maxLead = Math.max(...serie.map((s) => s.leads), 1);
+  const n = serie.length, slot = plotW / n, bw = Math.min(34, slot * 0.5);
+  const cx = (i) => padL + slot * i + slot / 2;
+  const yInv = (v) => base - (v / maxInv) * plotH;
+  const yLead = (v) => base - (v / maxLead) * plotH;
+  const pts = serie.map((s, i) => [cx(i), yLead(s.leads)]);
+  const idxParcial = serie.findIndex((s) => s.parcial);
+  const ultSolido = idxParcial > 0 ? idxParcial : n - 1;
+  const solido = pts.slice(0, ultSolido + 1).map((p) => p.join(",")).join(" ");
+  const tracejado = idxParcial > 0
+    ? [pts[idxParcial - 1], pts[idxParcial]].map((p) => p.join(",")).join(" ") : null;
+  const alvo = 12, passo = Math.max(1, Math.ceil(n / alvo));
 
   return (
-    <Estado carregando={org.isLoading} erro={org.error} vazio={!org.data?.length}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 26 }}>
-        <Kpi label="Leads" valor={numero(v.atual)} delta={v.delta} up={v.up} serie={v.serie} parcial={v.parcial != null ? numero(v.parcial) : null} />
-        <Kpi label="Convertidos" valor={numero(ganhos.at(-1)?.valor)} delta={variacao(ganhos).delta} up={variacao(ganhos).up} serie={ganhos} />
-        <Kpi label="Origens ativas" valor={numero(origens.length)} nota="no recorte" />
-        <Kpi label="Conversão" valor={conv ?? "—"} unidade="%" nota="lead → ganho" />
+    <>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4, fontSize: 10.5, color: C.muted, fontWeight: 600 }}>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 2, background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` }} /> Investimento
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+          <span style={{ width: 13, height: 0, borderTop: `2px solid ${C.up}` }} /> Leads
+        </span>
       </div>
-      <Bloco titulo="Leads por origem" canto="acumulado" sem>
-        <Lista linhas={origens} formatar={numero} />
+
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        <defs>
+          <linearGradient id="gradInv" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={C.goldTop} /><stop offset="1" stopColor={C.goldBase} />
+          </linearGradient>
+          <pattern id="hachInv" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke={C.gold} strokeWidth="3" opacity="0.4" />
+          </pattern>
+        </defs>
+
+        {/* eixo esquerdo = R$ investido; direito = volume de leads */}
+        {[0, 0.5, 1].map((f, i) => {
+          const yy = base - f * plotH;
+          return (
+            <g key={i}>
+              <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
+              <text x={padL - 6} y={yy + 3} fontSize="9" textAnchor="end" fill={C.faint} fontFamily={SANS}>
+                {compacto(maxInv * f)}
+              </text>
+              <text x={W - padR + 6} y={yy + 3} fontSize="9" textAnchor="start" fill={C.up} opacity="0.8" fontFamily={SANS}>
+                {Math.round(maxLead * f)}
+              </text>
+            </g>
+          );
+        })}
+
+        {serie.map((s, i) => (
+          <rect key={s.mes} x={cx(i) - bw / 2} y={yInv(s.investimento)} width={bw}
+            height={Math.max(0, base - yInv(s.investimento))} rx="2"
+            fill={s.parcial ? "url(#hachInv)" : "url(#gradInv)"}
+            stroke={s.parcial ? C.gold : "none"} strokeDasharray={s.parcial ? "3 2" : undefined}
+            strokeWidth={s.parcial ? 1 : 0} />
+        ))}
+
+        <polyline points={solido} fill="none" stroke={C.up} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        {tracejado && <polyline points={tracejado} fill="none" stroke={C.up} strokeWidth="1.8" strokeDasharray="4 3" opacity="0.7" />}
+        {pts.map(([x0, y0], i) => (
+          <circle key={i} cx={x0} cy={y0} r="2.2"
+            fill={serie[i].parcial ? C.void : C.up} stroke={C.up} strokeWidth={serie[i].parcial ? 1.2 : 0} />
+        ))}
+
+        {serie.map((s, i) => (i % passo === 0 || i === n - 1) && (
+          <text key={s.mes} x={cx(i)} y={H - 7} fontSize="9.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>
+            {mesCurto(String(s.mes).slice(0, 7))}
+          </text>
+        ))}
+      </svg>
+    </>
+  );
+}
+
+/* Performance por campanha. Investimento, leads e CPL são reais. Vendas,
+   receita e ROI ficam na tabela como colunas vazias marcadas "em breve" —
+   o desenho já reserva o lugar, mas nenhuma delas existe na view (conferido
+   por probe: 42703). Agrupa por produto e expande sob clique. */
+function TabelaCampanhas({ grupos }) {
+  const [abertos, setAbertos] = useState(() => new Set());
+  const alternar = (p) => setAbertos((s) => {
+    const n = new Set(s);
+    n.has(p) ? n.delete(p) : n.add(p);
+    return n;
+  });
+  const cols = "minmax(140px,1fr) 92px 96px 58px 84px 62px 78px 52px";
+  const cel = (extra) => ({ fontFamily: GROTESK, fontSize: 12.5, fontWeight: 700, textAlign: "right", ...extra });
+  const vazia = { fontSize: 11.5, textAlign: "right", color: C.dim, fontStyle: "italic" };
+
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <div style={{ minWidth: 700 }}>
+        <div style={{
+          display: "grid", gridTemplateColumns: cols, gap: 10, padding: "0 20px 9px",
+          borderBottom: `1px solid ${C.hair}`, fontSize: 9.5, fontWeight: 800,
+          letterSpacing: ".5px", textTransform: "uppercase", color: C.dim,
+        }}>
+          <span>Campanha</span>
+          <span>Tipo</span>
+          <span style={{ textAlign: "right" }}>Investimento</span>
+          <span style={{ textAlign: "right" }}>Leads</span>
+          <span style={{ textAlign: "right" }}>Custo/lead</span>
+          <span style={{ textAlign: "right", color: C.faint }}>Vendas</span>
+          <span style={{ textAlign: "right", color: C.faint }}>Receita</span>
+          <span style={{ textAlign: "right", color: C.faint }}>ROI</span>
+        </div>
+
+        {grupos.map((g) => {
+          const aberto = abertos.has(g.produto);
+          return (
+            <div key={g.produto}>
+              <div onClick={() => alternar(g.produto)} role="button" tabIndex={0}
+                onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && (e.preventDefault(), alternar(g.produto))}
+                style={{
+                  display: "grid", gridTemplateColumns: cols, gap: 10, alignItems: "center",
+                  padding: "9px 20px", borderBottom: `1px solid ${C.hair}`, cursor: "pointer",
+                  background: aberto ? "rgba(255,255,255,.022)" : "transparent",
+                }}>
+                <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                  {aberto ? <ChevronUp size={13} style={{ color: C.gold, flexShrink: 0 }} /> : <ChevronDown size={13} style={{ color: C.faint, flexShrink: 0 }} />}
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={g.produto}>
+                    {g.produto}
+                  </span>
+                  <span style={{ fontSize: 10, color: C.dim, flexShrink: 0 }}>· {g.campanhas.length}</span>
+                </span>
+                <span style={{ fontSize: 11, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.tipo}</span>
+                <span style={cel({ color: C.gold })}>{moeda(g.gasto)}</span>
+                <span style={cel({ color: C.text })}>{g.leads ? numero(g.leads) : "—"}</span>
+                <span style={cel({ color: g.cpl != null ? C.text : C.dim })}>{g.cpl != null ? reaisCent(g.cpl) : "—"}</span>
+                <span style={vazia}>em breve</span>
+                <span style={vazia}>em breve</span>
+                <span style={vazia}>—</span>
+              </div>
+
+              {aberto && g.campanhas.map((c) => (
+                <div key={c.nome} style={{
+                  display: "grid", gridTemplateColumns: cols, gap: 10, alignItems: "center",
+                  padding: "7px 20px 7px 40px", borderBottom: `1px solid ${C.hair}`,
+                  background: "rgba(255,255,255,.012)",
+                }}>
+                  <span style={{ fontSize: 11.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.nome}>{c.nome}</span>
+                  <span style={{ fontSize: 10.5, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.tipo}</span>
+                  <span style={cel({ fontSize: 11.5, color: C.muted })}>{moeda(c.gasto)}</span>
+                  <span style={cel({ fontSize: 11.5, color: C.muted })}>{c.leads ? numero(c.leads) : "—"}</span>
+                  <span style={cel({ fontSize: 11.5, color: c.cpl != null ? C.muted : C.dim })}>{c.cpl != null ? reaisCent(c.cpl) : "—"}</span>
+                  <span style={vazia}>—</span>
+                  <span style={vazia}>—</span>
+                  <span style={vazia}>—</span>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* Origem das vendas por canal. Duas grandezas por linha (quantas vendas e
+   quanto), então não cabe no `Lista` — a barra é pelo valor. */
+function CanaisVenda({ linhas }) {
+  const max = Math.max(...linhas.map((l) => l.valor), 1);
+  return (
+    <div>
+      {linhas.map((l) => (
+        <div key={l.canal} style={{ padding: "9px 20px", borderBottom: `1px solid ${C.hair}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.canal}>{l.canal}</span>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 8, flexShrink: 0 }}>
+              <span style={{ fontSize: 11, color: C.faint }}>{numero(l.vendas)} {l.vendas === 1 ? "venda" : "vendas"}</span>
+              <span style={{ fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, color: C.text }}>{moeda(l.valor)}</span>
+            </span>
+          </div>
+          <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+            <div style={{ width: `${(l.valor / max) * 100}%`, height: "100%", borderRadius: 3, background: `linear-gradient(90deg, ${C.goldBase}, ${C.gold})` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Funil desenhado, não medido. Só "Leads gerados" tem número: as etapas
+   seguintes dependem do acompanhamento do pedagógico, que ainda não entrega
+   dado. As larguras abaixo são DECORAÇÃO — por isso cada etapa sem fonte
+   sai tracejada, sem número e escrita "sem medição". */
+const ETAPAS_FUNIL = [
+  { nome: "Leads gerados", larg: 100 },
+  { nome: "Contato realizado", larg: 76 },
+  { nome: "Reunião / visita", larg: 54 },
+  { nome: "Matrícula", larg: 36 },
+];
+
+function FunilConversao({ leads }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {ETAPAS_FUNIL.map((e, i) => {
+        const real = i === 0;
+        return (
+          <div key={e.nome} style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{
+              width: `${e.larg}%`, minWidth: 92, height: 34, borderRadius: 8,
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "0 12px", gap: 10,
+              background: real ? `linear-gradient(90deg, ${C.goldBase}, ${C.gold})` : "rgba(255,255,255,.025)",
+              border: real ? "none" : `1px dashed ${C.cardLine}`,
+            }}>
+              <span style={{ fontSize: 11.5, fontWeight: 700, color: real ? "#100c04" : C.dim, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {e.nome}
+              </span>
+              <span style={{ fontFamily: GROTESK, fontSize: real ? 14 : 11.5, fontWeight: 700, color: real ? "#100c04" : C.dim, flexShrink: 0, fontStyle: real ? "normal" : "italic" }}>
+                {real ? numero(leads) : "sem medição"}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+      <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+        <Construction size={13} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+        <span style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5 }}>
+          Em construção — aguardando o pedagógico. Só <b style={{ color: C.bright }}>leads gerados</b> é
+          medido hoje; as etapas seguintes não têm fonte, e as larguras acima são desenho, não proporção.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function HubMarketing() {
+  const per = usePeriodo();
+  const resumo = useMarketingResumoMensal();
+  const desemp = useMarketingDesempenho();
+  const canais = useMarketingOrigemVendas();
+  const origem = useMarketingOrigem();
+  const [produto, setProduto] = useState(null);
+
+  const r = useMemo(() => recorteMkt(per), [per.modo, per.ano, per.mesIdx]);
+
+  // Lista de produtos ordenada pelo que mais consome verba.
+  const produtos = useMemo(() => {
+    const m = new Map();
+    for (const l of desemp.data ?? []) {
+      const p = l.produto ?? "—";
+      m.set(p, (m.get(p) ?? 0) + Number(l.gasto ?? 0));
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([nome, gasto]) => ({ nome, gasto }));
+  }, [desemp.data]);
+
+  const campanhas = useMemo(
+    () => (desemp.data ?? []).filter((l) => produto == null || l.produto === produto),
+    [desemp.data, produto]
+  );
+
+  /* Sem produto escolhido a série vem da resumo_mensal (a view oficial dos
+     KPIs); com produto, é reconstruída das campanhas. As duas reconciliam
+     exatamente, então o número não pula ao ligar o filtro. */
+  const serie = useMemo(() => {
+    if (produto == null && resumo.data?.length)
+      return [...resumo.data].sort((a, b) => String(a.mes).localeCompare(String(b.mes)));
+    return mensalDeCampanhas(campanhas); // também é o fallback se a resumo falhar
+  }, [produto, resumo.data, campanhas]);
+
+  const t = useMemo(() => totaisMkt(noMesMkt(serie, r)), [serie, r]);
+  const tAnt = useMemo(() => totaisMkt(noMesMkt(serie, r.ant)), [serie, r]);
+
+  const vInv = varMkt(t.investimento, tAnt.investimento);
+  const vLead = varMkt(t.leads, tAnt.leads);
+  const vCpl = t.cpl != null && tAnt.cpl != null ? varMkt(t.cpl, tAnt.cpl) : null;
+
+  // Séries dos gráficos: histórico inteiro, como nos outros hubs.
+  const serieGrafico = useMemo(() => {
+    const d = new Date();
+    const cm = chaveMes(d.getFullYear(), d.getMonth());
+    return serie.map((x) => ({
+      mes: x.mes,
+      investimento: Number(x.investimento ?? 0),
+      leads: Number(x.leads ?? 0),
+      parcial: String(x.mes).slice(0, 7) === cm,
+    }));
+  }, [serie]);
+
+  // CPL mês a mês: recalculado por mês (gasto de captação ÷ leads de
+  // captação), nunca a média das médias. Mês sem lead não vira ponto zero —
+  // fica fora da série, porque "R$ 0 por lead" seria mentira.
+  const serieCpl = useMemo(
+    () => serieGrafico
+      .map((x, i) => ({ ...x, cap: serie[i] }))
+      .filter((x) => Number(x.cap.leads_captacao ?? 0) > 0)
+      .map((x) => ({ mes: x.mes, valor: Number(x.cap.gasto_captacao) / Number(x.cap.leads_captacao), parcial: x.parcial })),
+    [serieGrafico, serie]
+  );
+
+  const porTipo = useMemo(
+    () => agrupar(noMesMkt(campanhas, r), "tipo", "gasto"),
+    [campanhas, r]
+  );
+
+  const grupos = useMemo(() => {
+    const m = new Map();
+    for (const l of noMesMkt(campanhas, r)) {
+      const p = l.produto ?? "—";
+      const g = m.get(p) ?? { produto: p, gasto: 0, leads: 0, gastoCapt: 0, leadsCapt: 0, tipos: new Set(), campanhas: new Map() };
+      const gasto = Number(l.gasto ?? 0), leads = Number(l.leads ?? 0);
+      g.gasto += gasto; g.leads += leads;
+      if (/capta/i.test(l.tipo ?? "")) { g.gastoCapt += gasto; g.leadsCapt += leads; }
+      if (l.tipo) g.tipos.add(l.tipo);
+      // Mesma campanha em meses diferentes vira uma linha só no recorte.
+      const nome = l.campanha_nome ?? "—";
+      const c = g.campanhas.get(nome) ?? { nome, tipo: l.tipo ?? "—", gasto: 0, leads: 0, gastoCapt: 0, leadsCapt: 0 };
+      c.gasto += gasto; c.leads += leads;
+      if (/capta/i.test(l.tipo ?? "")) { c.gastoCapt += gasto; c.leadsCapt += leads; }
+      g.campanhas.set(nome, c);
+      m.set(p, g);
+    }
+    return [...m.values()]
+      .map((g) => ({
+        ...g,
+        tipo: g.tipos.size === 1 ? [...g.tipos][0] : `${g.tipos.size} tipos`,
+        cpl: g.leadsCapt ? g.gastoCapt / g.leadsCapt : null,
+        campanhas: [...g.campanhas.values()]
+          .map((c) => ({ ...c, cpl: c.leadsCapt ? c.gastoCapt / c.leadsCapt : null }))
+          .sort((a, b) => b.gasto - a.gasto),
+      }))
+      .sort((a, b) => b.gasto - a.gasto);
+  }, [campanhas, r]);
+
+  const canaisPeriodo = useMemo(() => {
+    const m = new Map();
+    for (const l of noMesMkt(canais.data ?? [], r)) {
+      const k = l.canal ?? "—";
+      const a = m.get(k) ?? { canal: k, vendas: 0, valor: 0 };
+      a.vendas += Number(l.vendas ?? 0);
+      a.valor += Number(l.valor ?? 0);
+      m.set(k, a);
+    }
+    return [...m.values()].sort((a, b) => b.valor - a.valor);
+  }, [canais.data, r]);
+
+  /* A vw_marketing_origem hoje devolve 42501 (grant pendente) e o esquema
+     dela não é sondável pelo front. Descobrir o campo em vez de chumbar
+     evita quebrar quando o acesso for liberado. `taxa_conversao` é ignorada
+     de propósito: sem atribuição de venda, ela não tem lastro. */
+  const leadsOrigem = useMemo(() => {
+    const linhas = origem.data ?? [];
+    if (!linhas.length) return [];
+    const achar = (cands) => cands.find((c) => c in linhas[0]);
+    const chave = achar(["origem", "campanha", "utm_source", "fonte", "canal"]);
+    const valor = achar(["leads", "total", "qtd", "quantidade"]);
+    if (!chave || !valor) return [];
+    return agrupar(linhas, chave, valor);
+  }, [origem.data]);
+
+  const nota = (txt) => (
+    <div style={{ display: "flex", gap: 7, marginTop: 10 }}>
+      <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+      <span style={{ fontSize: 11, color: C.faint, lineHeight: 1.5 }}>{txt}</span>
+    </div>
+  );
+
+  return (
+    <Estado carregando={desemp.isLoading || resumo.isLoading} erro={desemp.error} vazio={!desemp.data?.length}
+      vazioTitulo="Sem dados de mídia"
+      vazioDica="A vw_marketing_desempenho não retornou linhas — ou a sincronização do Meta Ads não rodou, ou seu perfil não tem acesso a marketing.">
+
+      {/* filtros do hub: produto é real; canal e status ficam travados */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+        padding: "10px 14px", marginBottom: 16, borderRadius: 12,
+        background: "rgba(255,255,255,.022)", border: `1px solid ${C.cardLine}`,
+      }}>
+        <Filter size={13} style={{ color: C.faint, flexShrink: 0 }} />
+        <SeletorProduto produtos={produtos} valor={produto} onChange={setProduto} />
+        <FiltroTravado label="Canal" />
+        <FiltroTravado label="Status" />
+        <span style={{ marginLeft: "auto", fontSize: 11, color: C.faint }}>
+          {r.rotulo} · {numero(noMesMkt(campanhas, r).length)} campanhas no recorte
+        </span>
+      </div>
+
+      {r.diario && nota(
+        <>O Meta Ads entrega gasto e leads <b style={{ color: C.muted }}>agregados por mês</b> — não existe
+          recorte diário nesta fonte. Mostrando <b style={{ color: C.muted }}>{r.rotulo}</b>. Use Ano ou Mês no filtro do topo.</>
+      )}
+
+      <SecaoTitulo titulo="Mídia paga" canto={`${r.rotulo} · variação vs ${r.rotuloAnt}`} />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginBottom: 12 }}>
+        <ChipKpi compacto hero Icone={Megaphone} label="Investimento em mídia"
+          valor={moeda(t.investimento)}
+          delta={rotuloVar(vInv)} up={vInv != null ? vInv >= 0 : undefined}
+          nota={vInv == null ? "sem base anterior" : undefined}
+          sub={`Meta Ads · ${r.rotulo}`} />
+        <ChipKpi compacto Icone={Users} label="Leads gerados"
+          valor={numero(t.leads)}
+          delta={rotuloVar(vLead)} up={vLead != null ? vLead >= 0 : undefined}
+          nota={vLead == null ? "sem base anterior" : undefined}
+          sub={t.mesesSemLead
+            ? `${t.mesesSemLead} ${t.mesesSemLead === 1 ? "mês" : "meses"} com verba e sem rastreio de lead`
+            : "formulário de lead do Meta"} />
+        <ChipKpi compacto Icone={Target} label="Custo por lead"
+          valor={t.cpl != null ? reaisCent(t.cpl) : "—"}
+          delta={rotuloVar(vCpl)} up={vCpl != null ? vCpl <= 0 : undefined}
+          nota={vCpl == null ? (t.cpl == null ? "sem lead no recorte" : "sem base anterior") : undefined}
+          sub={t.pctCapt != null
+            ? `sobre ${moeda(t.gastoCapt)} de captação · ${t.pctCapt.toFixed(0)}% da verba`
+            : "sem verba de captação no recorte"} />
+      </div>
+      {t.pctCapt != null && t.pctCapt < 99 && nota(
+        <>O custo por lead usa <b style={{ color: C.muted }}>só a verba de captação</b> ({moeda(t.gastoCapt)} de {moeda(t.investimento)}).
+          Campanhas de venda, evento e live não geram lead de formulário — dividir o investimento total pelos
+          leads daria um custo por lead maior que o real.</>
+      )}
+
+      <SecaoTitulo titulo="Retorno" canto="depende da atribuição de venda a campanha" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10, marginBottom: 6 }}>
+        <ChipEmBreve Icone={ShoppingBag} label="Vendas atribuídas" nota="nenhuma venda casa com campanha" />
+        <ChipEmBreve Icone={Wallet} label="Faturamento atribuído" nota="sem vínculo campanha → matrícula" />
+        <ChipEmBreve Icone={TrendingUp} label="ROI" nota="precisa de faturamento atribuído" />
+        <ChipEmBreve Icone={Percent} label="Conversão" nota="precisa de lead → matrícula" />
+      </div>
+      {nota(
+        <>Nada liga uma venda à campanha que a originou ainda. Enquanto isso não existir, estes quatro ficam
+          em branco — estimar ROI dividindo faturamento total por investimento total <b style={{ color: C.muted }}>não
+          é medir atribuição</b>, é inventar.</>
+      )}
+
+      <SecaoTitulo titulo="Evolução" canto="série inteira · independe do filtro de período" />
+      <div className="gridCom">
+        <Bloco titulo="Investimento × Leads" canto="mês a mês">
+          {serieGrafico.length < 2
+            ? <Estado vazio vazioTitulo="Histórico insuficiente" vazioDica="São necessários pelo menos dois meses para desenhar a série." />
+            : <InvestimentoXLeads serie={serieGrafico} />}
+        </Bloco>
+        <Bloco titulo="Investimento por tipo de campanha" canto={r.rotulo} sem altura={ALTURA_PAINEL}>
+          {porTipo.length
+            ? <Lista linhas={porTipo} formatar={moeda} total={t.investimento} />
+            : <div style={{ padding: "16px 20px" }}>
+                <Estado vazio vazioTitulo={tituloVazioFluxo(per.modo)} vazioDica="Nenhuma campanha com gasto neste recorte." />
+              </div>}
+        </Bloco>
+      </div>
+
+      <Bloco titulo="Custo por lead" canto="mês a mês · menor é melhor">
+        {serieCpl.length < 2
+          ? <Estado vazio vazioTitulo="Sem série de custo por lead"
+              vazioDica="O custo por lead só existe em meses com campanha de captação e lead registrado — houve menos de dois." />
+          : <>
+              <LinhaEvolucao serie={serieCpl} cor={C.up} idGrad="fillCpl" inverso formatar={reaisCent} />
+              <div style={{ fontSize: 10.5, color: C.faint, marginTop: 2 }}>
+                Meses sem lead de captação ficam fora da série — “R$ 0 por lead” não existe.
+              </div>
+            </>}
       </Bloco>
+
+      <Bloco titulo="Performance por campanha" canto={`${r.rotulo} · clique no produto para abrir`} sem altura={340}>
+        {grupos.length
+          ? <TabelaCampanhas grupos={grupos} />
+          : <div style={{ padding: "16px 20px" }}>
+              <Estado vazio vazioTitulo={tituloVazioFluxo(per.modo)} vazioDica="Nenhuma campanha com veiculação neste recorte." />
+            </div>}
+      </Bloco>
+
+      <div className="gridFin">
+        <Bloco titulo="Origem das vendas por canal" canto="a partir de jun/2026" sem altura={ALTURA_PAINEL}>
+          {canais.error
+            ? <div style={{ padding: "16px 20px" }}><Estado erro={canais.error} /></div>
+            : canaisPeriodo.length
+              ? <>
+                  <CanaisVenda linhas={canaisPeriodo} />
+                  <div style={{ padding: "10px 20px", fontSize: 11, color: C.faint, lineHeight: 1.5 }}>
+                    A cobertura cresce a cada mês — a maioria das vendas ainda cai em <b style={{ color: C.muted }}>“Pedido”</b>,
+                    sem canal declarado. Não leia como participação de mercado dos canais.
+                  </div>
+                </>
+              : <div style={{ padding: "16px 20px" }}>
+                  <Estado vazio vazioTitulo="Sem venda com canal neste recorte"
+                    vazioDica="A vw_marketing_origem_vendas só cobre de jun/2026 em diante, e a maioria das vendas ainda entra como “Pedido”, sem canal declarado." />
+                </div>}
+        </Bloco>
+
+        <Bloco titulo="Origem dos leads" canto="volume por origem" sem altura={ALTURA_PAINEL}>
+          {origem.error
+            ? <div style={{ padding: "16px 20px" }}>
+                <Estado vazio vazioTitulo="Sem acesso à vw_marketing_origem"
+                  vazioDica={`O banco recusou a leitura (${origem.error.message}). Falta o grant de select para authenticated — o painel liga sozinho assim que a permissão existir.`} />
+              </div>
+            : leadsOrigem.length
+              ? <>
+                  <Lista linhas={leadsOrigem} formatar={numero} top={8} />
+                  <div style={{ padding: "10px 20px", fontSize: 11, color: C.faint, lineHeight: 1.5 }}>
+                    Só volume. A taxa de conversão desta view é ignorada de propósito: sem atribuição de venda
+                    a campanha, ela não tem lastro.
+                  </div>
+                </>
+              : <div style={{ padding: "16px 20px" }}>
+                  <Estado vazio vazioTitulo="Sem origem de lead registrada" vazioDica="A view não retornou linhas." />
+                </div>}
+        </Bloco>
+      </div>
+
+      <Bloco titulo="Funil de conversão" canto="em construção · aguardando pedagógico">
+        <FunilConversao leads={t.leads} />
+      </Bloco>
+
+      <RodapeIntegracoes fontes={["meta_ads", "clint"]} />
     </Estado>
   );
 }
