@@ -1,40 +1,39 @@
 # FebraHub · .github/workflows/sync-diario.yml
 #
 # Roda os ETLs todo dia às 06:00 (Salvador) e registra no Supabase
-# quando cada integração sincronizou, para o hub mostrar
-# "Atualizado hoje / há N dias".
+# quando cada integração sincronizou.
 #
-# Roda nos servidores do GitHub — não depende da máquina de ninguém.
-# Observações sobre o agendamento:
-#   - o horário não é exato (atrasos de 5 a 30 min são normais)
-#   - se o repositório ficar 60 dias sem commit, o agendamento é
-#     desativado; basta um commit qualquer para reativar
+# Roda nos servidores do GitHub — não depende de nenhuma máquina.
+#   - horário não exato (atrasos de 5 a 30 min são normais)
+#   - 60 dias sem commit desativam o agendamento; um commit reativa
 #
-# Secrets em Settings > Secrets and variables > Actions:
+# Secrets:
 #   SUPABASE_URL, SUPABASE_SERVICE_KEY  (service_role, NÃO a anon)
 #   CISPAY_TOKEN, CISPAY_BASE_URL
 #   SYMPLA_TOKEN, SYMPLA_BASE_URL
 #   CONTAAZUL_CLIENT_ID, CONTAAZUL_CLIENT_SECRET
+#   META_TOKEN, META_ACCOUNT_ID
+#
+# ATENÇÃO: o META_TOKEN expira a cada 60 dias. Quando expirar, o passo
+# do Meta falha e o investimento para de atualizar. Renovar o token e
+# recadastrar o secret. (definir responsável — ver pauta do marketing)
 
 name: Sync diário
 
 on:
   schedule:
     - cron: '0 9 * * *'      # 09:00 UTC = 06:00 em Salvador
-  workflow_dispatch:          # botão para rodar manualmente
+  workflow_dispatch:
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Instalar dependências
         run: |
           python -m pip install --upgrade pip
@@ -112,3 +111,25 @@ jobs:
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=merge-duplicates" \
             -d "{\"fonte\":\"conta_azul\",\"nome_exibicao\":\"Conta Azul\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.ca_receber.outcome == 'success' && steps.ca_pagar.outcome == 'success' && 'ok' || 'parcial' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+
+      # ---------------- Meta Ads ----------------
+      # Puxa só os últimos ~2 meses (padrão do script), rápido e sem rate limit.
+      - name: Meta Ads
+        id: meta
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          META_TOKEN: ${{ secrets.META_TOKEN }}
+          META_ACCOUNT_ID: ${{ secrets.META_ACCOUNT_ID }}
+        run: python etl/meta_sync.py
+        continue-on-error: true
+
+      - name: Status — Meta Ads
+        if: always()
+        run: |
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"meta_ads\",\"nome_exibicao\":\"Meta Ads\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.meta.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
