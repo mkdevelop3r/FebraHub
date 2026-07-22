@@ -23,6 +23,7 @@ import {
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
   useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
+  useMarketingAtribuicao,
   useMarketingOrigem, usePedagogicoTurmas, useEventosDesempenho,
   useDiretoriaConsol, useIntegracaoStatus,
   porMes, variacao, moeda, numero,
@@ -2516,7 +2517,7 @@ function TabelaCampanhas({ grupos }) {
                 <span style={cel({ color: g.cpl != null ? C.text : C.dim })}>{g.cpl != null ? reaisCent(g.cpl) : "—"}</span>
                 <span style={vazia}>em breve</span>
                 <span style={vazia}>em breve</span>
-                <span style={vazia}>—</span>
+                <span style={vazia}>em breve</span>
               </div>
 
               {aberto && g.campanhas.map((c) => (
@@ -2539,6 +2540,59 @@ function TabelaCampanhas({ grupos }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/* Vendas com origem confirmada em anúncio.
+
+   BLOCO SEPARADO DA PERFORMANCE POR CAMPANHA, DE PROPÓSITO. O investimento
+   da tabela de performance é o valor CHEIO da campanha; o faturamento aqui
+   é um PISO (~7% das vendas — só as que casaram com um lead de anúncio).
+   Dividir um pelo outro daria um ROI falso: parcial sobre total. Por isso
+   os dois números convivem na tela sem nenhuma operação entre eles. */
+const ROTULO_SEM_CAMPANHA = "anúncio — campanha não identificada";
+
+function VendasAtribuidas({ linhas }) {
+  const cols = "minmax(150px,1fr) 88px 62px 96px";
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <div style={{ minWidth: 420 }}>
+        <div style={{
+          display: "grid", gridTemplateColumns: cols, gap: 10, padding: "0 20px 9px",
+          borderBottom: `1px solid ${C.hair}`, fontSize: 9.5, fontWeight: 800,
+          letterSpacing: ".5px", textTransform: "uppercase", color: C.dim,
+        }}>
+          <span>Campanha</span>
+          <span>Categoria</span>
+          <span style={{ textAlign: "right" }}>Vendas</span>
+          <span style={{ textAlign: "right" }}>Faturamento</span>
+        </div>
+        {linhas.map((l) => (
+          <div key={l.chave} style={{
+            display: "grid", gridTemplateColumns: cols, gap: 10, alignItems: "center",
+            padding: "8px 20px", borderBottom: `1px solid ${C.hair}`,
+          }}>
+            <span style={{
+              fontSize: 12, fontWeight: l.semCampanha ? 500 : 600,
+              color: l.semCampanha ? C.faint : C.bright,
+              fontStyle: l.semCampanha ? "italic" : "normal",
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            }} title={l.rotulo}>
+              {l.rotulo}
+            </span>
+            <span style={{ fontSize: 11, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {l.semCampanha ? "—" : l.categoria}
+            </span>
+            <span style={{ fontFamily: GROTESK, fontSize: 12.5, fontWeight: 700, textAlign: "right", color: l.semCampanha ? C.faint : C.text }}>
+              {numero(l.vendas)}
+            </span>
+            <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, textAlign: "right", color: l.semCampanha ? C.faint : C.gold }}>
+              {moeda(l.faturamento)}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2606,7 +2660,7 @@ function FunilConversao({ leads }) {
       <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
         <Construction size={13} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
         <span style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.5 }}>
-          Em construção — aguardando o pedagógico. Só <b style={{ color: C.bright }}>leads gerados</b> é
+          Em construção — aguardando integração do pedagógico. Só <b style={{ color: C.bright }}>leads gerados</b> é
           medido hoje; as etapas seguintes não têm fonte, e as larguras acima são desenho, não proporção.
         </span>
       </div>
@@ -2620,6 +2674,7 @@ function HubMarketing() {
   const desemp = useMarketingDesempenho();
   const canais = useMarketingOrigemVendas();
   const origem = useMarketingOrigem();
+  const atrib = useMarketingAtribuicao();
   const [produto, setProduto] = useState(null);
   const [categoria, setCategoria] = useState(null);
   const [geral, setGeral] = useState(false);
@@ -2748,6 +2803,34 @@ function HubMarketing() {
       .sort((a, b) => b.gasto - a.gasto);
   }, [campanhasPeriodo, agruparPor]);
 
+  /* Vendas atribuídas, agregadas por campanha dentro do recorte. Segue o
+     período e a categoria; NÃO segue o produto — a view não tem essa
+     dimensão, e filtrar por algo que ela não conhece devolveria vazio como
+     se não houvesse venda. "Sem campanha" é uma categoria própria da view
+     (nome_campanha vem nulo), então só aparece em "Todas". */
+  const atribuidas = useMemo(() => {
+    const m = new Map();
+    for (const l of noMesMkt(atrib.data ?? [], r)) {
+      if (categoria != null && l.categoria !== categoria) continue;
+      const semCampanha = !l.nome_campanha;
+      const chave = `${l.categoria ?? "—"}|${l.nome_campanha ?? ""}`;
+      const a = m.get(chave) ?? {
+        chave, semCampanha,
+        rotulo: semCampanha ? ROTULO_SEM_CAMPANHA : String(l.nome_campanha),
+        categoria: l.categoria ?? "—", vendas: 0, faturamento: 0,
+      };
+      a.vendas += Number(l.vendas_atribuidas ?? 0);
+      a.faturamento += Number(l.faturamento_atribuido ?? 0);
+      m.set(chave, a);
+    }
+    return [...m.values()].sort((a, b) => b.faturamento - a.faturamento);
+  }, [atrib.data, r, categoria]);
+
+  const totalAtrib = useMemo(() => atribuidas.reduce(
+    (s, a) => ({ vendas: s.vendas + a.vendas, faturamento: s.faturamento + a.faturamento }),
+    { vendas: 0, faturamento: 0 }
+  ), [atribuidas]);
+
   const canaisPeriodo = useMemo(() => {
     const m = new Map();
     for (const l of noMesMkt(canais.data ?? [], r)) {
@@ -2847,17 +2930,16 @@ function HubMarketing() {
           leads daria um custo por lead maior que o real.</>
       )}
 
-      <SecaoTitulo titulo="Retorno" canto="depende da atribuição de venda a campanha" />
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 10, marginBottom: 6 }}>
-        <ChipEmBreve Icone={ShoppingBag} label="Vendas atribuídas" nota="nenhuma venda casa com campanha" />
-        <ChipEmBreve Icone={Wallet} label="Faturamento atribuído" nota="sem vínculo campanha → matrícula" />
-        <ChipEmBreve Icone={TrendingUp} label="ROI" nota="precisa de faturamento atribuído" />
-        <ChipEmBreve Icone={Percent} label="Conversão" nota="precisa de lead → matrícula" />
+      <SecaoTitulo titulo="Retorno" canto="não é calculável com a cobertura de hoje" />
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 10, marginBottom: 6 }}>
+        <ChipEmBreve Icone={Percent} label="Conversão lead → venda" nota="status do lead no Clint é sempre OPEN" />
+        <ChipEmBreve Icone={TrendingUp} label="ROI total" nota="exigiria dividir piso por valor cheio" />
       </div>
       {nota(
-        <>Nada liga uma venda à campanha que a originou ainda. Enquanto isso não existir, estes quatro ficam
-          em branco — estimar ROI dividindo faturamento total por investimento total <b style={{ color: C.muted }}>não
-          é medir atribuição</b>, é inventar.</>
+        <>Existe atribuição, mas só de <b style={{ color: C.muted }}>piso</b> — as vendas que casaram com um lead de
+          anúncio (bloco abaixo). O investimento é o valor <b style={{ color: C.muted }}>cheio</b> da campanha.
+          Dividir um pelo outro daria um ROI falso, parcial sobre total; por isso ele fica em branco em vez de
+          receber uma conta que parece certa.</>
       )}
 
       <SecaoTitulo titulo="Evolução" canto={`${r.rotulo} · segue o recorte escolhido`} />
@@ -2910,6 +2992,42 @@ function HubMarketing() {
             </div>}
       </Bloco>
 
+      {/* Bloco à parte da tabela acima, e assim deve continuar: aqui é piso
+          atribuído, lá é investimento cheio. Nenhuma conta entre os dois. */}
+      <Bloco titulo="Vendas com origem confirmada em anúncio"
+        canto={`${r.rotulo} · ordenado por faturamento`} sem altura={300}>
+        <div style={{ padding: "12px 20px 14px", display: "flex", gap: 8, borderBottom: `1px solid ${C.hair}` }}>
+          <AlertTriangle size={13} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+          <span style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.55 }}>
+            Vendas cujo comprador foi lead de anúncio antes da compra — <b style={{ color: C.bright }}>piso
+            comprovável, cerca de 7% das vendas</b>. A influência real do digital é maior; isto é o que se prova.
+            Não é ROI nem faturamento total.
+          </span>
+        </div>
+        {atrib.error
+          ? <div style={{ padding: "16px 20px" }}>
+              <Estado vazio vazioTitulo="Não foi possível carregar a atribuição"
+                vazioDica={`${atrib.error.message}. A vw_marketing_atribuicao_campanha é pesada e estoura o tempo limite na primeira execução fria — recarregar a página costuma resolver.`} />
+            </div>
+          : atribuidas.length
+            ? <>
+                <VendasAtribuidas linhas={atribuidas} />
+                <div style={{
+                  display: "grid", gridTemplateColumns: "minmax(150px,1fr) 88px 62px 96px", gap: 10,
+                  padding: "11px 20px", background: "rgba(255,255,255,.02)",
+                }}>
+                  <span style={{ fontSize: 12.5, fontWeight: 800, color: C.bright }}>Total atribuído</span>
+                  <span />
+                  <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, textAlign: "right", color: C.text }}>{numero(totalAtrib.vendas)}</span>
+                  <span style={{ fontFamily: GROTESK, fontSize: 14, fontWeight: 700, textAlign: "right", color: C.gold }}>{moeda(totalAtrib.faturamento)}</span>
+                </div>
+              </>
+            : <div style={{ padding: "16px 20px" }}>
+                <Estado vazio vazioTitulo="Nenhuma venda atribuída neste recorte"
+                  vazioDica={categoria ? `Nenhuma venda da categoria ${categoria} casou com lead de anúncio no período. A atribuição só cobre CIS e GGB até agora.` : "Nenhuma venda casou com lead de anúncio no período escolhido."} />
+              </div>}
+      </Bloco>
+
       <div className="gridFin">
         <Bloco titulo="Origem das vendas por canal" canto="a partir de jun/2026" sem altura={ALTURA_PAINEL}>
           {canais.error
@@ -2918,8 +3036,8 @@ function HubMarketing() {
               ? <>
                   <CanaisVenda linhas={canaisPeriodo} />
                   <div style={{ padding: "10px 20px", fontSize: 11, color: C.faint, lineHeight: 1.5 }}>
-                    A cobertura cresce a cada mês — a maioria das vendas ainda cai em <b style={{ color: C.muted }}>“Pedido”</b>,
-                    sem canal declarado. Não leia como participação de mercado dos canais.
+                    Cobertura cresce a cada mês; a maioria ainda cai em <b style={{ color: C.muted }}>“Pedido”</b> quando
+                    o vendedor não marca a origem. Não leia como participação de mercado dos canais.
                   </div>
                 </>
               : <div style={{ padding: "16px 20px" }}>
@@ -2938,8 +3056,8 @@ function HubMarketing() {
               ? <>
                   <Lista linhas={leadsOrigem} formatar={numero} top={8} />
                   <div style={{ padding: "10px 20px", fontSize: 11, color: C.faint, lineHeight: 1.5 }}>
-                    Só volume. A taxa de conversão desta view é ignorada de propósito: sem atribuição de venda
-                    a campanha, ela não tem lastro.
+                    Só volume. O <b style={{ color: C.muted }}>taxa_conversao</b> desta view é ignorado de propósito:
+                    o status do lead no Clint fica sempre em OPEN, então a taxa não tem lastro.
                   </div>
                 </>
               : <div style={{ padding: "16px 20px" }}>
@@ -2948,7 +3066,7 @@ function HubMarketing() {
         </Bloco>
       </div>
 
-      <Bloco titulo="Funil de conversão" canto="em construção · aguardando pedagógico">
+      <Bloco titulo="Funil de conversão" canto="em construção · aguardando integração do pedagógico">
         <FunilConversao leads={t.leads} />
       </Bloco>
 

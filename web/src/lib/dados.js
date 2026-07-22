@@ -220,6 +220,17 @@ export const useMarketingDesempenho = () =>
 export const useMarketingOrigemVendas = () =>
   useView("vw_marketing_origem_vendas", { ordem: ["mes", "canal"] });
 
+/* Atribuição: vendas cujo comprador foi lead de anúncio ANTES da compra.
+   É um PISO comprovável (~7% das vendas), não o faturamento do digital.
+   Vive à parte de propósito — dividir isto pelo investimento (que é cheio)
+   daria um ROI falso, comparando um parcial com um total.
+
+   Sem `ordem`: são poucas dezenas de linhas, e a view é pesada o bastante
+   pra estourar o statement timeout na primeira execução fria — o retry
+   padrão do QueryClient pega a segunda, já com o plano quente. */
+export const useMarketingAtribuicao = () =>
+  useView("vw_marketing_atribuicao_campanha");
+
 export const useMarketingOrigem   = () => useView("vw_marketing_origem");
 export const usePedagogicoTurmas  = () => useView("vw_pedagogico_turmas");
 export const useEventosDesempenho = () => useView("vw_eventos_desempenho");
