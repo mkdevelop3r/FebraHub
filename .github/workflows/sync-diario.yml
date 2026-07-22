@@ -133,3 +133,29 @@ jobs:
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=merge-duplicates" \
             -d "{\"fonte\":\"meta_ads\",\"nome_exibicao\":\"Meta Ads\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.meta.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+
+# ---------------- BLOCO OMIE — adicionar ao sync-diario.yml ----------------
+# Cole estes dois passos antes do fim do job 'sync', e cadastre os secrets
+# OMIE_APP_KEY e OMIE_APP_SECRET.
+# O Omie puxa só o último ano por padrão; para o sync diário, o incremental
+# do dia já basta e é rápido.
+
+      - name: Loja (Omie)
+        id: omie
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          OMIE_APP_KEY: ${{ secrets.OMIE_APP_KEY }}
+          OMIE_APP_SECRET: ${{ secrets.OMIE_APP_SECRET }}
+        run: python etl/omie_sync.py --desde 01/01/2026
+        continue-on-error: true
+
+      - name: Status — Loja (Omie)
+        if: always()
+        run: |
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"omie\",\"nome_exibicao\":\"Loja (Omie)\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.omie.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
