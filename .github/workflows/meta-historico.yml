@@ -1,4 +1,3 @@
-"""
 FebraHub · meta_sync.py
 Puxa gasto/alcance por anúncio da Marketing API e grava em fato_meta_insights.
 
