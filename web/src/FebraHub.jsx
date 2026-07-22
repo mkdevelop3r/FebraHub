@@ -2184,10 +2184,20 @@ const somaMeses = (k, d) => {
    "7 dias" e "Hoje" não têm recorte possível nesta fonte: devolver vazio se
    leria como "não investimos nada", então o hub cai no mês corrente e diz
    por quê (`diario`). O comparativo é o período equivalente anterior: ano
-   contra ano (mesmos meses), mês contra mês. */
-function recorteMkt({ modo, ano, mesIdx }) {
+   contra ano (mesmos meses), mês contra mês.
+
+   `geral` = todos os anos. Não tem período anterior (é a base inteira), e
+   por isso devolve `ant: null` — as variações somem em vez de comparar com
+   um passado que não existe. */
+function recorteMkt({ modo, ano, mesIdx }, geral) {
   const h = new Date();
   const mesAtual = chaveMes(h.getFullYear(), h.getMonth());
+  if (geral) {
+    return {
+      de: "0000-01", ate: mesAtual, rotulo: "Todos os anos",
+      rotuloAnt: null, ant: null, diario: false, geral: true,
+    };
+  }
   if (modo === "ano") {
     const ate = `${ano}-12` > mesAtual ? mesAtual : `${ano}-12`;
     return {
@@ -2204,10 +2214,12 @@ function recorteMkt({ modo, ano, mesIdx }) {
   };
 }
 
-const noMesMkt = (linhas, { de, ate }) =>
-  (linhas ?? []).filter((r) => {
+// Janela nula = "não existe período anterior" (modo Todos os anos): devolve
+// vazio, e as variações somem em vez de comparar com um passado inventado.
+const noMesMkt = (linhas, janela) =>
+  !janela ? [] : (linhas ?? []).filter((r) => {
     const k = String(r.mes ?? "").slice(0, 7);
-    return k && k >= de && k <= ate;
+    return k && k >= janela.de && k <= janela.ate;
   });
 
 /* Reduz as linhas por campanha ao MESMO formato da vw_marketing_resumo_mensal.
@@ -2271,6 +2283,39 @@ function ChipEmBreve({ Icone, label, nota }) {
         <div style={{ fontSize: 10, color: C.faint, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
         <div style={{ fontFamily: GROTESK, fontSize: 14.5, fontWeight: 700, color: C.dim, letterSpacing: "-.3px" }}>em construção</div>
         {nota && <div style={{ fontSize: 9.5, color: C.dim, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{nota}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* Categorias da vw_marketing_desempenho. A ordem é fixa (as duas que geram
+   lead primeiro), mas a LISTA vem do dado — categoria nova no banco aparece
+   sozinha, sem passar por aqui. */
+const ORDEM_CAT_MKT = ["CIS", "GGB", "LL", "Eventos", "Outros"];
+
+/* Barra segmentada genérica, no mesmo desenho do seletor de período. */
+function Segmentado({ opcoes, valor, onChange, label }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+      {label && (
+        <span style={{ fontSize: 10, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: ".5px" }}>
+          {label}
+        </span>
+      )}
+      <div style={{ display: "flex", gap: 2, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, borderRadius: 10, padding: 3 }}>
+        {opcoes.map((o) => {
+          const ativo = o.key === valor;
+          return (
+            <button key={String(o.key)} onClick={() => onChange(o.key)} aria-pressed={ativo} style={{
+              fontFamily: SANS, fontSize: 11, fontWeight: 700, padding: "5px 9px",
+              borderRadius: 7, border: "none", cursor: "pointer", whiteSpace: "nowrap",
+              background: ativo ? `${C.gold}1F` : "transparent",
+              color: ativo ? C.gold : C.muted,
+            }}>
+              {o.label}
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -2423,19 +2468,20 @@ function TabelaCampanhas({ grupos }) {
     n.has(p) ? n.delete(p) : n.add(p);
     return n;
   });
-  const cols = "minmax(140px,1fr) 92px 96px 58px 84px 62px 78px 52px";
+  const cols = "minmax(130px,1fr) 78px 92px 92px 56px 80px 60px 74px 50px";
   const cel = (extra) => ({ fontFamily: GROTESK, fontSize: 12.5, fontWeight: 700, textAlign: "right", ...extra });
   const vazia = { fontSize: 11.5, textAlign: "right", color: C.dim, fontStyle: "italic" };
 
   return (
     <div style={{ overflowX: "auto" }}>
-      <div style={{ minWidth: 700 }}>
+      <div style={{ minWidth: 780 }}>
         <div style={{
           display: "grid", gridTemplateColumns: cols, gap: 10, padding: "0 20px 9px",
           borderBottom: `1px solid ${C.hair}`, fontSize: 9.5, fontWeight: 800,
           letterSpacing: ".5px", textTransform: "uppercase", color: C.dim,
         }}>
           <span>Campanha</span>
+          <span>Categoria</span>
           <span>Tipo</span>
           <span style={{ textAlign: "right" }}>Investimento</span>
           <span style={{ textAlign: "right" }}>Leads</span>
@@ -2458,11 +2504,12 @@ function TabelaCampanhas({ grupos }) {
                 }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
                   {aberto ? <ChevronUp size={13} style={{ color: C.gold, flexShrink: 0 }} /> : <ChevronDown size={13} style={{ color: C.faint, flexShrink: 0 }} />}
-                  <span style={{ fontSize: 12.5, fontWeight: 700, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={g.produto}>
-                    {g.produto}
+                  <span style={{ fontSize: 12.5, fontWeight: 700, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={g.chave}>
+                    {g.chave}
                   </span>
                   <span style={{ fontSize: 10, color: C.dim, flexShrink: 0 }}>· {g.campanhas.length}</span>
                 </span>
+                <span style={{ fontSize: 11, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={g.categoria}>{g.categoria}</span>
                 <span style={{ fontSize: 11, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{g.tipo}</span>
                 <span style={cel({ color: C.gold })}>{moeda(g.gasto)}</span>
                 <span style={cel({ color: C.text })}>{g.leads ? numero(g.leads) : "—"}</span>
@@ -2479,6 +2526,7 @@ function TabelaCampanhas({ grupos }) {
                   background: "rgba(255,255,255,.012)",
                 }}>
                   <span style={{ fontSize: 11.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.nome}>{c.nome}</span>
+                  <span style={{ fontSize: 10.5, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={c.categoria}>{c.categoria}</span>
                   <span style={{ fontSize: 10.5, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.tipo}</span>
                   <span style={cel({ fontSize: 11.5, color: C.muted })}>{moeda(c.gasto)}</span>
                   <span style={cel({ fontSize: 11.5, color: C.muted })}>{c.leads ? numero(c.leads) : "—"}</span>
@@ -2573,32 +2621,51 @@ function HubMarketing() {
   const canais = useMarketingOrigemVendas();
   const origem = useMarketingOrigem();
   const [produto, setProduto] = useState(null);
+  const [categoria, setCategoria] = useState(null);
+  const [geral, setGeral] = useState(false);
+  const [agruparPor, setAgruparPor] = useState("produto");
 
-  const r = useMemo(() => recorteMkt(per), [per.modo, per.ano, per.mesIdx]);
+  const r = useMemo(() => recorteMkt(per, geral), [per.modo, per.ano, per.mesIdx, geral]);
 
-  // Lista de produtos ordenada pelo que mais consome verba.
+  // Categorias vindas do dado, na ordem de leitura acordada.
+  const categorias = useMemo(() => {
+    const set = new Set();
+    for (const l of desemp.data ?? []) if (l.categoria) set.add(String(l.categoria));
+    const ord = (c) => { const i = ORDEM_CAT_MKT.indexOf(c); return i < 0 ? 99 : i; };
+    return [...set].sort((a, b) => ord(a) - ord(b) || a.localeCompare(b));
+  }, [desemp.data]);
+
+  // Produtos da categoria escolhida, ordenados pelo que mais consome verba.
   const produtos = useMemo(() => {
     const m = new Map();
     for (const l of desemp.data ?? []) {
+      if (categoria != null && l.categoria !== categoria) continue;
       const p = l.produto ?? "—";
       m.set(p, (m.get(p) ?? 0) + Number(l.gasto ?? 0));
     }
     return [...m.entries()].sort((a, b) => b[1] - a[1]).map(([nome, gasto]) => ({ nome, gasto }));
-  }, [desemp.data]);
+  }, [desemp.data, categoria]);
+
+  /* Trocar de categoria pode deixar o produto escolhido fora da lista. Em vez
+     de um efeito que zera o estado, o produto ATIVO é derivado: se não existe
+     na categoria atual, vale "todos". */
+  const prodAtivo = produto != null && produtos.some((p) => p.nome === produto) ? produto : null;
 
   const campanhas = useMemo(
-    () => (desemp.data ?? []).filter((l) => produto == null || l.produto === produto),
-    [desemp.data, produto]
+    () => (desemp.data ?? []).filter((l) =>
+      (categoria == null || l.categoria === categoria) &&
+      (prodAtivo == null || l.produto === prodAtivo)),
+    [desemp.data, categoria, prodAtivo]
   );
 
-  /* Sem produto escolhido a série vem da resumo_mensal (a view oficial dos
-     KPIs); com produto, é reconstruída das campanhas. As duas reconciliam
-     exatamente, então o número não pula ao ligar o filtro. */
+  /* Sem recorte de categoria/produto a série vem da resumo_mensal (a view
+     oficial dos KPIs); com recorte, é reconstruída das campanhas. As duas
+     reconciliam exatamente, então o número não pula ao ligar o filtro. */
   const serie = useMemo(() => {
-    if (produto == null && resumo.data?.length)
+    if (categoria == null && prodAtivo == null && resumo.data?.length)
       return [...resumo.data].sort((a, b) => String(a.mes).localeCompare(String(b.mes)));
     return mensalDeCampanhas(campanhas); // também é o fallback se a resumo falhar
-  }, [produto, resumo.data, campanhas]);
+  }, [categoria, prodAtivo, resumo.data, campanhas]);
 
   const t = useMemo(() => totaisMkt(noMesMkt(serie, r)), [serie, r]);
   const tAnt = useMemo(() => totaisMkt(noMesMkt(serie, r.ant)), [serie, r]);
@@ -2607,62 +2674,79 @@ function HubMarketing() {
   const vLead = varMkt(t.leads, tAnt.leads);
   const vCpl = t.cpl != null && tAnt.cpl != null ? varMkt(t.cpl, tAnt.cpl) : null;
 
-  // Séries dos gráficos: histórico inteiro, como nos outros hubs.
+  // Linhas de campanha já recortadas pelo período — base de tudo que é
+  // "no recorte" (quebras, tabela, contador da barra de filtros).
+  const campanhasPeriodo = useMemo(() => noMesMkt(campanhas, r), [campanhas, r]);
+
+  /* Séries dos gráficos: RESPEITAM o período escolhido. Em "Todos os anos" a
+     janela cobre a base inteira, então o gráfico volta a mostrar tudo — é o
+     mesmo caminho de código, sem exceção. */
   const serieGrafico = useMemo(() => {
     const d = new Date();
     const cm = chaveMes(d.getFullYear(), d.getMonth());
-    return serie.map((x) => ({
+    return noMesMkt(serie, r).map((x) => ({
       mes: x.mes,
       investimento: Number(x.investimento ?? 0),
       leads: Number(x.leads ?? 0),
+      gastoCapt: Number(x.gasto_captacao ?? 0),
+      leadsCapt: Number(x.leads_captacao ?? 0),
       parcial: String(x.mes).slice(0, 7) === cm,
     }));
-  }, [serie]);
+  }, [serie, r]);
 
   // CPL mês a mês: recalculado por mês (gasto de captação ÷ leads de
   // captação), nunca a média das médias. Mês sem lead não vira ponto zero —
   // fica fora da série, porque "R$ 0 por lead" seria mentira.
   const serieCpl = useMemo(
     () => serieGrafico
-      .map((x, i) => ({ ...x, cap: serie[i] }))
-      .filter((x) => Number(x.cap.leads_captacao ?? 0) > 0)
-      .map((x) => ({ mes: x.mes, valor: Number(x.cap.gasto_captacao) / Number(x.cap.leads_captacao), parcial: x.parcial })),
-    [serieGrafico, serie]
+      .filter((x) => x.leadsCapt > 0)
+      .map((x) => ({ mes: x.mes, valor: x.gastoCapt / x.leadsCapt, parcial: x.parcial })),
+    [serieGrafico]
   );
 
-  const porTipo = useMemo(
-    () => agrupar(noMesMkt(campanhas, r), "tipo", "gasto"),
-    [campanhas, r]
-  );
+  const porTipo = useMemo(() => agrupar(campanhasPeriodo, "tipo", "gasto"), [campanhasPeriodo]);
+  const porCategoria = useMemo(() => agrupar(campanhasPeriodo, "categoria", "gasto"), [campanhasPeriodo]);
 
+  /* Tabela agrupada por produto ou por categoria — a chave é a única coisa
+     que muda, então a agregação é a mesma nos dois modos. */
   const grupos = useMemo(() => {
+    const eCapt = (l) => /capta/i.test(l.tipo ?? "");
     const m = new Map();
-    for (const l of noMesMkt(campanhas, r)) {
-      const p = l.produto ?? "—";
-      const g = m.get(p) ?? { produto: p, gasto: 0, leads: 0, gastoCapt: 0, leadsCapt: 0, tipos: new Set(), campanhas: new Map() };
+    for (const l of campanhasPeriodo) {
+      const k = String(l[agruparPor] ?? "—");
+      const g = m.get(k) ?? {
+        chave: k, gasto: 0, leads: 0, gastoCapt: 0, leadsCapt: 0,
+        tipos: new Set(), cats: new Set(), campanhas: new Map(),
+      };
       const gasto = Number(l.gasto ?? 0), leads = Number(l.leads ?? 0);
       g.gasto += gasto; g.leads += leads;
-      if (/capta/i.test(l.tipo ?? "")) { g.gastoCapt += gasto; g.leadsCapt += leads; }
+      if (eCapt(l)) { g.gastoCapt += gasto; g.leadsCapt += leads; }
       if (l.tipo) g.tipos.add(l.tipo);
+      if (l.categoria) g.cats.add(String(l.categoria));
       // Mesma campanha em meses diferentes vira uma linha só no recorte.
       const nome = l.campanha_nome ?? "—";
-      const c = g.campanhas.get(nome) ?? { nome, tipo: l.tipo ?? "—", gasto: 0, leads: 0, gastoCapt: 0, leadsCapt: 0 };
+      const c = g.campanhas.get(nome) ?? {
+        nome, tipo: l.tipo ?? "—", categoria: l.categoria ?? "—",
+        gasto: 0, leads: 0, gastoCapt: 0, leadsCapt: 0,
+      };
       c.gasto += gasto; c.leads += leads;
-      if (/capta/i.test(l.tipo ?? "")) { c.gastoCapt += gasto; c.leadsCapt += leads; }
+      if (eCapt(l)) { c.gastoCapt += gasto; c.leadsCapt += leads; }
       g.campanhas.set(nome, c);
-      m.set(p, g);
+      m.set(k, g);
     }
+    const resumir = (s, sufixo) => (s.size === 1 ? [...s][0] : s.size ? `${s.size} ${sufixo}` : "—");
     return [...m.values()]
       .map((g) => ({
         ...g,
-        tipo: g.tipos.size === 1 ? [...g.tipos][0] : `${g.tipos.size} tipos`,
+        tipo: resumir(g.tipos, "tipos"),
+        categoria: resumir(g.cats, "categorias"),
         cpl: g.leadsCapt ? g.gastoCapt / g.leadsCapt : null,
         campanhas: [...g.campanhas.values()]
           .map((c) => ({ ...c, cpl: c.leadsCapt ? c.gastoCapt / c.leadsCapt : null }))
           .sort((a, b) => b.gasto - a.gasto),
       }))
       .sort((a, b) => b.gasto - a.gasto);
-  }, [campanhas, r]);
+  }, [campanhasPeriodo, agruparPor]);
 
   const canaisPeriodo = useMemo(() => {
     const m = new Map();
@@ -2709,37 +2793,50 @@ function HubMarketing() {
         background: "rgba(255,255,255,.022)", border: `1px solid ${C.cardLine}`,
       }}>
         <Filter size={13} style={{ color: C.faint, flexShrink: 0 }} />
-        <SeletorProduto produtos={produtos} valor={produto} onChange={setProduto} />
+        <Segmentado label="Período" valor={geral} onChange={setGeral}
+          opcoes={[{ key: false, label: "Filtro do topo" }, { key: true, label: "Todos os anos" }]} />
+        {categorias.length > 0 && (
+          <Segmentado label="Categoria" valor={categoria} onChange={setCategoria}
+            opcoes={[{ key: null, label: "Todas" }, ...categorias.map((c) => ({ key: c, label: c }))]} />
+        )}
+        <SeletorProduto produtos={produtos} valor={prodAtivo} onChange={setProduto} />
         <FiltroTravado label="Canal" />
         <FiltroTravado label="Status" />
         <span style={{ marginLeft: "auto", fontSize: 11, color: C.faint }}>
-          {r.rotulo} · {numero(noMesMkt(campanhas, r).length)} campanhas no recorte
+          {r.rotulo} · {numero(campanhasPeriodo.length)} campanhas no recorte
         </span>
       </div>
 
-      {r.diario && nota(
+      {geral && nota(
+        <>Mostrando <b style={{ color: C.muted }}>todos os anos</b> (a base do Meta Ads começa em jan/2024).
+          O filtro de período do topo fica sem efeito neste hub enquanto isso estiver ligado, e as variações
+          somem — não existe período anterior à base inteira.</>
+      )}
+
+      {!geral && r.diario && nota(
         <>O Meta Ads entrega gasto e leads <b style={{ color: C.muted }}>agregados por mês</b> — não existe
           recorte diário nesta fonte. Mostrando <b style={{ color: C.muted }}>{r.rotulo}</b>. Use Ano ou Mês no filtro do topo.</>
       )}
 
-      <SecaoTitulo titulo="Mídia paga" canto={`${r.rotulo} · variação vs ${r.rotuloAnt}`} />
+      <SecaoTitulo titulo="Mídia paga"
+        canto={r.rotuloAnt ? `${r.rotulo} · variação vs ${r.rotuloAnt}` : `${r.rotulo} · base inteira, sem comparativo`} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))", gap: 10, marginBottom: 12 }}>
         <ChipKpi compacto hero Icone={Megaphone} label="Investimento em mídia"
           valor={moeda(t.investimento)}
           delta={rotuloVar(vInv)} up={vInv != null ? vInv >= 0 : undefined}
-          nota={vInv == null ? "sem base anterior" : undefined}
+          nota={vInv == null ? (r.geral ? "base inteira" : "sem base anterior") : undefined}
           sub={`Meta Ads · ${r.rotulo}`} />
         <ChipKpi compacto Icone={Users} label="Leads gerados"
           valor={numero(t.leads)}
           delta={rotuloVar(vLead)} up={vLead != null ? vLead >= 0 : undefined}
-          nota={vLead == null ? "sem base anterior" : undefined}
+          nota={vLead == null ? (r.geral ? "base inteira" : "sem base anterior") : undefined}
           sub={t.mesesSemLead
             ? `${t.mesesSemLead} ${t.mesesSemLead === 1 ? "mês" : "meses"} com verba e sem rastreio de lead`
             : "formulário de lead do Meta"} />
         <ChipKpi compacto Icone={Target} label="Custo por lead"
           valor={t.cpl != null ? reaisCent(t.cpl) : "—"}
           delta={rotuloVar(vCpl)} up={vCpl != null ? vCpl <= 0 : undefined}
-          nota={vCpl == null ? (t.cpl == null ? "sem lead no recorte" : "sem base anterior") : undefined}
+          nota={vCpl == null ? (t.cpl == null ? "sem lead no recorte" : r.geral ? "base inteira" : "sem base anterior") : undefined}
           sub={t.pctCapt != null
             ? `sobre ${moeda(t.gastoCapt)} de captação · ${t.pctCapt.toFixed(0)}% da verba`
             : "sem verba de captação no recorte"} />
@@ -2763,12 +2860,34 @@ function HubMarketing() {
           é medir atribuição</b>, é inventar.</>
       )}
 
-      <SecaoTitulo titulo="Evolução" canto="série inteira · independe do filtro de período" />
+      <SecaoTitulo titulo="Evolução" canto={`${r.rotulo} · segue o recorte escolhido`} />
       <div className="gridCom">
-        <Bloco titulo="Investimento × Leads" canto="mês a mês">
+        <Bloco titulo="Investimento × Leads" canto={`mês a mês · ${r.rotulo}`}>
           {serieGrafico.length < 2
-            ? <Estado vazio vazioTitulo="Histórico insuficiente" vazioDica="São necessários pelo menos dois meses para desenhar a série." />
+            ? <Estado vazio vazioTitulo="Um mês só não faz série"
+                vazioDica={`O recorte "${r.rotulo}" tem ${serieGrafico.length === 1 ? "um mês" : "nenhum mês"} com veiculação. Escolha Ano no filtro do topo, ou "Todos os anos" aqui, para ver a evolução.`} />
             : <InvestimentoXLeads serie={serieGrafico} />}
+        </Bloco>
+        <Bloco titulo="Investimento por categoria" canto={r.rotulo} sem altura={ALTURA_PAINEL}>
+          {porCategoria.length
+            ? <Lista linhas={porCategoria} formatar={moeda} total={t.investimento} />
+            : <div style={{ padding: "16px 20px" }}>
+                <Estado vazio vazioTitulo={tituloVazioFluxo(per.modo)} vazioDica="Nenhuma campanha com gasto neste recorte." />
+              </div>}
+        </Bloco>
+      </div>
+
+      <div className="gridCom">
+        <Bloco titulo="Custo por lead" canto={`mês a mês · menor é melhor · ${r.rotulo}`}>
+          {serieCpl.length < 2
+            ? <Estado vazio vazioTitulo="Sem série de custo por lead"
+                vazioDica={`O custo por lead só existe em mês com campanha de captação e lead registrado — o recorte "${r.rotulo}" tem ${serieCpl.length === 1 ? "só um" : "nenhum"}.`} />
+            : <>
+                <LinhaEvolucao serie={serieCpl} cor={C.up} idGrad="fillCpl" inverso formatar={reaisCent} />
+                <div style={{ fontSize: 10.5, color: C.faint, marginTop: 2 }}>
+                  Meses sem lead de captação ficam fora da série — “R$ 0 por lead” não existe.
+                </div>
+              </>}
         </Bloco>
         <Bloco titulo="Investimento por tipo de campanha" canto={r.rotulo} sem altura={ALTURA_PAINEL}>
           {porTipo.length
@@ -2779,19 +2898,11 @@ function HubMarketing() {
         </Bloco>
       </div>
 
-      <Bloco titulo="Custo por lead" canto="mês a mês · menor é melhor">
-        {serieCpl.length < 2
-          ? <Estado vazio vazioTitulo="Sem série de custo por lead"
-              vazioDica="O custo por lead só existe em meses com campanha de captação e lead registrado — houve menos de dois." />
-          : <>
-              <LinhaEvolucao serie={serieCpl} cor={C.up} idGrad="fillCpl" inverso formatar={reaisCent} />
-              <div style={{ fontSize: 10.5, color: C.faint, marginTop: 2 }}>
-                Meses sem lead de captação ficam fora da série — “R$ 0 por lead” não existe.
-              </div>
-            </>}
-      </Bloco>
-
-      <Bloco titulo="Performance por campanha" canto={`${r.rotulo} · clique no produto para abrir`} sem altura={340}>
+      <Bloco titulo="Performance por campanha" canto={`${r.rotulo} · clique na linha para abrir`} sem altura={340}>
+        <div style={{ padding: "12px 20px 4px" }}>
+          <Segmentado label="Agrupar por" valor={agruparPor} onChange={setAgruparPor}
+            opcoes={[{ key: "produto", label: "Produto" }, { key: "categoria", label: "Categoria" }]} />
+        </div>
         {grupos.length
           ? <TabelaCampanhas grupos={grupos} />
           : <div style={{ padding: "16px 20px" }}>
