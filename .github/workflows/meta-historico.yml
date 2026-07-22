@@ -21,11 +21,20 @@ SB_URL  = os.environ['SUPABASE_URL']
 SB_KEY  = os.environ['SUPABASE_SERVICE_KEY']
 API     = 'https://graph.facebook.com/v25.0'
 
-def get(path, params):
+def get(path, params, tentativa=0):
     params['access_token'] = TOKEN
     url = f"{API}/{path}?{urllib.parse.urlencode(params)}"
-    with urllib.request.urlopen(url, timeout=60) as r:
-        return json.load(r)
+    try:
+        with urllib.request.urlopen(url, timeout=60) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        # 403/429 = rate limit da Meta. Espera progressiva e tenta de novo.
+        if e.code in (403, 429) and tentativa < 5:
+            espera = 60 * (tentativa + 1)
+            print(f"  rate limit ({e.code}) — aguardando {espera}s")
+            time.sleep(espera)
+            return get(path, params, tentativa + 1)
+        raise
 
 def insights_mes(desde, ate):
     """Puxa insights por anúncio no intervalo, paginando."""
@@ -46,7 +55,7 @@ def insights_mes(desde, ate):
         if not nxt or not data.get('data'):
             break
         params['after'] = nxt
-        time.sleep(0.3)
+        time.sleep(1)
     return linhas
 
 def montar(r):
@@ -102,7 +111,7 @@ def main():
             gravar(linhas)
             total += len(linhas)
             print(f"  {ini[:7]}: {len(linhas)} linhas")
-        time.sleep(0.5)
+        time.sleep(3)
     print(f"total: {total} linhas de {a.desde} a {a.ate}")
 
     # registra status
