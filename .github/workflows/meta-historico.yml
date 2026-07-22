@@ -16,6 +16,10 @@ on:
         description: 'Data inicial (AAAA-MM-DD)'
         required: true
         default: '2024-01-01'
+      ate:
+        description: 'Data final (AAAA-MM-DD)'
+        required: true
+        default: '2024-06-30'
 
 jobs:
   historico:
@@ -32,4 +36,4 @@ jobs:
           META_ACCOUNT_ID: ${{ secrets.META_ACCOUNT_ID }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python etl/meta_sync.py --desde ${{ github.event.inputs.desde }}
+        run: python etl/meta_sync.py --desde ${{ github.event.inputs.desde }} --ate ${{ github.event.inputs.ate }}
