@@ -231,7 +231,6 @@ export const useMarketingOrigemVendas = () =>
 export const useMarketingAtribuicao = () =>
   useView("vw_marketing_atribuicao_campanha");
 
-export const useMarketingOrigem   = () => useView("vw_marketing_origem");
 export const usePedagogicoTurmas  = () => useView("vw_pedagogico_turmas");
 export const useEventosDesempenho = () => useView("vw_eventos_desempenho");
 export const useDiretoriaConsol   = () => useView("vw_diretoria_consolidado");

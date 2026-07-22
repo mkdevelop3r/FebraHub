@@ -24,7 +24,7 @@ import {
   useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingAtribuicao,
-  useMarketingOrigem, usePedagogicoTurmas, useEventosDesempenho,
+  usePedagogicoTurmas, useEventosDesempenho,
   useDiretoriaConsol, useIntegracaoStatus,
   porMes, variacao, moeda, numero,
 } from "./lib/dados";
@@ -2673,7 +2673,6 @@ function HubMarketing() {
   const resumo = useMarketingResumoMensal();
   const desemp = useMarketingDesempenho();
   const canais = useMarketingOrigemVendas();
-  const origem = useMarketingOrigem();
   const atrib = useMarketingAtribuicao();
   const [produto, setProduto] = useState(null);
   const [categoria, setCategoria] = useState(null);
@@ -2759,7 +2758,6 @@ function HubMarketing() {
     [serieGrafico]
   );
 
-  const porTipo = useMemo(() => agrupar(campanhasPeriodo, "tipo", "gasto"), [campanhasPeriodo]);
   const porCategoria = useMemo(() => agrupar(campanhasPeriodo, "categoria", "gasto"), [campanhasPeriodo]);
 
   /* Tabela agrupada por produto ou por categoria — a chave é a única coisa
@@ -2842,20 +2840,6 @@ function HubMarketing() {
     }
     return [...m.values()].sort((a, b) => b.valor - a.valor);
   }, [canais.data, r]);
-
-  /* A vw_marketing_origem hoje devolve 42501 (grant pendente) e o esquema
-     dela não é sondável pelo front. Descobrir o campo em vez de chumbar
-     evita quebrar quando o acesso for liberado. `taxa_conversao` é ignorada
-     de propósito: sem atribuição de venda, ela não tem lastro. */
-  const leadsOrigem = useMemo(() => {
-    const linhas = origem.data ?? [];
-    if (!linhas.length) return [];
-    const achar = (cands) => cands.find((c) => c in linhas[0]);
-    const chave = achar(["origem", "campanha", "utm_source", "fonte", "canal"]);
-    const valor = achar(["leads", "total", "qtd", "quantidade"]);
-    if (!chave || !valor) return [];
-    return agrupar(linhas, chave, valor);
-  }, [origem.data]);
 
   const nota = (txt) => (
     <div style={{ display: "flex", gap: 7, marginTop: 10 }}>
@@ -2959,26 +2943,17 @@ function HubMarketing() {
         </Bloco>
       </div>
 
-      <div className="gridCom">
-        <Bloco titulo="Custo por lead" canto={`mês a mês · menor é melhor · ${r.rotulo}`}>
-          {serieCpl.length < 2
-            ? <Estado vazio vazioTitulo="Sem série de custo por lead"
-                vazioDica={`O custo por lead só existe em mês com campanha de captação e lead registrado — o recorte "${r.rotulo}" tem ${serieCpl.length === 1 ? "só um" : "nenhum"}.`} />
-            : <>
-                <LinhaEvolucao serie={serieCpl} cor={C.up} idGrad="fillCpl" inverso formatar={reaisCent} />
-                <div style={{ fontSize: 10.5, color: C.faint, marginTop: 2 }}>
-                  Meses sem lead de captação ficam fora da série — “R$ 0 por lead” não existe.
-                </div>
-              </>}
-        </Bloco>
-        <Bloco titulo="Investimento por tipo de campanha" canto={r.rotulo} sem altura={ALTURA_PAINEL}>
-          {porTipo.length
-            ? <Lista linhas={porTipo} formatar={moeda} total={t.investimento} />
-            : <div style={{ padding: "16px 20px" }}>
-                <Estado vazio vazioTitulo={tituloVazioFluxo(per.modo)} vazioDica="Nenhuma campanha com gasto neste recorte." />
-              </div>}
-        </Bloco>
-      </div>
+      <Bloco titulo="Custo por lead" canto={`mês a mês · menor é melhor · ${r.rotulo}`}>
+        {serieCpl.length < 2
+          ? <Estado vazio vazioTitulo="Sem série de custo por lead"
+              vazioDica={`O custo por lead só existe em mês com campanha de captação e lead registrado — o recorte "${r.rotulo}" tem ${serieCpl.length === 1 ? "só um" : "nenhum"}.`} />
+          : <>
+              <LinhaEvolucao serie={serieCpl} cor={C.up} idGrad="fillCpl" inverso formatar={reaisCent} />
+              <div style={{ fontSize: 10.5, color: C.faint, marginTop: 2 }}>
+                Meses sem lead de captação ficam fora da série — “R$ 0 por lead” não existe.
+              </div>
+            </>}
+      </Bloco>
 
       <Bloco titulo="Performance por campanha" canto={`${r.rotulo} · clique na linha para abrir`} sem altura={340}>
         <div style={{ padding: "12px 20px 4px" }}>
@@ -3028,43 +3003,22 @@ function HubMarketing() {
               </div>}
       </Bloco>
 
-      <div className="gridFin">
-        <Bloco titulo="Origem das vendas por canal" canto="a partir de jun/2026" sem altura={ALTURA_PAINEL}>
-          {canais.error
-            ? <div style={{ padding: "16px 20px" }}><Estado erro={canais.error} /></div>
-            : canaisPeriodo.length
-              ? <>
-                  <CanaisVenda linhas={canaisPeriodo} />
-                  <div style={{ padding: "10px 20px", fontSize: 11, color: C.faint, lineHeight: 1.5 }}>
-                    Cobertura cresce a cada mês; a maioria ainda cai em <b style={{ color: C.muted }}>“Pedido”</b> quando
-                    o vendedor não marca a origem. Não leia como participação de mercado dos canais.
-                  </div>
-                </>
-              : <div style={{ padding: "16px 20px" }}>
-                  <Estado vazio vazioTitulo="Sem venda com canal neste recorte"
-                    vazioDica="A vw_marketing_origem_vendas só cobre de jun/2026 em diante, e a maioria das vendas ainda entra como “Pedido”, sem canal declarado." />
-                </div>}
-        </Bloco>
-
-        <Bloco titulo="Origem dos leads" canto="volume por origem" sem altura={ALTURA_PAINEL}>
-          {origem.error
-            ? <div style={{ padding: "16px 20px" }}>
-                <Estado vazio vazioTitulo="Sem acesso à vw_marketing_origem"
-                  vazioDica={`O banco recusou a leitura (${origem.error.message}). Falta o grant de select para authenticated — o painel liga sozinho assim que a permissão existir.`} />
-              </div>
-            : leadsOrigem.length
-              ? <>
-                  <Lista linhas={leadsOrigem} formatar={numero} top={8} />
-                  <div style={{ padding: "10px 20px", fontSize: 11, color: C.faint, lineHeight: 1.5 }}>
-                    Só volume. O <b style={{ color: C.muted }}>taxa_conversao</b> desta view é ignorado de propósito:
-                    o status do lead no Clint fica sempre em OPEN, então a taxa não tem lastro.
-                  </div>
-                </>
-              : <div style={{ padding: "16px 20px" }}>
-                  <Estado vazio vazioTitulo="Sem origem de lead registrada" vazioDica="A view não retornou linhas." />
-                </div>}
-        </Bloco>
-      </div>
+      <Bloco titulo="Origem das vendas por canal" canto="a partir de jun/2026" sem altura={ALTURA_PAINEL}>
+        {canais.error
+          ? <div style={{ padding: "16px 20px" }}><Estado erro={canais.error} /></div>
+          : canaisPeriodo.length
+            ? <>
+                <CanaisVenda linhas={canaisPeriodo} />
+                <div style={{ padding: "10px 20px", fontSize: 11, color: C.faint, lineHeight: 1.5 }}>
+                  Cobertura cresce a cada mês; a maioria ainda cai em <b style={{ color: C.muted }}>“Pedido”</b> quando
+                  o vendedor não marca a origem. Não leia como participação de mercado dos canais.
+                </div>
+              </>
+            : <div style={{ padding: "16px 20px" }}>
+                <Estado vazio vazioTitulo="Sem venda com canal neste recorte"
+                  vazioDica="A vw_marketing_origem_vendas só cobre de jun/2026 em diante, e a maioria das vendas ainda entra como “Pedido”, sem canal declarado." />
+              </div>}
+      </Bloco>
 
       <Bloco titulo="Funil de conversão" canto="em construção · aguardando integração do pedagógico">
         <FunilConversao leads={t.leads} />
@@ -3446,11 +3400,6 @@ function Shell({ perfil }) {
         @keyframes subir { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
         .girar { animation: girar 1s linear infinite; }
         .subir { animation: subir .4s ease; }
-        /* Cards do Hub: 1 coluna no mobile, 2 em telas médias/grandes.
-           O marginBottom do Bloco faz o ritmo vertical; a grade só cuida
-           das colunas (row-gap 0 pra não somar espaço). */
-        .gridFin { display: grid; grid-template-columns: 1fr; column-gap: 20px; align-items: start; }
-        @media (min-width: 1000px) { .gridFin { grid-template-columns: 1fr 1fr; } }
         /* Painéis do Hub Financeiro (design portado): 1 coluna no mobile,
            proporções do design (5:4:3 e 7:5) em telas largas. */
         .finRow1 { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
