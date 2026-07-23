@@ -23,7 +23,8 @@ import {
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
   useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
-  useLojaProdutosVendidosMes, useLojaEstoque, useLojaVendasMensal,
+  useLojaProdutosVendidosMes, useLojaEstoque,
+  useLojaPerformanceCurso, useLojaMetaRealizado,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingAtribuicao,
   usePedagogicoTurmas, useEventosDesempenho,
@@ -398,9 +399,11 @@ const itemPop = (ativo) => ({
   color: ativo ? C.gold : C.muted,
 });
 
-/* Ano: dropdown com os anos que têm dado. */
+/* Ano: dropdown com os anos que têm dado + "Geral" (todo o histórico).
+   "Geral" é acumulado: zera o recorte de ano. Só o Hub Loja lê a flag hoje;
+   nos demais hubs o recorte vira a base inteira, o que é uma visão válida. */
 function SeletorAno() {
-  const { ano, setAno, anos } = usePeriodo();
+  const { ano, setAno, anos, geral, setGeral } = usePeriodo();
   const [aberto, setAberto] = useState(false);
   return (
     <div style={{ position: "relative" }}>
@@ -409,11 +412,12 @@ function SeletorAno() {
         fontWeight: 700, color: C.gold, background: "rgba(255,255,255,.04)",
         border: `1px solid ${C.cardLine}`, borderRadius: 9, padding: "6px 10px", cursor: "pointer",
       }}>
-        {ano} <ChevronDown size={13} />
+        {geral ? "Geral" : ano} <ChevronDown size={13} />
       </button>
       <Popover aberto={aberto} onFechar={() => setAberto(false)} largura={110}>
+        <button style={itemPop(geral)} onClick={() => { setGeral(true); setAberto(false); }}>Geral</button>
         {anos.map((a) => (
-          <button key={a} style={itemPop(a === ano)} onClick={() => { setAno(a); setAberto(false); }}>{a}</button>
+          <button key={a} style={itemPop(!geral && a === ano)} onClick={() => { setAno(a); setAberto(false); }}>{a}</button>
         ))}
       </Popover>
     </div>
@@ -1054,15 +1058,20 @@ function BarrasCategoria({ reais, orfas, semVinc, cobertura }) {
 /* `formatar` existe porque nem toda série é dinheiro grande: custo por lead
    vive na casa dos centavos e o `moeda` compacto arredondaria R$ 2,01 pra
    R$ 2. Sem o prop, o comportamento é o de antes. */
-function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda, mostrarNota = true, rotularParcial = true }) {
+function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda, mostrarNota = true, rotularParcial = true, meta = null, metaLabel = "meta" }) {
   if (serie.length < 2) return null;
   const W = 720, H = 228, padL = 54, padR = 14, padT = 44, padB = 26;
   const plotW = W - padL - padR, plotH = H - padT - padB, plotBottom = padT + plotH;
 
-  // Domínio só com meses FECHADOS.
+  // `meta` (opcional): array paralelo a `serie` com a linha de referência
+  // (ex.: meta mínima do mês). Entra no domínio do Y pra não sair do gráfico.
+  const temMeta = Array.isArray(meta) && meta.some((v) => v != null);
+  const metaVals = temMeta ? meta.filter((v) => v != null) : [];
+
+  // Domínio: meses FECHADOS + a linha de meta (se houver).
   const fechados = serie.filter((s) => !s.parcial).map((s) => s.valor);
-  const base = fechados.length ? fechados : serie.map((s) => s.valor);
-  let vMax = Math.max(...base), vMin = Math.min(...base);
+  const dom = [...(fechados.length ? fechados : serie.map((s) => s.valor)), ...metaVals];
+  let vMax = Math.max(...dom), vMin = Math.min(...dom);
   if (vMax === vMin) { vMax = vMax || 1; vMin = 0; }
   const folga = (vMax - vMin) * 0.08;
   vMax += folga; vMin = Math.max(0, vMin - folga);
@@ -1079,6 +1088,18 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
   const solido = solidPts.map((p) => p.join(",")).join(" ");
   const tracejado = temParcial ? [pts[parcialIdx - 1], pts[parcialIdx]].map((p) => p.join(",")).join(" ") : null;
   const area = `M ${solidPts.map((p) => p.join(",")).join(" L ")} L ${solidPts.at(-1)[0]},${plotBottom} L ${solidPts[0][0]},${plotBottom} Z`;
+
+  // Linha de meta: segmentos contíguos de meses com meta definida (não liga
+  // por cima de buracos, senão inventaria meta onde não há).
+  const metaSegs = [];
+  if (temMeta) {
+    let run = [];
+    serie.forEach((s, i) => {
+      if (meta[i] != null) run.push([x(i), y(meta[i])]);
+      else { if (run.length > 1) metaSegs.push(run); run = []; }
+    });
+    if (run.length > 1) metaSegs.push(run);
+  }
 
   const yticks = [vMin, (vMin + vMax) / 2, vMax];
   const alvo = 7, passo = Math.max(1, Math.round((n - 1) / (alvo - 1)));
@@ -1109,6 +1130,11 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
           );
         })}
         <path d={area} fill={`url(#${idGrad})`} />
+        {/* Meta por baixo da série real, discreta (âmbar tracejado). */}
+        {metaSegs.map((seg, i) => (
+          <polyline key={"meta" + i} points={seg.map((p) => p.join(",")).join(" ")} fill="none"
+            stroke={C.warn} strokeWidth="1.4" strokeDasharray="4 4" strokeLinecap="round" opacity="0.75" />
+        ))}
         <polyline points={solido} fill="none" stroke={cor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
         {tracejado && <polyline points={tracejado} fill="none" stroke={cor} strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" opacity="0.6" />}
         {/* pontinho nos meses rotulados + o ponto parcial destacado */}
@@ -1147,6 +1173,11 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
           </text>
         ))}
       </svg>
+      {temMeta && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: C.faint, marginTop: 4 }}>
+          <span style={{ width: 16, height: 0, borderTop: `1.4px dashed ${C.warn}`, flexShrink: 0 }} /> {metaLabel}
+        </div>
+      )}
       {mostrarNota && (
         <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6 }}>
           Último ponto = mês em curso (parcial), não comparável a mês fechado. Escala do eixo Y calculada só sobre meses fechados.
@@ -3197,60 +3228,72 @@ function EstoqueNum({ Icone, label, valor, sub, alerta, compacto }) {
 }
 
 
-/* Cupons por mês — barras de CONTAGEM (não reais). O mês corrente é parcial
-   e sai hachurado, como nos outros gráficos mensais do painel. Denso: só as
-   barras mais altas ganham rótulo; o valor de qualquer mês aparece no hover
-   (title nativo do SVG). */
-function BarrasCupons({ serie }) {
-  if (!serie.length) return null;
-  const W = 720, H = 168, padL = 30, padR = 12, padT = 20, padB = 22;
-  const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
-  const max = Math.max(...serie.map((s) => s.cupons), 1);
-  const n = serie.length, slot = plotW / n, bw = Math.min(34, slot * 0.62);
-  const cx = (i) => padL + slot * i + slot / 2;
-  const y = (v) => base - (v / max) * plotH;
-  const alvo = 10, passo = Math.max(1, Math.ceil(n / alvo));
-  // Rótulo só nas barras altas (≥ 70% do pico) — as demais ficam pro hover.
-  const rotular = (v) => v >= max * 0.7;
+/* Nível da meta (planilha da gestora): Máster > Básica > Mínima > Abaixo. */
+const NIVEL_COR = {
+  master: C.gold, básica: C.up, basica: C.up, mínima: C.warn, minima: C.warn, abaixo: C.down,
+};
+const corNivel = (n) => NIVEL_COR[String(n ?? "").toLowerCase().replace(/á/g, "á")] ?? C.muted;
+
+/* Selo de meta no card de receita: % da meta MÍNIMA batida + nível atingido.
+   Metas são mensais — some no "Geral" (acumulado não é comparável). */
+function MetaBadge({ meta }) {
+  if (!meta) return null;
+  const realizado = Number(meta.realizado ?? 0);
+  const minima = Number(meta.minima ?? 0);
+  const pct = minima ? (realizado / minima) * 100 : null;
+  const nivel = meta.nivel_atingido ?? "—";
+  const cor = corNivel(nivel);
   return (
-    <>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
-        <defs>
-          <linearGradient id="gradCupons" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor={C.goldTop} /><stop offset="1" stopColor={C.goldBase} />
-          </linearGradient>
-          <pattern id="hachCupons" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-            <line x1="0" y1="0" x2="0" y2="6" stroke={C.gold} strokeWidth="3" opacity="0.4" />
-          </pattern>
-        </defs>
-        {[0, 0.5, 1].map((f, i) => {
-          const yy = base - f * plotH;
-          return (
-            <g key={i}>
-              <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
-              <text x={padL - 6} y={yy + 3} fontSize="9" textAnchor="end" fill={C.faint} fontFamily={SANS}>{compacto(max * f)}</text>
-            </g>
-          );
-        })}
-        {serie.map((s, i) => (
-          <g key={s.mes}>
-            <title>{`${mesCurto(String(s.mes).slice(0, 7))}: ${numero(s.cupons)} cupons${s.parcial ? " (parcial)" : ""}`}</title>
-            <rect x={cx(i) - bw / 2} y={y(s.cupons)} width={bw} height={Math.max(0, base - y(s.cupons))} rx="3"
-              fill={s.parcial ? "url(#hachCupons)" : "url(#gradCupons)"}
-              stroke={s.parcial ? C.gold : "none"} strokeDasharray={s.parcial ? "4 3" : undefined} strokeWidth={s.parcial ? 1 : 0} />
-            {rotular(s.cupons) && (
-              <text x={cx(i)} y={y(s.cupons) - 5} fontSize="9.5" fontWeight="700" textAnchor="middle" fill={s.parcial ? C.faint : C.bright} fontFamily={GROTESK}>{numero(s.cupons)}</text>
-            )}
-          </g>
-        ))}
-        {serie.map((s, i) => (i % passo === 0 || i === n - 1) && (
-          <text key={s.mes} x={cx(i)} y={H - 7} fontSize="9" textAnchor="middle" fill={C.faint} fontFamily={SANS}>{mesCurto(String(s.mes).slice(0, 7))}</text>
-        ))}
-      </svg>
-      <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
-        Contagem de cupons, não receita. Passe o mouse para o valor de cada mês. Último hachurado = <b style={{ color: C.muted }}>parcial</b>.
-      </div>
-    </>
+    <div style={{
+      display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+      background: "rgba(255,255,255,.03)", border: `1px solid ${cor}44`,
+      borderRadius: 11, padding: "9px 13px",
+    }}>
+      <Target size={15} style={{ color: cor, flexShrink: 0 }} />
+      <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>
+        Meta mínima{meta.mes_nome ? ` · ${meta.mes_nome}` : ""}
+      </span>
+      {pct != null && (
+        <span style={{ fontFamily: GROTESK, fontSize: 17, fontWeight: 700, letterSpacing: "-.4px", color: cor }}>
+          {pct.toFixed(0)}%
+        </span>
+      )}
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.faint }}>
+        nível
+        <b style={{
+          color: cor === C.muted ? C.muted : "#100c04", background: cor, fontWeight: 800,
+          padding: "1px 8px", borderRadius: 6, fontSize: 11,
+        }}>{nivel}</b>
+      </span>
+    </div>
+  );
+}
+
+/* Performance por curso — quanto a loja vende DURANTE cada curso (planilha da
+   gestora). Duas ordens bem diferentes e ambas importam: por faturamento
+   total e por valor por aluno. Barra pela métrica escolhida; mostra alunos. */
+function PerformanceCurso({ linhas, modo, formatarValor }) {
+  const max = Math.max(...linhas.map((l) => l[modo]), 1);
+  return (
+    <div>
+      {linhas.map((l, i) => (
+        <div key={l.curso} style={{ padding: "8px 20px", borderBottom: `1px solid ${C.hair}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 5 }}>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+              <span style={{ fontFamily: GROTESK, fontSize: 11, fontWeight: 700, color: i === 0 ? C.gold : C.faint, width: 15, flexShrink: 0 }}>{i + 1}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.curso}>{l.curso}</span>
+            </span>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 8, flexShrink: 0 }}>
+              <span style={{ fontSize: 10.5, color: C.faint }}>{numero(l.alunos)} alunos</span>
+              <span style={{ fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, color: i === 0 ? C.gold : C.text }}>{formatarValor(l[modo])}</span>
+            </span>
+          </div>
+          <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+            <div style={{ width: `${(l[modo] / max) * 100}%`, height: "100%", borderRadius: 3, background: i === 0 ? `linear-gradient(90deg, ${C.goldTop}, ${C.goldBase})` : `linear-gradient(90deg, ${C.goldBase}, ${C.gold})` }} />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -3260,20 +3303,22 @@ function BarrasCupons({ serie }) {
    que a loja passou a usar o Omie (mar/2025). "Vendas" conta cupons, não
    lançamentos: são pagos na hora, então não há "recebido" nem "a receber". */
 function HubLoja() {
-  const { inicio, fim, modo, ano } = usePeriodo();
+  const { inicio, fim, modo, ano, geral } = usePeriodo();
   const kpis = useLojaKpis();
   const recMensal = useLojaReceitaMensal();
   const prodVend = useLojaProdutosVendidosMes();
   const estoque = useLojaEstoque();
-  const vendasMensal = useLojaVendasMensal();
+  const perfCurso = useLojaPerformanceCurso();
+  const metaReal = useLojaMetaRealizado();
+  const [cursoModo, setCursoModo] = useState("faturamento");
 
   /* Receita/vendas/ticket vêm da vw_loja_kpis, uma linha por ANO (a
-     vw_loja_receita_periodo deixou de trazer valor por venda). `ano` já é
-     inteiro na view corrigida — casa direto com o ano do filtro. Como o
-     grão é anual, a nota mostra o ano, não o rótulo fino do período. */
+     vw_loja_receita_periodo deixou de trazer valor por venda). No "Geral" a
+     linha do acumulado é a de `ano = null`; senão, casa pelo ano do filtro
+     (já inteiro na view corrigida). Grão anual — a nota mostra o ano. */
   const kpiAno = useMemo(
-    () => (kpis.data ?? []).find((r) => Number(r.ano) === Number(ano)),
-    [kpis.data, ano]
+    () => (kpis.data ?? []).find((r) => (geral ? r.ano == null : Number(r.ano) === Number(ano))),
+    [kpis.data, ano, geral]
   );
   const receita = Number(kpiAno?.receita ?? 0);
   const vendas = Number(kpiAno?.vendas ?? 0);
@@ -3282,6 +3327,51 @@ function HubLoja() {
 
   const evol = useMemo(() => serieMensal(recMensal.data, "receita"), [recMensal.data]);
   const evolSemFonte = !!recMensal.error || evol.length < 2;
+
+  // Recorte por ANO-MÊS (dado mensal). Em "Geral", inicio/fim já são a base
+  // inteira, então o mesmo filtro cobre todo o histórico.
+  const noRecorte = (linhas, campo) => {
+    const de = String(inicio).slice(0, 7), ate = String(fim).slice(0, 7);
+    return (linhas ?? []).filter((r) => {
+      const ym = String(r[campo] ?? "").slice(0, 7);
+      return ym && ym >= de && ym <= ate;
+    });
+  };
+
+  /* ---- Meta x realizado (mensal) ---- */
+  // Selo: a meta do mês mais recente dentro do recorte. Some no "Geral".
+  const metaMes = useMemo(() => {
+    if (geral) return null;
+    return noRecorte(metaReal.data, "mes_ref")
+      .sort((a, b) => String(a.mes_ref).localeCompare(String(b.mes_ref)))
+      .at(-1) ?? null;
+  }, [metaReal.data, inicio, fim, geral]);
+
+  // Linha tracejada de meta mínima, alinhada índice a índice com `evol`.
+  const metaLinha = useMemo(() => {
+    const porMes = new Map((metaReal.data ?? []).map((r) => [String(r.mes_ref).slice(0, 7), Number(r.minima ?? 0)]));
+    const arr = evol.map((p) => { const v = porMes.get(String(p.mes).slice(0, 7)); return v ? v : null; });
+    return arr.some((v) => v != null) ? arr : null;
+  }, [metaReal.data, evol]);
+
+  /* ---- Performance por curso ---- */
+  // Agrega por curso no recorte; por_aluno é recalculado (média de médias mente).
+  const cursos = useMemo(() => {
+    const m = new Map();
+    for (const r of noRecorte(perfCurso.data, "mes_ref")) {
+      const k = r.curso ?? "—";
+      const a = m.get(k) ?? { curso: k, alunos: 0, faturamento: 0, turmas: 0 };
+      a.alunos += Number(r.alunos ?? 0);
+      a.faturamento += Number(r.faturamento ?? 0);
+      a.turmas += Number(r.turmas ?? 0);
+      m.set(k, a);
+    }
+    return [...m.values()]
+      .map((c) => ({ ...c, por_aluno: c.alunos ? c.faturamento / c.alunos : 0 }))
+      .filter((c) => c.faturamento > 0)
+      .sort((a, b) => b[cursoModo] - a[cursoModo])
+      .slice(0, 8);
+  }, [perfCurso.data, inicio, fim, cursoModo]);
 
   /* ---- Operacional (Omie) ---- */
   // Mais vendidos: soma os meses do recorte e ranqueia (top 5 por faturamento).
@@ -3305,17 +3395,6 @@ function HubLoja() {
     };
   }, [estoque.data]);
 
-  // Cupons por mês: série inteira (não recorta), mês corrente parcial.
-  const serieCupons = useMemo(() => {
-    const d = new Date();
-    const cm = chaveMes(d.getFullYear(), d.getMonth());
-    return [...(vendasMensal.data ?? [])]
-      .map((r) => ({ mes: r.mes, cupons: Number(r.cupons ?? 0) }))
-      .filter((r) => r.mes)
-      .sort((a, b) => String(a.mes).localeCompare(String(b.mes)))
-      .map((r) => ({ ...r, parcial: String(r.mes).slice(0, 7) === cm }));
-  }, [vendasMensal.data]);
-
   return (
     <>
       <style>{`
@@ -3325,35 +3404,39 @@ function HubLoja() {
         .lojaMid, .lojaBot { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
         @media (min-width: 1000px) {
           .lojaMid { grid-template-columns: 7fr 5fr; }       /* receita · estoque */
-          .lojaBot { grid-template-columns: 3fr 4fr; }       /* mais vendidos · volume */
+          .lojaBot { grid-template-columns: 3fr 4fr; }       /* mais vendidos · performance curso */
         }
       `}</style>
 
       {/* ---- Faixa 1: KPIs da loja (Omie PDV) — grão anual (vw_loja_kpis) ---- */}
       <div className="lojaKpis" style={{ marginBottom: 8 }}>
-        <ChipKpi compacto hero Icone={Wallet} label="Receita da loja" valor={moeda(receita)} nota={`ano ${ano}`} />
-        <ChipKpi compacto Icone={Receipt} label="Vendas · cupons" valor={numero(vendas)} nota={`ano ${ano}`} />
-        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={`ano ${ano}`} />
+        <ChipKpi compacto hero Icone={Wallet} label="Receita da loja" valor={moeda(receita)} nota={geral ? "todo o histórico" : `ano ${ano}`} />
+        <ChipKpi compacto Icone={Receipt} label="Vendas · cupons" valor={numero(vendas)} nota={geral ? "todo o histórico" : `ano ${ano}`} />
+        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={geral ? "todo o histórico" : `ano ${ano}`} />
         <ChipKpi compacto Icone={Package} label="Valor em estoque" valor={moeda(est.custo)} nota="a custo · posição atual" />
       </div>
 
-      {/* Fonte única: Omie PDV. "Vendas" conta cupons, não lançamentos. */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 8px", alignItems: "center", fontSize: 10.5, color: C.faint, marginBottom: 14 }}>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 7, height: 7, borderRadius: 2, background: C.gold, flexShrink: 0 }} />
-          <b style={{ color: C.muted, fontWeight: 700 }}>Omie PDV</b> · cupom fiscal do balcão, desde mar/2025.
-        </span>
-        <span style={{ color: C.dim }}>“Vendas” conta cupons (pagos na hora), não lançamentos de caixa.</span>
+      {/* Fonte única + selo de meta (some no "Geral": meta é mensal). */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center", marginBottom: 14 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 8px", alignItems: "center", fontSize: 10.5, color: C.faint }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 2, background: C.gold, flexShrink: 0 }} />
+            <b style={{ color: C.muted, fontWeight: 700 }}>Omie PDV</b> · cupom fiscal do balcão, desde mar/2025.
+          </span>
+          <span style={{ color: C.dim }}>“Vendas” conta cupons (pagos na hora), não lançamentos de caixa.</span>
+        </div>
+        {!geral && <MetaBadge meta={metaMes} />}
       </div>
 
-      {/* ---- Faixa 2: receita mensal · estoque (Formas de pagamento removido) ---- */}
+      {/* ---- Faixa 2: receita mensal (com linha de meta) · estoque ---- */}
       <div className="lojaMid" style={{ marginBottom: 12 }}>
         <Bloco titulo="Receita mensal da loja" canto="Omie PDV · R$/mês" altura={214}>
           {recMensal.isLoading
             ? <Estado carregando />
             : evolSemFonte
               ? <Estado vazio />
-              : <LinhaEvolucao serie={evol} idGrad="fillLoja" mostrarNota={false} rotularParcial={false} />}
+              : <LinhaEvolucao serie={evol} idGrad="fillLoja" mostrarNota={false} rotularParcial={false}
+                  meta={metaLinha} metaLabel="meta mínima do mês" />}
         </Bloco>
         <Bloco titulo="Estoque" canto="Omie · posição atual">
           <Estado carregando={estoque.isLoading} erro={estoque.error} vazio={!est.total}>
@@ -3368,10 +3451,9 @@ function HubLoja() {
         </Bloco>
       </div>
 
-      {/* ---- Faixa 3: mais vendidos · volume (tudo Omie). "Repor com
-           urgência" saiu: sem produto abaixo do mínimo, não há reposição. */}
+      {/* ---- Faixa 3: mais vendidos · performance por curso ---- */}
       <div className="lojaBot" style={{ marginBottom: 10 }}>
-        <Bloco titulo="Mais vendidos" canto="Omie · top 5" sem altura={214}>
+        <Bloco titulo="Mais vendidos" canto="Omie · top 5" sem altura={252}>
           <Estado
             carregando={prodVend.isLoading}
             erro={prodVend.error}
@@ -3382,15 +3464,25 @@ function HubLoja() {
             <ProdutosVendidos linhas={maisVendidos} />
           </Estado>
         </Bloco>
-        <Bloco titulo="Volume de vendas" canto="Omie · cupons/mês">
+        <Bloco titulo="Performance por curso"
+          canto={cursoModo === "faturamento" ? "por faturamento" : "por valor/aluno"}
+          sem altura={252}>
+          <div style={{ padding: "12px 20px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <Segmentado valor={cursoModo} onChange={setCursoModo}
+              opcoes={[{ key: "faturamento", label: "Faturamento" }, { key: "por_aluno", label: "Por aluno" }]} />
+          </div>
           <Estado
-            carregando={vendasMensal.isLoading}
-            erro={vendasMensal.error}
-            vazio={serieCupons.length < 2}
-            vazioTitulo="Histórico insuficiente"
-            vazioDica="São necessários pelo menos dois meses para o gráfico."
+            carregando={perfCurso.isLoading}
+            erro={perfCurso.error}
+            vazio={!cursos.length}
+            vazioTitulo={tituloVazioFluxo(modo)}
+            vazioDica="Sem curso com faturamento neste recorte. Troque o período no topo."
           >
-            <BarrasCupons serie={serieCupons} />
+            <PerformanceCurso linhas={cursos} modo={cursoModo} formatarValor={moeda} />
+            <div style={{ padding: "10px 20px 4px", fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+              Quanto a loja vende durante cada curso · planilha da gestora.
+              <b style={{ color: C.muted }}> Não somar com a receita total</b> — é o mesmo dinheiro, visto por curso.
+            </div>
           </Estado>
         </Bloco>
       </div>
@@ -3526,6 +3618,7 @@ function Shell({ perfil }) {
   const [modo, setModo] = useState("ano");
   const [ano, setAno] = useState(() => new Date().getFullYear());
   const [mesIdx, setMesIdx] = useState(() => new Date().getMonth());
+  const [geral, setGeral] = useState(false); // "Geral": todo o histórico, sem recorte de ano
   const { minMes, maxMes, anos } = useRangeDatas();
 
   // Categoria: só recorta o Hub Comercial. A lista vem do dado; sem opção
@@ -3537,10 +3630,17 @@ function Shell({ perfil }) {
 
   const ctxPeriodo = useMemo(() => {
     const dentro = (k) => k >= minMes && k <= maxMes;
-    const aplicar = (a, m) => { setAno(a); setMesIdx(m); };
+    // Qualquer navegação por ano/mês desliga o "Geral" (são exclusivos).
+    const aplicar = (a, m) => { setAno(a); setMesIdx(m); setGeral(false); };
+    const h = new Date();
+    const hoje = iso(new Date(h.getFullYear(), h.getMonth(), h.getDate()));
+    // "Geral" = todo o histórico: do primeiro mês com dado até hoje.
+    const base = geral
+      ? { inicio: `${minMes}-01`, fim: hoje, rotulo: "Geral" }
+      : intervaloDe({ modo, ano, mesIdx });
     return {
-      modo, ano, mesIdx, anos, minMes, maxMes,
-      setAno,
+      modo, ano, mesIdx, anos, minMes, maxMes, geral, setGeral,
+      setAno: (a) => { setAno(a); setGeral(false); },
       setMesAno: aplicar,
       // Navega mês a mês virando o ano (Jan ‹ vira Dez do ano anterior).
       irMes: (delta) => {
@@ -3550,7 +3650,9 @@ function Shell({ perfil }) {
         if (dentro(chaveMes(a, m))) aplicar(a, m);
       },
       // Ao entrar no modo Mês, puxa a âncora pra dentro dos limites do dado.
+      // Trocar de modo desliga o "Geral" (que é um conceito do modo Ano).
       escolherModo: (k) => {
+        if (k !== "ano") setGeral(false);
         if (k === "mes") {
           const atual = chaveMes(ano, mesIdx);
           const alvo = atual > maxMes ? maxMes : atual < minMes ? minMes : null;
@@ -3558,9 +3660,9 @@ function Shell({ perfil }) {
         }
         setModo(k);
       },
-      ...intervaloDe({ modo, ano, mesIdx }),
+      ...base,
     };
-  }, [modo, ano, mesIdx, anos, minMes, maxMes]);
+  }, [modo, ano, mesIdx, anos, minMes, maxMes, geral]);
 
   const visiveis = admin ? HUBS : HUBS.filter((h) => setores.includes(h.key));
   const hub = HUBS.find((h) => h.key === tela);

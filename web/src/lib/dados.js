@@ -201,6 +201,19 @@ export const useLojaEstoque = () =>
 export const useLojaVendasMensal = () =>
   useView("vw_loja_vendas_mensal", { ordem: ["mes"] });
 
+/* Performance por curso: quanto a loja vende DURANTE cada curso (planilha da
+   gestora). Uma linha por (curso, mês). É o mesmo dinheiro da receita, visto
+   por curso — NÃO somar com o total. O front recorta por mes_ref e reagrega
+   por curso. `por_aluno` é recalculado após a soma (média de médias mente). */
+export const useLojaPerformanceCurso = () =>
+  useView("vw_loja_performance_curso", { ordem: ["mes_ref", "curso"] });
+
+/* Meta x realizado, uma linha por MÊS (mes_ref). Alimenta o selo de nível
+   no card de receita e a linha tracejada de meta mínima no gráfico mensal.
+   Metas são mensais — não têm acumulado comparável, então somem no "Geral". */
+export const useLojaMetaRealizado = () =>
+  useView("vw_loja_meta_realizado", { ordem: ["mes_ref"] });
+
 /* Views com dimensão de data. Entregam as linhas com `data`; o front
    recorta pelo período e reagrega. Só métricas de FLUXO — estado
    (inadimplência, horizontes) é snapshot e não tem recorte. */
