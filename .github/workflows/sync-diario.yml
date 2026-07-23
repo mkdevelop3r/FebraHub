@@ -7,16 +7,18 @@
 #   - horário não exato (atrasos de 5 a 30 min são normais)
 #   - 60 dias sem commit desativam o agendamento; um commit reativa
 #
-# Secrets:
-#   SUPABASE_URL, SUPABASE_SERVICE_KEY  (service_role, NÃO a anon)
+# Secrets necessários:
+#   SUPABASE_URL, SUPABASE_SERVICE_KEY   (service_role, NÃO a anon)
 #   CISPAY_TOKEN, CISPAY_BASE_URL
 #   SYMPLA_TOKEN, SYMPLA_BASE_URL
 #   CONTAAZUL_CLIENT_ID, CONTAAZUL_CLIENT_SECRET
 #   META_TOKEN, META_ACCOUNT_ID
+#   OMIE_APP_KEY, OMIE_APP_SECRET
+#   GOOGLE_SERVICE_ACCOUNT               (JSON inteiro da conta de serviço)
 #
-# ATENÇÃO: o META_TOKEN expira a cada 60 dias. Quando expirar, o passo
-# do Meta falha e o investimento para de atualizar. Renovar o token e
-# recadastrar o secret. (definir responsável — ver pauta do marketing)
+# ATENÇÃO: o META_TOKEN expira a cada 60 dias. Quando expirar, o passo do
+# Meta falha e o investimento para de atualizar. Renovar e recadastrar o
+# secret. (definir responsável — ver pauta do marketing)
 
 name: Sync diário
 
@@ -134,12 +136,9 @@ jobs:
             -H "Prefer: resolution=merge-duplicates" \
             -d "{\"fonte\":\"meta_ads\",\"nome_exibicao\":\"Meta Ads\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.meta.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 
-# ---------------- BLOCO OMIE — adicionar ao sync-diario.yml ----------------
-# Cole estes dois passos antes do fim do job 'sync', e cadastre os secrets
-# OMIE_APP_KEY e OMIE_APP_SECRET.
-# O Omie puxa só o último ano por padrão; para o sync diário, o incremental
-# do dia já basta e é rápido.
-
+      # ---------------- Loja (Omie) ----------------
+      # Só o ano corrente; 2025 é histórico fechado e não muda mais.
+      # O Omie limita o intervalo de busca — nunca pedir vários anos de uma vez.
       - name: Loja (Omie)
         id: omie
         env:
@@ -159,3 +158,34 @@ jobs:
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=merge-duplicates" \
             -d "{\"fonte\":\"omie\",\"nome_exibicao\":\"Loja (Omie)\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.omie.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+
+      # ---------------- Planilha da Loja (Google Sheets) ----------------
+      # Faturamento por curso + metas mensais. A gestora preenche à mão,
+      # então vale sincronizar todo dia para pegar o que ela lançou.
+      - name: Planilha da Loja — faturamento por curso
+        id: sheets_fat
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+        run: python etl/sheets_sync.py
+        continue-on-error: true
+
+      - name: Planilha da Loja — metas
+        id: sheets_metas
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+        run: python etl/sheets_metas_sync.py
+        continue-on-error: true
+
+      - name: Status — Planilha da Loja
+        if: always()
+        run: |
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"sheets\",\"nome_exibicao\":\"Planilha da Loja\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.sheets_fat.outcome == 'success' && steps.sheets_metas.outcome == 'success' && 'ok' || 'parcial' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
