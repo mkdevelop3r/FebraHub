@@ -186,6 +186,21 @@ export const useLojaKpis = () => useView("vw_loja_kpis");
 export const useLojaReceita = () => useView("vw_loja_receita");
 export const useLojaReceitaMensal = () => useView("vw_loja_receita_mensal");
 
+/* Operacional da loja — vem do Omie (PDV), não da Conta Azul. Mede coisa
+   diferente da parte financeira: aqui é cupom fiscal e saldo de prateleira,
+   lá é lançamento de caixa. NÃO somar nem comparar os totais das duas
+   fontes — a Conta Azul agrupa vendas em lançamentos, então divergir é o
+   esperado. */
+// Uma linha por (produto, mês): o front soma os meses do período e ranqueia.
+export const useLojaProdutosVendidosMes = () =>
+  useView("vw_loja_produtos_vendidos_mes", { ordem: ["mes", "produto_id"] });
+// Posição de estoque (snapshot do dia): 443 produtos, ignora o período.
+export const useLojaEstoque = () =>
+  useView("vw_loja_estoque", { ordem: ["produto_id"] });
+// Cupons por mês (contagem, não receita) — série inteira, mar/2025 em diante.
+export const useLojaVendasMensal = () =>
+  useView("vw_loja_vendas_mensal", { ordem: ["mes"] });
+
 /* Views com dimensão de data. Entregam as linhas com `data`; o front
    recorta pelo período e reagrega. Só métricas de FLUXO — estado
    (inadimplência, horizontes) é snapshot e não tem recorte. */

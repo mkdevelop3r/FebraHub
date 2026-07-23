@@ -7,6 +7,7 @@ import {
   Clock, Receipt, Hourglass, ChevronLeft, ChevronRight, ChevronDown,
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
   Users, Target, Construction, Percent, Filter, ChevronUp,
+  Boxes, PackageX,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
@@ -22,6 +23,7 @@ import {
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
   useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
+  useLojaProdutosVendidosMes, useLojaEstoque, useLojaVendasMensal,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingAtribuicao,
   usePedagogicoTurmas, useEventosDesempenho,
@@ -3090,14 +3092,173 @@ function HubEventos() {
   );
 }
 
+/* ============ LOJA · OPERACIONAL (Omie PDV) ============
+   Fonte diferente da parte financeira (Conta Azul): aqui é cupom fiscal e
+   prateleira, lá é lançamento de caixa. Os totais não batem entre si de
+   propósito — a Conta Azul agrupa vendas em lançamentos. Nada é somado nem
+   comparado entre as duas fontes; a seção inteira é rotulada como visão de
+   PRODUTO, não de receita, pra deixar isso explícito na tela. */
+
+// Uma linha por (produto, mês). Soma os meses do recorte e devolve o top-N
+// por faturamento. Mês entra se seu ANO-MÊS cruza o período (dado mensal não
+// tem dia; recortar por dia zeraria a loja em quase todo filtro).
+const produtosNoPeriodo = (linhas, inicio, fim, topN = 10) => {
+  const de = String(inicio).slice(0, 7), ate = String(fim).slice(0, 7);
+  const m = new Map();
+  for (const l of linhas ?? []) {
+    const ym = String(l.mes ?? "").slice(0, 7);
+    if (!ym || ym < de || ym > ate) continue;
+    const k = l.produto_id ?? l.produto ?? "—";
+    const a = m.get(k) ?? { produto: l.produto ?? "—", quantidade: 0, faturamento: 0 };
+    a.quantidade += Number(l.quantidade ?? 0);
+    a.faturamento += Number(l.faturamento ?? 0);
+    m.set(k, a);
+  }
+  return [...m.values()].sort((a, b) => b.faturamento - a.faturamento).slice(0, topN);
+};
+
+/* Ranking de produtos: nome + quantidade + faturamento, barra pelo valor.
+   Duas grandezas por linha, então não cabe no `Lista` genérico. */
+function ProdutosVendidos({ linhas }) {
+  const max = Math.max(...linhas.map((l) => l.faturamento), 1);
+  return (
+    <div>
+      {linhas.map((l, i) => (
+        <div key={l.produto} style={{ padding: "9px 20px", borderBottom: `1px solid ${C.hair}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+              <span style={{ fontFamily: GROTESK, fontSize: 11, fontWeight: 700, color: i === 0 ? C.gold : C.faint, flexShrink: 0, width: 16 }}>{i + 1}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.produto}>{l.produto}</span>
+            </span>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 8, flexShrink: 0 }}>
+              <span style={{ fontSize: 11, color: C.faint }}>{numero(l.quantidade)} un</span>
+              <span style={{ fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, color: i === 0 ? C.gold : C.text }}>{moeda(l.faturamento)}</span>
+            </span>
+          </div>
+          <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+            <div style={{ width: `${(l.faturamento / max) * 100}%`, height: "100%", borderRadius: 3, background: i === 0 ? `linear-gradient(90deg, ${C.goldTop}, ${C.goldBase})` : `linear-gradient(90deg, ${C.goldBase}, ${C.gold})` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Número grande de estoque. `alerta` pinta em vermelho — usado no "abaixo do
+   mínimo", que hoje é mais da metade do catálogo. */
+function EstoqueNum({ Icone, label, valor, sub, alerta }) {
+  const cor = alerta ? C.down : C.gold;
+  return (
+    <div style={{
+      flex: 1, minWidth: 150, background: "rgba(255,255,255,.03)",
+      border: `1px solid ${alerta ? `${C.down}44` : C.cardLine}`, borderRadius: 13, padding: "16px 18px",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{
+          width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+          background: alerta ? `${C.down}1e` : `${C.gold}18`, color: cor,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <Icone size={15} />
+        </span>
+        <span style={{ fontSize: 11.5, color: C.muted, fontWeight: 600 }}>{label}</span>
+      </div>
+      <div style={{ fontFamily: GROTESK, fontSize: 30, fontWeight: 700, letterSpacing: "-1px", color: cor, lineHeight: 1 }}>{valor}</div>
+      {sub && <div style={{ fontSize: 11, color: alerta ? C.down : C.faint, marginTop: 6, lineHeight: 1.45 }}>{sub}</div>}
+    </div>
+  );
+}
+
+/* Lista de compras: produto, saldo atual, mínimo. Rolável. Ordenada do mais
+   abaixo do mínimo pro menos — o topo é o que falta primeiro. */
+function ReporEstoque({ linhas }) {
+  return (
+    <div>
+      <div style={{
+        display: "grid", gridTemplateColumns: "1fr 64px 64px", gap: 10, padding: "0 20px 9px",
+        borderBottom: `1px solid ${C.hair}`, fontSize: 9.5, fontWeight: 800,
+        letterSpacing: ".5px", textTransform: "uppercase", color: C.dim,
+      }}>
+        <span>Produto</span>
+        <span style={{ textAlign: "right" }}>Saldo</span>
+        <span style={{ textAlign: "right" }}>Mínimo</span>
+      </div>
+      {linhas.map((l) => (
+        <div key={l.produto_id} style={{
+          display: "grid", gridTemplateColumns: "1fr 64px 64px", gap: 10, alignItems: "center",
+          padding: "8px 20px", borderBottom: `1px solid ${C.hair}`,
+        }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.descricao}>{l.descricao}</span>
+          <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, textAlign: "right", color: l.saldo <= 0 ? C.down : C.warn }}>{numero(l.saldo)}</span>
+          <span style={{ fontFamily: GROTESK, fontSize: 12.5, fontWeight: 700, textAlign: "right", color: C.faint }}>{numero(l.estoque_minimo)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Cupons por mês — barras de CONTAGEM (não reais). O mês corrente é parcial
+   e sai hachurado, como nos outros gráficos mensais do painel. */
+function BarrasCupons({ serie }) {
+  if (!serie.length) return null;
+  const W = 720, H = 210, padL = 34, padR = 12, padT = 26, padB = 24;
+  const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
+  const max = Math.max(...serie.map((s) => s.cupons), 1);
+  const n = serie.length, slot = plotW / n, bw = Math.min(34, slot * 0.62);
+  const cx = (i) => padL + slot * i + slot / 2;
+  const y = (v) => base - (v / max) * plotH;
+  const alvo = 12, passo = Math.max(1, Math.ceil(n / alvo));
+  return (
+    <>
+      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+        <defs>
+          <linearGradient id="gradCupons" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stopColor={C.goldTop} /><stop offset="1" stopColor={C.goldBase} />
+          </linearGradient>
+          <pattern id="hachCupons" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <line x1="0" y1="0" x2="0" y2="6" stroke={C.gold} strokeWidth="3" opacity="0.4" />
+          </pattern>
+        </defs>
+        {[0, 0.5, 1].map((f, i) => {
+          const yy = base - f * plotH;
+          return (
+            <g key={i}>
+              <line x1={padL} y1={yy} x2={W - padR} y2={yy} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
+              <text x={padL - 6} y={yy + 3} fontSize="9" textAnchor="end" fill={C.faint} fontFamily={SANS}>{compacto(max * f)}</text>
+            </g>
+          );
+        })}
+        {serie.map((s, i) => (
+          <g key={s.mes}>
+            <rect x={cx(i) - bw / 2} y={y(s.cupons)} width={bw} height={Math.max(0, base - y(s.cupons))} rx="3"
+              fill={s.parcial ? "url(#hachCupons)" : "url(#gradCupons)"}
+              stroke={s.parcial ? C.gold : "none"} strokeDasharray={s.parcial ? "4 3" : undefined} strokeWidth={s.parcial ? 1 : 0} />
+            <text x={cx(i)} y={y(s.cupons) - 6} fontSize="9.5" fontWeight="700" textAnchor="middle" fill={s.parcial ? C.faint : C.bright} fontFamily={GROTESK}>{numero(s.cupons)}</text>
+          </g>
+        ))}
+        {serie.map((s, i) => (i % passo === 0 || i === n - 1) && (
+          <text key={s.mes} x={cx(i)} y={H - 7} fontSize="9.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>{mesCurto(String(s.mes).slice(0, 7))}</text>
+        ))}
+      </svg>
+      <div style={{ fontSize: 10.5, color: C.faint, marginTop: 4 }}>
+        Contagem de cupons fiscais, não receita. Último mês hachurado = <b style={{ color: C.muted }}>parcial</b> (em andamento).
+      </div>
+    </>
+  );
+}
+
 /* Hub Loja. Receita da loja é da LOJA — nunca entra num total junto com
-   curso (unidades diferentes). Produto e estoque só existem no Omie, que
-   ainda não está integrado: vazio honesto em vez de número inventado. */
+   curso (unidades diferentes). A parte FINANCEIRA vem da Conta Azul; a
+   OPERACIONAL (produtos, estoque, cupons) vem do Omie. As duas medem coisas
+   diferentes e não se somam — ver a seção "Produtos e estoque". */
 function HubLoja() {
   const { inicio, fim, rotulo, modo } = usePeriodo();
   const kpis = useLojaKpis();
   const rec = useLojaReceitaPeriodo();
   const recMensal = useLojaReceitaMensal();
+  const prodVend = useLojaProdutosVendidosMes();
+  const estoque = useLojaEstoque();
+  const vendasMensal = useLojaVendasMensal();
 
   const k = kpis.data?.[0];
   const mv = (x) => (x == null ? "—" : moeda(Number(x)));
@@ -3128,6 +3289,45 @@ function HubLoja() {
 
   const evol = useMemo(() => serieMensal(recMensal.data, "receita"), [recMensal.data]);
   const evolSemFonte = !!recMensal.error || evol.length < 2;
+
+  /* ---- Operacional (Omie) ---- */
+  // Mais vendidos: soma os meses do recorte e ranqueia (top 10 por faturamento).
+  const maisVendidos = useMemo(
+    () => produtosNoPeriodo(prodVend.data, inicio, fim, 10),
+    [prodVend.data, inicio, fim]
+  );
+
+  // Estoque é POSIÇÃO (snapshot do dia) — ignora o período de propósito.
+  const est = useMemo(() => {
+    const linhas = estoque.data ?? [];
+    return {
+      total: linhas.length,
+      valor: linhas.reduce((s, x) => s + Number(x.valor_em_estoque ?? 0), 0),
+      abaixo: linhas.filter((x) => x.abaixo_minimo).length,
+    };
+  }, [estoque.data]);
+  const pctAbaixo = est.total ? Math.round((est.abaixo / est.total) * 100) : 0;
+
+  // Lista de compras: só os abaixo do mínimo, do mais crítico (menor saldo)
+  // pro menos. Saldo negativo = vendeu mais do que tinha lançado.
+  const repor = useMemo(
+    () => (estoque.data ?? [])
+      .filter((x) => x.abaixo_minimo)
+      .map((x) => ({ produto_id: x.produto_id, descricao: x.descricao, saldo: Number(x.saldo ?? 0), estoque_minimo: Number(x.estoque_minimo ?? 0) }))
+      .sort((a, b) => (a.saldo - a.estoque_minimo) - (b.saldo - b.estoque_minimo)),
+    [estoque.data]
+  );
+
+  // Cupons por mês: série inteira (não recorta), mês corrente parcial.
+  const serieCupons = useMemo(() => {
+    const d = new Date();
+    const cm = chaveMes(d.getFullYear(), d.getMonth());
+    return [...(vendasMensal.data ?? [])]
+      .map((r) => ({ mes: r.mes, cupons: Number(r.cupons ?? 0) }))
+      .filter((r) => r.mes)
+      .sort((a, b) => String(a.mes).localeCompare(String(b.mes)))
+      .map((r) => ({ ...r, parcial: String(r.mes).slice(0, 7) === cm }));
+  }, [vendasMensal.data]);
 
   return (
     <>
@@ -3160,17 +3360,73 @@ function HubLoja() {
         </Bloco>
       </div>
 
-      <Bloco titulo="Produtos e estoque" canto="aguardando integração">
-        <div style={{ display: "flex", gap: 10, padding: "6px 0" }}>
-          <Package size={16} style={{ color: C.faint, marginTop: 2, flexShrink: 0 }} />
-          <div>
-            <div style={{ fontSize: 13, color: C.muted, fontWeight: 700 }}>Aguardando integração Omie</div>
-            <div style={{ fontSize: 11.5, color: C.faint, marginTop: 4, lineHeight: 1.55, maxWidth: 620 }}>
-              A loja já entrega venda, receita e recebimento. <b style={{ color: C.muted }}>Produto vendido e saldo de estoque só existem no Omie</b> — enquanto a integração não vier, esses números não aparecem aqui em vez de serem estimados.
-            </div>
-          </div>
+      {/* ---- Seção operacional (Omie PDV) ---- */}
+      <div style={{ margin: "30px 0 16px" }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: C.bright }}>Produtos e estoque</h2>
+        <div style={{ fontSize: 12.5, color: C.faint, marginTop: 4, display: "flex", alignItems: "center", gap: 7 }}>
+          <Package size={13} style={{ color: C.gold }} />
+          O que sai da prateleira · Omie PDV
         </div>
+        <div style={{ fontSize: 11.5, color: C.dim, marginTop: 8, lineHeight: 1.55, maxWidth: 760 }}>
+          Visão de <b style={{ color: C.muted }}>produto e estoque</b>, não de receita. Vem do Omie (cada cupom fiscal
+          do balcão); a parte financeira acima vem da Conta Azul (lançamentos de caixa). Os totais das duas
+          <b style={{ color: C.muted }}> não batem entre si</b> — a Conta Azul agrupa vendas em lançamentos —, então
+          não são somados nem comparados.
+        </div>
+      </div>
+
+      <div className="finRow2" style={{ marginBottom: 16 }}>
+        <Bloco titulo="Mais vendidos" canto={`${rotulo} · top 10 por faturamento`} sem altura={ALTURA_PAINEL + 60}>
+          <Estado
+            carregando={prodVend.isLoading}
+            erro={prodVend.error}
+            vazio={!maisVendidos.length}
+            vazioTitulo={tituloVazioFluxo(modo)}
+            vazioDica="O Omie entrega venda de produto por mês. Períodos curtos (Hoje, 7 dias) podem não cruzar nenhum mês fechado — troque para Mês ou Ano no topo."
+          >
+            <ProdutosVendidos linhas={maisVendidos} />
+          </Estado>
+        </Bloco>
+
+        <div>
+          <Bloco titulo="Estoque" canto="posição atual">
+            <Estado carregando={estoque.isLoading} erro={estoque.error} vazio={!est.total}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+                <EstoqueNum Icone={Boxes} label="Produtos" valor={numero(est.total)} sub="no catálogo" />
+                <EstoqueNum Icone={Package} label="Valor em estoque" valor={moeda(est.valor)} sub="parado na prateleira" />
+                <EstoqueNum Icone={PackageX} label="Abaixo do mínimo" valor={numero(est.abaixo)} alerta
+                  sub={`${pctAbaixo}% do catálogo — mais da metade`} />
+              </div>
+            </Estado>
+          </Bloco>
+
+          <Bloco titulo="Repor com urgência" canto="lista de compras · mais crítico primeiro" sem altura={ALTURA_PAINEL - 40}>
+            <Estado
+              carregando={estoque.isLoading}
+              erro={estoque.error}
+              vazio={!repor.length}
+              vazioTitulo="Nada abaixo do mínimo"
+              vazioDica="Nenhum produto precisa de reposição agora."
+            >
+              <ReporEstoque linhas={repor} />
+            </Estado>
+          </Bloco>
+        </div>
+      </div>
+
+      <Bloco titulo="Cupons por mês" canto="volume de vendas · contagem de cupons">
+        <Estado
+          carregando={vendasMensal.isLoading}
+          erro={vendasMensal.error}
+          vazio={serieCupons.length < 2}
+          vazioTitulo="Histórico insuficiente"
+          vazioDica="São necessários pelo menos dois meses para o gráfico."
+        >
+          <BarrasCupons serie={serieCupons} />
+        </Estado>
       </Bloco>
+
+      <RodapeIntegracoes fontes={["omie"]} />
     </>
   );
 }
