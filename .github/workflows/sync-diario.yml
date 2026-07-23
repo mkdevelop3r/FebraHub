@@ -16,6 +16,11 @@
 #   OMIE_APP_KEY, OMIE_APP_SECRET
 #   GOOGLE_SERVICE_ACCOUNT               (JSON inteiro da conta de serviço)
 #
+# PLANILHAS: todas precisam estar compartilhadas com o client_email da
+# conta de serviço, senão o passo falha com 403. São 4:
+#   faturamento/metas da loja · cursos premium · aluguel 2025 · aluguel 2026
+#   · Sentido de Brincar
+#
 # ATENÇÃO: o META_TOKEN expira a cada 60 dias. Quando expirar, o passo do
 # Meta falha e o investimento para de atualizar. Renovar e recadastrar o
 # secret. (definir responsável — ver pauta do marketing)
@@ -180,6 +185,18 @@ jobs:
         run: python etl/sheets_metas_sync.py
         continue-on-error: true
 
+      # Receitas extras da loja: cursos premium, aluguel de sala e
+      # Sentido de Brincar. São 3 planilhas diferentes — todas precisam
+      # estar compartilhadas com o e-mail da conta de serviço.
+      - name: Planilha da Loja — receitas extras
+        id: sheets_extras
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+        run: python etl/sheets_extras_sync.py
+        continue-on-error: true
+
       - name: Status — Planilha da Loja
         if: always()
         run: |
@@ -188,4 +205,4 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=merge-duplicates" \
-            -d "{\"fonte\":\"sheets\",\"nome_exibicao\":\"Planilha da Loja\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.sheets_fat.outcome == 'success' && steps.sheets_metas.outcome == 'success' && 'ok' || 'parcial' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+            -d "{\"fonte\":\"sheets\",\"nome_exibicao\":\"Planilha da Loja\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.sheets_fat.outcome == 'success' && steps.sheets_metas.outcome == 'success' && steps.sheets_extras.outcome == 'success' && 'ok' || 'parcial' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
