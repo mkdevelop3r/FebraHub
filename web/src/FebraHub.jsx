@@ -22,7 +22,7 @@ import {
   useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
-  useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
+  useLojaReceitaMensal, useLojaReceitaPeriodo,
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaVendasMensal,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingAtribuicao,
@@ -3094,12 +3094,10 @@ function HubEventos() {
   );
 }
 
-/* ============ LOJA · OPERACIONAL (Omie PDV) ============
-   Fonte diferente da parte financeira (Conta Azul): aqui é cupom fiscal e
-   prateleira, lá é lançamento de caixa. Os totais não batem entre si de
-   propósito — a Conta Azul agrupa vendas em lançamentos. Nada é somado nem
-   comparado entre as duas fontes; a seção inteira é rotulada como visão de
-   PRODUTO, não de receita, pra deixar isso explícito na tela. */
+/* ============ LOJA · PRODUTOS E ESTOQUE (Omie PDV) ============
+   Mesma fonte da parte financeira agora: tudo no Hub Loja vem do Omie
+   (cupom fiscal do PDV). Estes helpers cuidam da visão de PRODUTO — ranking
+   de vendidos e posição de estoque —, complementar à de receita/formas. */
 
 // Uma linha por (produto, mês). Soma os meses do recorte e devolve o top-N
 // por faturamento. Mês entra se seu ANO-MÊS cruza o período (dado mensal não
@@ -3195,33 +3193,6 @@ function EstoqueNum({ Icone, label, valor, sub, alerta, compacto }) {
   );
 }
 
-/* Lista de compras: produto, saldo atual, mínimo. Rolável. Ordenada do mais
-   abaixo do mínimo pro menos — o topo é o que falta primeiro. */
-function ReporEstoque({ linhas }) {
-  return (
-    <div>
-      <div style={{
-        display: "grid", gridTemplateColumns: "1fr 64px 64px", gap: 10, padding: "0 20px 9px",
-        borderBottom: `1px solid ${C.hair}`, fontSize: 9.5, fontWeight: 800,
-        letterSpacing: ".5px", textTransform: "uppercase", color: C.dim,
-      }}>
-        <span>Produto</span>
-        <span style={{ textAlign: "right" }}>Saldo</span>
-        <span style={{ textAlign: "right" }}>Mínimo</span>
-      </div>
-      {linhas.map((l) => (
-        <div key={l.produto_id} style={{
-          display: "grid", gridTemplateColumns: "1fr 64px 64px", gap: 10, alignItems: "center",
-          padding: "8px 20px", borderBottom: `1px solid ${C.hair}`,
-        }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.descricao}>{l.descricao}</span>
-          <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, textAlign: "right", color: l.saldo <= 0 ? C.down : C.warn }}>{numero(l.saldo)}</span>
-          <span style={{ fontFamily: GROTESK, fontSize: 12.5, fontWeight: 700, textAlign: "right", color: C.faint }}>{numero(l.estoque_minimo)}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
 
 /* Cupons por mês — barras de CONTAGEM (não reais). O mês corrente é parcial
    e sai hachurado, como nos outros gráficos mensais do painel. Denso: só as
@@ -3281,30 +3252,27 @@ function BarrasCupons({ serie }) {
 }
 
 /* Hub Loja. Receita da loja é da LOJA — nunca entra num total junto com
-   curso (unidades diferentes). A parte FINANCEIRA vem da Conta Azul; a
-   OPERACIONAL (produtos, estoque, cupons) vem do Omie. As duas medem coisas
-   diferentes e não se somam — ver a seção "Produtos e estoque". */
+   curso (unidades diferentes). Fonte ÚNICA agora: Omie (cupom fiscal do
+   PDV) — receita, formas, produtos, estoque e cupons vêm todos de lá desde
+   que a loja passou a usar o Omie (mar/2025). "Vendas" conta cupons, não
+   lançamentos: são pagos na hora, então não há "recebido" nem "a receber". */
 function HubLoja() {
   const { inicio, fim, rotulo, modo } = usePeriodo();
-  const kpis = useLojaKpis();
   const rec = useLojaReceitaPeriodo();
   const recMensal = useLojaReceitaMensal();
   const prodVend = useLojaProdutosVendidosMes();
   const estoque = useLojaEstoque();
   const vendasMensal = useLojaVendasMensal();
 
-  const k = kpis.data?.[0];
-  const mv = (x) => (x == null ? "—" : moeda(Number(x)));
-
-  // Fluxo da loja recortado pelo período e reagregado por forma.
+  // Fluxo da loja recortado pelo período e reagregado por forma. Cupom é pago
+  // na hora — receita e vendas (contagem de cupons) bastam; nada de recebido.
   const recorte = useMemo(() => noPeriodo(rec.data, { inicio, fim }), [rec.data, inicio, fim]);
   const somaPeriodo = useMemo(() => recorte.reduce(
     (a, r) => ({
       receita: a.receita + Number(r.receita ?? 0),
-      recebido: a.recebido + Number(r.recebido ?? 0),
       vendas: a.vendas + Number(r.vendas ?? 0),
     }),
-    { receita: 0, recebido: 0, vendas: 0 }
+    { receita: 0, vendas: 0 }
   ), [recorte]);
   const ticket = somaPeriodo.vendas ? somaPeriodo.receita / somaPeriodo.vendas : null;
 
@@ -3330,25 +3298,19 @@ function HubLoja() {
   );
 
   // Estoque é POSIÇÃO (snapshot do dia) — ignora o período de propósito.
+  // Imobilizado a CUSTO (o capital de fato parado); o preço de venda
+  // superestima. `sem_movimento` = zerado e sem mínimo cadastrado: limpeza
+  // de cadastro, não reposição — a view já não marca nada como abaixo do
+  // mínimo (a comparação 0 < 0 era falso positivo).
   const est = useMemo(() => {
     const linhas = estoque.data ?? [];
     return {
       total: linhas.length,
-      valor: linhas.reduce((s, x) => s + Number(x.valor_em_estoque ?? 0), 0),
-      abaixo: linhas.filter((x) => x.abaixo_minimo).length,
+      custo: linhas.reduce((s, x) => s + Number(x.valor_custo ?? 0), 0),
+      venda: linhas.reduce((s, x) => s + Number(x.valor_venda ?? 0), 0),
+      semMov: linhas.filter((x) => x.sem_movimento).length,
     };
   }, [estoque.data]);
-  const pctAbaixo = est.total ? Math.round((est.abaixo / est.total) * 100) : 0;
-
-  // Lista de compras: só os abaixo do mínimo, do mais crítico (menor saldo)
-  // pro menos. Saldo negativo = vendeu mais do que tinha lançado.
-  const repor = useMemo(
-    () => (estoque.data ?? [])
-      .filter((x) => x.abaixo_minimo)
-      .map((x) => ({ produto_id: x.produto_id, descricao: x.descricao, saldo: Number(x.saldo ?? 0), estoque_minimo: Number(x.estoque_minimo ?? 0) }))
-      .sort((a, b) => (a.saldo - a.estoque_minimo) - (b.saldo - b.estoque_minimo)),
-    [estoque.data]
-  );
 
   // Cupons por mês: série inteira (não recorta), mês corrente parcial.
   const serieCupons = useMemo(() => {
@@ -3366,52 +3328,47 @@ function HubLoja() {
       <style>{`
         /* Uma tela só, sem rolagem vertical (alvo 1080p). Três faixas. */
         .lojaKpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
-        @media (min-width: 720px)  { .lojaKpis { grid-template-columns: repeat(5, 1fr); } }
+        @media (min-width: 720px)  { .lojaKpis { grid-template-columns: repeat(4, 1fr); } }
         .lojaMid, .lojaBot { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
         @media (min-width: 1000px) {
           .lojaMid { grid-template-columns: 5fr 4fr 3fr; }   /* receita · formas · estoque */
-          .lojaBot { grid-template-columns: 1fr 1fr 1fr; }   /* vendidos · repor · volume */
+          .lojaBot { grid-template-columns: 3fr 4fr; }       /* mais vendidos · volume */
         }
       `}</style>
 
-      {/* ---- Faixa 1: KPIs financeiros (Conta Azul) ---- */}
+      {/* ---- Faixa 1: KPIs da loja (Omie PDV) ---- */}
       <div className="lojaKpis" style={{ marginBottom: 8 }}>
         <ChipKpi compacto hero Icone={Wallet} label="Receita da loja" valor={moeda(somaPeriodo.receita)} nota={rotulo} />
-        <ChipKpi compacto Icone={ShoppingBag} label="Vendas" valor={numero(somaPeriodo.vendas)} nota={rotulo} />
-        <ChipKpi compacto Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
-        <ChipKpi compacto Icone={TrendingUp} label="Recebido" valor={moeda(somaPeriodo.recebido)} nota={rotulo} />
-        <ChipKpi compacto Icone={AlertTriangle} label="A receber vencido" valor={mv(k?.a_receber_vencido)} nota="posição atual" />
+        <ChipKpi compacto Icone={Receipt} label="Vendas · cupons" valor={numero(somaPeriodo.vendas)} nota={rotulo} />
+        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
+        <ChipKpi compacto Icone={Package} label="Valor em estoque" valor={moeda(est.custo)} nota="a custo · posição atual" />
       </div>
 
-      {/* Legenda das duas fontes: medem coisas diferentes e não se somam. */}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", alignItems: "center", fontSize: 10.5, color: C.faint, marginBottom: 14 }}>
+      {/* Fonte única: Omie PDV. "Vendas" conta cupons, não lançamentos. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 8px", alignItems: "center", fontSize: 10.5, color: C.faint, marginBottom: 14 }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
           <span style={{ width: 7, height: 7, borderRadius: 2, background: C.gold, flexShrink: 0 }} />
-          <b style={{ color: C.muted, fontWeight: 700 }}>Conta Azul</b> · financeiro (lançamentos de caixa)
+          <b style={{ color: C.muted, fontWeight: 700 }}>Omie PDV</b> · cupom fiscal do balcão, desde mar/2025.
         </span>
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <span style={{ width: 7, height: 7, borderRadius: 2, background: C.faint, flexShrink: 0 }} />
-          <b style={{ color: C.muted, fontWeight: 700 }}>Omie PDV</b> · produtos e estoque (cupom fiscal)
-        </span>
-        <span style={{ color: C.dim }}>— medem coisas diferentes; os totais não se somam nem se comparam.</span>
+        <span style={{ color: C.dim }}>“Vendas” conta cupons (pagos na hora), não lançamentos de caixa.</span>
       </div>
 
       {/* ---- Faixa 2: receita mensal · formas · estoque ---- */}
       <div className="lojaMid" style={{ marginBottom: 12 }}>
-        <Bloco titulo="Receita mensal da loja" canto="Conta Azul · R$/mês" altura={214}>
+        <Bloco titulo="Receita mensal da loja" canto="Omie PDV · R$/mês" altura={214}>
           {recMensal.isLoading
             ? <Estado carregando />
             : evolSemFonte
               ? <Estado vazio />
               : <LinhaEvolucao serie={evol} idGrad="fillLoja" mostrarNota={false} />}
         </Bloco>
-        <Bloco titulo="Formas de pagamento" canto={`Conta Azul · ${rotulo}`} altura={214}>
+        <Bloco titulo="Formas de pagamento" canto={`Omie PDV · ${rotulo}`} altura={214}>
           <Estado
             carregando={rec.isLoading}
             erro={rec.error}
             vazio={!formas.length}
             vazioTitulo={tituloVazioFluxo(modo)}
-            vazioDica={`Nenhuma venda com data entre ${inicio} e ${fim}. É normal: a loja vende em lote — troque o período no topo.`}
+            vazioDica={`Nenhum cupom com data entre ${inicio} e ${fim}. Troque o período no topo.`}
           >
             <Donut segmentos={formas} size={108} centroSize={16} centroValor={formas[0] ? abreviaForma(formas[0].rotulo) : "—"} centroLabel={`${leaderPct}% líder`} centroCor={C.gold} />
           </Estado>
@@ -3420,15 +3377,17 @@ function HubLoja() {
           <Estado carregando={estoque.isLoading} erro={estoque.error} vazio={!est.total}>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <EstoqueNum compacto Icone={Boxes} label="Produtos" valor={numero(est.total)} sub="no catálogo" />
-              <EstoqueNum compacto Icone={Package} label="Valor em estoque" valor={moeda(est.valor)} sub="parado na prateleira" />
-              <EstoqueNum compacto Icone={PackageX} label="Abaixo do mínimo" valor={numero(est.abaixo)} alerta
-                sub={`${pctAbaixo}% do catálogo`} />
+              <EstoqueNum compacto Icone={Package} label="Imobilizado · a custo" valor={moeda(est.custo)}
+                sub={`${moeda(est.venda)} a preço de venda`} />
+              <EstoqueNum compacto Icone={PackageX} label="Sem movimento" valor={numero(est.semMov)}
+                sub="zerados, sem mínimo · revisar cadastro" />
             </div>
           </Estado>
         </Bloco>
       </div>
 
-      {/* ---- Faixa 3: mais vendidos · repor · volume (tudo Omie) ---- */}
+      {/* ---- Faixa 3: mais vendidos · volume (tudo Omie). "Repor com
+           urgência" saiu: sem produto abaixo do mínimo, não há reposição. */}
       <div className="lojaBot" style={{ marginBottom: 10 }}>
         <Bloco titulo="Mais vendidos" canto="Omie · top 5" sem altura={214}>
           <Estado
@@ -3439,17 +3398,6 @@ function HubLoja() {
             vazioDica="O Omie entrega venda por mês. Período curto (Hoje, 7 dias) pode não cruzar mês fechado — use Mês ou Ano no topo."
           >
             <ProdutosVendidos linhas={maisVendidos} />
-          </Estado>
-        </Bloco>
-        <Bloco titulo="Repor com urgência" canto="Omie · crítico primeiro" sem altura={214}>
-          <Estado
-            carregando={estoque.isLoading}
-            erro={estoque.error}
-            vazio={!repor.length}
-            vazioTitulo="Nada abaixo do mínimo"
-            vazioDica="Nenhum produto precisa de reposição agora."
-          >
-            <ReporEstoque linhas={repor} />
           </Estado>
         </Bloco>
         <Bloco titulo="Volume de vendas" canto="Omie · cupons/mês">
