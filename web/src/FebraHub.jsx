@@ -22,7 +22,7 @@ import {
   useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
-  useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
+  useLojaKpis, useLojaKpisMes, useLojaReceitaMensal, useLojaReceitaPeriodo,
   useLojaProdutosVendidosMes, useLojaEstoque,
   useLojaPerformanceCurso, useLojaMetaRealizado,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
@@ -3235,14 +3235,19 @@ const NIVEL_COR = {
 const corNivel = (n) => NIVEL_COR[String(n ?? "").toLowerCase().replace(/á/g, "á")] ?? C.muted;
 
 /* Selo de meta no card de receita: % da meta MÍNIMA batida + nível atingido.
-   Metas são mensais — some no "Geral" (acumulado não é comparável). */
+   Lê a linha da vw_loja_kpis_mes (receita / meta_minima / nivel_atingido /
+   em_curso). Mês EM CURSO não classifica: o mês não acabou, comparar com a
+   meta cheia seria injusto — mostra o % com o rótulo "em curso" no lugar do
+   nível. Metas são mensais — o selo some no "Geral". */
 function MetaBadge({ meta }) {
   if (!meta) return null;
-  const realizado = Number(meta.realizado ?? 0);
-  const minima = Number(meta.minima ?? 0);
+  const realizado = Number(meta.receita ?? 0);
+  const minima = Number(meta.meta_minima ?? 0);
   const pct = minima ? (realizado / minima) * 100 : null;
+  const emCurso = !!meta.em_curso;
   const nivel = meta.nivel_atingido ?? "—";
-  const cor = corNivel(nivel);
+  const mesNome = meta.mes_num != null ? MESES[Number(meta.mes_num) - 1] : null;
+  const cor = emCurso ? C.muted : corNivel(nivel);
   return (
     <div style={{
       display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
@@ -3251,20 +3256,27 @@ function MetaBadge({ meta }) {
     }}>
       <Target size={15} style={{ color: cor, flexShrink: 0 }} />
       <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>
-        Meta mínima{meta.mes_nome ? ` · ${meta.mes_nome}` : ""}
+        Meta mínima{mesNome ? ` · ${mesNome}` : ""}
       </span>
       {pct != null && (
         <span style={{ fontFamily: GROTESK, fontSize: 17, fontWeight: 700, letterSpacing: "-.4px", color: cor }}>
           {pct.toFixed(0)}%
         </span>
       )}
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.faint }}>
-        nível
-        <b style={{
-          color: cor === C.muted ? C.muted : "#100c04", background: cor, fontWeight: 800,
-          padding: "1px 8px", borderRadius: 6, fontSize: 11,
-        }}>{nivel}</b>
-      </span>
+      {emCurso ? (
+        <span style={{
+          fontSize: 11, fontWeight: 800, color: C.muted, background: "rgba(255,255,255,.06)",
+          border: `1px solid ${C.cardLine}`, padding: "1px 8px", borderRadius: 6,
+        }}>em curso</span>
+      ) : (
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, color: C.faint }}>
+          nível
+          <b style={{
+            color: cor === C.muted ? C.muted : "#100c04", background: cor, fontWeight: 800,
+            padding: "1px 8px", borderRadius: 6, fontSize: 11,
+          }}>{nivel}</b>
+        </span>
+      )}
     </div>
   );
 }
@@ -3303,8 +3315,9 @@ function PerformanceCurso({ linhas, modo, formatarValor }) {
    que a loja passou a usar o Omie (mar/2025). "Vendas" conta cupons, não
    lançamentos: são pagos na hora, então não há "recebido" nem "a receber". */
 function HubLoja() {
-  const { inicio, fim, modo, ano, geral } = usePeriodo();
+  const { inicio, fim, modo, ano, mesIdx, rotulo, geral } = usePeriodo();
   const kpis = useLojaKpis();
+  const kpisMes = useLojaKpisMes();
   const recMensal = useLojaReceitaMensal();
   const prodVend = useLojaProdutosVendidosMes();
   const estoque = useLojaEstoque();
@@ -3312,18 +3325,27 @@ function HubLoja() {
   const metaReal = useLojaMetaRealizado();
   const [cursoModo, setCursoModo] = useState("faturamento");
 
-  /* Receita/vendas/ticket vêm da vw_loja_kpis, uma linha por ANO (a
-     vw_loja_receita_periodo deixou de trazer valor por venda). No "Geral" a
-     linha do acumulado é a de `ano = null`; senão, casa pelo ano do filtro
-     (já inteiro na view corrigida). Grão anual — a nota mostra o ano. */
+  /* Receita/vendas/ticket: por MÊS vêm da vw_loja_kpis_mes (grão mensal);
+     por ANO ou "Geral", da vw_loja_kpis (a linha `ano = null` é o acumulado).
+     Sem a fonte mensal, o filtro de mês mostrava o ano inteiro — a pessoa via
+     "meta abaixo" sem saber a receita do mês. */
+  const porMes = modo === "mes" && !geral;
+  const kpiMes = useMemo(
+    () => (porMes
+      ? (kpisMes.data ?? []).find((r) => Number(r.ano) === Number(ano) && Number(r.mes_num) === mesIdx + 1)
+      : null) ?? null,
+    [kpisMes.data, ano, mesIdx, porMes]
+  );
   const kpiAno = useMemo(
-    () => (kpis.data ?? []).find((r) => (geral ? r.ano == null : Number(r.ano) === Number(ano))),
+    () => (kpis.data ?? []).find((r) => (geral ? r.ano == null : Number(r.ano) === Number(ano))) ?? null,
     [kpis.data, ano, geral]
   );
-  const receita = Number(kpiAno?.receita ?? 0);
-  const vendas = Number(kpiAno?.vendas ?? 0);
-  const ticket = kpiAno?.ticket_medio != null ? Number(kpiAno.ticket_medio)
+  const fonte = porMes ? kpiMes : kpiAno;
+  const receita = Number(fonte?.receita ?? 0);
+  const vendas = Number(fonte?.vendas ?? 0);
+  const ticket = fonte?.ticket_medio != null ? Number(fonte.ticket_medio)
     : (vendas ? receita / vendas : null);
+  const notaKpi = geral ? "todo o histórico" : porMes ? rotulo : `ano ${ano}`;
 
   const evol = useMemo(() => serieMensal(recMensal.data, "receita"), [recMensal.data]);
   const evolSemFonte = !!recMensal.error || evol.length < 2;
@@ -3338,19 +3360,23 @@ function HubLoja() {
     });
   };
 
-  /* ---- Meta x realizado (mensal) ---- */
-  // Selo: a meta do mês mais recente dentro do recorte. Some no "Geral".
+  /* ---- Meta x realizado ---- */
+  // Selo: vem da vw_loja_kpis_mes porque ela traz `em_curso`. Em modo mês, o
+  // mês escolhido; em ano, o mês mais recente do ano. Some no "Geral".
   const metaMes = useMemo(() => {
     if (geral) return null;
-    return noRecorte(metaReal.data, "mes_ref")
-      .sort((a, b) => String(a.mes_ref).localeCompare(String(b.mes_ref)))
-      .at(-1) ?? null;
-  }, [metaReal.data, inicio, fim, geral]);
+    const doAno = (kpisMes.data ?? []).filter((r) => Number(r.ano) === Number(ano));
+    if (!doAno.length) return null;
+    return porMes
+      ? doAno.find((r) => Number(r.mes_num) === mesIdx + 1) ?? null
+      : [...doAno].sort((a, b) => Number(a.mes_num) - Number(b.mes_num)).at(-1) ?? null;
+  }, [kpisMes.data, ano, mesIdx, porMes, geral]);
 
-  // Linha tracejada de meta mínima, alinhada índice a índice com `evol`.
+  // Linha tracejada de meta mínima no gráfico, alinhada índice a índice com
+  // `evol`. Fonte dedicada (vw_loja_meta_realizado), cobre toda a série.
   const metaLinha = useMemo(() => {
-    const porMes = new Map((metaReal.data ?? []).map((r) => [String(r.mes_ref).slice(0, 7), Number(r.minima ?? 0)]));
-    const arr = evol.map((p) => { const v = porMes.get(String(p.mes).slice(0, 7)); return v ? v : null; });
+    const map = new Map((metaReal.data ?? []).map((r) => [String(r.mes_ref).slice(0, 7), Number(r.minima ?? 0)]));
+    const arr = evol.map((p) => { const v = map.get(String(p.mes).slice(0, 7)); return v ? v : null; });
     return arr.some((v) => v != null) ? arr : null;
   }, [metaReal.data, evol]);
 
@@ -3410,9 +3436,9 @@ function HubLoja() {
 
       {/* ---- Faixa 1: KPIs da loja (Omie PDV) — grão anual (vw_loja_kpis) ---- */}
       <div className="lojaKpis" style={{ marginBottom: 8 }}>
-        <ChipKpi compacto hero Icone={Wallet} label="Receita da loja" valor={moeda(receita)} nota={geral ? "todo o histórico" : `ano ${ano}`} />
-        <ChipKpi compacto Icone={Receipt} label="Vendas · cupons" valor={numero(vendas)} nota={geral ? "todo o histórico" : `ano ${ano}`} />
-        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={geral ? "todo o histórico" : `ano ${ano}`} />
+        <ChipKpi compacto hero Icone={Wallet} label="Receita da loja" valor={moeda(receita)} nota={notaKpi} />
+        <ChipKpi compacto Icone={Receipt} label="Vendas · cupons" valor={numero(vendas)} nota={notaKpi} />
+        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={notaKpi} />
         <ChipKpi compacto Icone={Package} label="Valor em estoque" valor={moeda(est.custo)} nota="a custo · posição atual" />
       </div>
 

@@ -214,6 +214,12 @@ export const useLojaPerformanceCurso = () =>
 export const useLojaMetaRealizado = () =>
   useView("vw_loja_meta_realizado", { ordem: ["mes_ref"] });
 
+/* KPIs por MÊS (uma linha por mês). É a fonte dos cards quando o filtro é
+   por mês — a vw_loja_kpis só tem grão anual. `em_curso` marca o mês
+   corrente: aí a meta não classifica como "Abaixo" (o mês não acabou). */
+export const useLojaKpisMes = () =>
+  useView("vw_loja_kpis_mes", { ordem: ["mes"] });
+
 /* Views com dimensão de data. Entregam as linhas com `data`; o front
    recorta pelo período e reagrega. Só métricas de FLUXO — estado
    (inadimplência, horizontes) é snapshot e não tem recorte. */
