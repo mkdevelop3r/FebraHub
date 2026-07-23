@@ -13,7 +13,18 @@ Uso:
   python omie_sync.py --desde 01/01/2024   # histórico de vendas
 """
 import os, json, time, argparse, urllib.request
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+
+# Carrega .env se existir (formato NOME=valor por linha), sem libs externas.
+for _p in ('.env', 'etl/.env', os.path.join(os.path.dirname(__file__), '.env')):
+    if os.path.exists(_p):
+        for _linha in open(_p, encoding='utf-8'):
+            _linha = _linha.strip()
+            if _linha and not _linha.startswith('#') and '=' in _linha:
+                _k, _v = _linha.split('=', 1)
+                os.environ.setdefault(_k.strip(), _v.strip().strip('"').strip("'"))
+        break
+
 
 APP_KEY    = os.environ['OMIE_APP_KEY']
 APP_SECRET = os.environ['OMIE_APP_SECRET']
@@ -21,7 +32,7 @@ SB_URL     = os.environ['SUPABASE_URL']
 SB_KEY     = os.environ['SUPABASE_SERVICE_KEY']
 
 # URLs dos serviços Omie (RPC: POST com app_key/app_secret/call/param)
-URL_CUPOM   = 'https://app.omie.com.br/api/v1/produtos/cupomfiscal/'
+URL_CUPOM   = 'https://app.omie.com.br/api/v1/produtos/cupomfiscalconsultar/'
 URL_ESTOQUE = 'https://app.omie.com.br/api/v1/estoque/consulta/'
 
 def omie(url, call, param, tentativa=0):
@@ -35,17 +46,34 @@ def omie(url, call, param, tentativa=0):
     req = urllib.request.Request(url, data=body,
         headers={'Content-Type': 'application/json'}, method='POST')
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=90) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
-        # 425 = "consumo indevido" (rate limit do Omie); 5xx = instabilidade
-        if e.code in (425, 500, 502, 503) and tentativa < 5:
+        corpo = e.read().decode(errors='replace')
+        if e.code in (425, 502, 503) and tentativa < 6:
             espera = 20 * (tentativa + 1)
             print(f"  Omie {e.code} — aguardando {espera}s")
             time.sleep(espera)
             return omie(url, call, param, tentativa + 1)
-        corpo = e.read().decode()[:300]
-        raise RuntimeError(f"Omie {e.code}: {corpo}")
+        raise RuntimeError(f"Omie {e.code}: {corpo[:500]}")
+    except (urllib.error.URLError, ConnectionError, TimeoutError) as e:
+        # queda de conexão / socket -> esperar e tentar de novo
+        if tentativa < 6:
+            espera = 15 * (tentativa + 1)
+            print(f"  conexão caiu ({e}) — aguardando {espera}s e tentando de novo")
+            time.sleep(espera)
+            return omie(url, call, param, tentativa + 1)
+        raise
+
+
+# Códigos de forma de pagamento do Omie (cIndPag)
+FORMAS = {
+    '01': 'Dinheiro', '02': 'Cheque', '03': 'Cartão de Crédito',
+    '04': 'Cartão de Débito', '05': 'Crédito Loja', '10': 'Vale Alimentação',
+    '11': 'Vale Refeição', '12': 'Vale Presente', '13': 'Vale Combustível',
+    '15': 'Boleto', '16': 'Depósito', '17': 'PIX', '18': 'Transferência',
+    '19': 'Cashback', '90': 'Sem pagamento', '99': 'Outros',
+}
 
 def sn(v):  # 'S'/'N' -> bool
     return str(v or '').upper() == 'S'
@@ -65,12 +93,18 @@ def dt_iso(s):
 def upsert(tabela, linhas, conflito):
     if not linhas: return
     url = f"{SB_URL}/rest/v1/{tabela}?on_conflict={conflito}"
-    req = urllib.request.Request(url, data=json.dumps(linhas).encode(),
+    req = urllib.request.Request(url, data=json.dumps(linhas, default=str).encode(),
         headers={'apikey': SB_KEY, 'Authorization': f'Bearer {SB_KEY}',
                  'Content-Type': 'application/json',
                  'Prefer': 'resolution=merge-duplicates'}, method='POST')
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return r.status
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        corpo = e.read().decode(errors='replace')
+        print(f"  ERRO ao gravar {tabela}: {e.code} {corpo[:400]}")
+        print(f"  exemplo de linha: {json.dumps(linhas[0], default=str)[:300]}")
+        raise
 
 # ---------------- VENDAS (cupons + itens) ----------------
 def sync_vendas(desde, ate):
@@ -124,6 +158,48 @@ def sync_vendas(desde, ate):
         time.sleep(1)
     print(f"vendas: {total_cupom} cupons, {total_item} itens")
 
+
+# ---------------- PAGAMENTOS (formas de pagamento dos cupons) ----------------
+def sync_pagamentos(desde, ate):
+    pagina = 1
+    total = 0
+    while True:
+        resp = omie(URL_CUPOM, 'CuponsPagamentos', {
+            'nPagina': pagina, 'nRegPorPagina': 100,
+            'dDtEmisDe': desde, 'dDtEmisAte': ate,
+        })
+        pgs = resp.get('pagamentos', []) or []
+        linhas = []
+        vistos = {}
+        for p in pgs:
+            # o Omie devolve o código em cMeioPag; cIndPag costuma vir vazio
+            cod = str(p.get('cMeioPag') or p.get('cIndPag') or '').strip()
+            cod = cod.zfill(2) if cod else ''
+            cid = p.get('nIdCupom')
+            # seqItem repete no mesmo cupom -> gerar sequência própria
+            vistos[cid] = vistos.get(cid, 0) + 1
+            linhas.append({
+                'cupom_id': cid,
+                'seq_item': vistos[cid],
+                'forma_codigo': cod,
+                'forma': FORMAS.get(cod, 'Outros'),
+                'meio_codigo': p.get('cMeioPag'),
+                'bandeira': p.get('cBandeira') or p.get('cTpBandeira'),
+                'parcelas': p.get('nParcelaTEF') or p.get('nParcelaPOS'),
+                'valor': num(p.get('nValorItem') or p.get('nValorDocumento')),
+                'data_transacao': dt_iso(p.get('dTransacao') or p.get('dDtEmissaoCupom')),
+                'nsu': p.get('NSU'),
+            })
+        linhas = [l for l in linhas if l['cupom_id'] is not None]
+        upsert('fato_loja_pagamento', linhas, 'cupom_id,seq_item')
+        total += len(linhas)
+        tot_pag = resp.get('nTotPaginas', 1)
+        print(f"  pagamentos página {pagina}/{tot_pag}: {len(linhas)} registros")
+        if pagina >= tot_pag: break
+        pagina += 1
+        time.sleep(1)
+    print(f"pagamentos: {total} registros")
+
 # ---------------- ESTOQUE (posição) ----------------
 def sync_estoque():
     hoje = date.today().strftime('%d/%m/%Y')
@@ -141,6 +217,7 @@ def sync_estoque():
             'codigo': p.get('cCodigo'),
             'descricao': p.get('cDescricao'),
             'preco_unitario': num(p.get('nPrecoUnitario')),
+            'custo_medio': num(p.get('nCMC')),      # custo médio contábil
             'saldo': num(p.get('nSaldo')),
             'fisico': num(p.get('fisico')),
             'reservado': num(p.get('reservado')),
@@ -159,9 +236,9 @@ def sync_estoque():
 def registrar_status(ok, total):
     try:
         st = {'fonte':'omie','nome_exibicao':'Loja (Omie)',
-              'ultima_sync':datetime.utcnow().isoformat()+'Z',
+              'ultima_sync':datetime.now(timezone.utc).isoformat(),
               'status':'ok' if ok else 'erro','registros':total,
-              'atualizado_em':datetime.utcnow().isoformat()+'Z'}
+              'atualizado_em':datetime.now(timezone.utc).isoformat()}
         req = urllib.request.Request(
             f"{SB_URL}/rest/v1/integracao_status?on_conflict=fonte",
             data=json.dumps(st).encode(),
@@ -180,6 +257,7 @@ def main():
     ok = True
     try:
         sync_vendas(a.desde, a.ate)
+        sync_pagamentos(a.desde, a.ate)
         sync_estoque()
     except Exception as e:
         ok = False
