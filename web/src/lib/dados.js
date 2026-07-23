@@ -181,10 +181,40 @@ export const useFinanceiroDespesaCategoria = () => useView("vw_financeiro_despes
 export const useFinanceiroAPagarHorizonte = () => useView("vw_financeiro_a_pagar_horizonte");
 export const useFinanceiroPagoMensal = () => useView("vw_financeiro_pago_mensal");
 
-/* Loja — receita própria. Curso ≠ loja: nunca entra num total conjunto. */
-export const useLojaKpis = () => useView("vw_loja_kpis");
-export const useLojaReceita = () => useView("vw_loja_receita");
-export const useLojaReceitaMensal = () => useView("vw_loja_receita_mensal");
+/* Loja — receita própria. Curso ≠ loja: nunca entra num total conjunto.
+   A receita virou CONSOLIDADA (ver useLojaReceitaTotalMes abaixo); os hooks
+   antigos de KPI Omie-só / meta separada saíram junto com a mudança. */
+
+/* Operacional da loja — vem do Omie (PDV). Produto vendido e saldo de
+   prateleira. */
+// Uma linha por (produto, mês): o front soma os meses do período e ranqueia.
+export const useLojaProdutosVendidosMes = () =>
+  useView("vw_loja_produtos_vendidos_mes", { ordem: ["mes", "produto_id"] });
+// Posição de estoque (snapshot do dia): 443 produtos, ignora o período.
+export const useLojaEstoque = () =>
+  useView("vw_loja_estoque", { ordem: ["produto_id"] });
+
+/* Performance por curso: quanto a loja vende DURANTE cada curso (planilha da
+   gestora). Uma linha por (curso, mês). É o mesmo dinheiro da receita, visto
+   por curso — NÃO somar com o total. O front recorta por mes_ref e reagrega
+   por curso. `por_aluno` é recalculado após a soma (média de médias mente). */
+export const useLojaPerformanceCurso = () =>
+  useView("vw_loja_performance_curso", { ordem: ["mes_ref", "curso"] });
+
+/* Receita CONSOLIDADA por mês — soma todas as fontes (produtos/Omie + livrão,
+   cursos premium, aluguel de sala, Sentido de Brincar). É a fonte oficial da
+   receita da loja agora, com a meta recalculada sobre o total. Uma linha por
+   mês; a série começa em mar/2025 (antes disso não havia Omie). O front soma
+   os meses do recorte. Traz também as metas do mês (min/básica/máster) e o
+   nível atingido sobre o consolidado. */
+export const useLojaReceitaTotalMes = () =>
+  useView("vw_loja_receita_total_mes", { ordem: ["mes"] });
+
+/* Quebra da receita por FONTE (Produtos, Livrão, Cursos premium, Aluguel de
+   sala, Sentido de Brincar). Uma linha por (mês, fonte); o front recorta e
+   soma. Produtos é ~91%; as outras são complementos. */
+export const useLojaReceitaConsolidada = () =>
+  useView("vw_loja_receita_consolidada", { ordem: ["mes", "fonte"] });
 
 /* Views com dimensão de data. Entregam as linhas com `data`; o front
    recorta pelo período e reagrega. Só métricas de FLUXO — estado

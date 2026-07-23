@@ -7,6 +7,7 @@ import {
   Clock, Receipt, Hourglass, ChevronLeft, ChevronRight, ChevronDown,
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
   Users, Target, Construction, Percent, Filter, ChevronUp,
+  Boxes, PackageX,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
@@ -21,7 +22,8 @@ import {
   useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
-  useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
+  useLojaReceitaPeriodo, useLojaReceitaTotalMes, useLojaReceitaConsolidada,
+  useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingAtribuicao,
   usePedagogicoTurmas, useEventosDesempenho,
@@ -396,9 +398,11 @@ const itemPop = (ativo) => ({
   color: ativo ? C.gold : C.muted,
 });
 
-/* Ano: dropdown com os anos que têm dado. */
+/* Ano: dropdown com os anos que têm dado + "Geral" (todo o histórico).
+   "Geral" é acumulado: zera o recorte de ano. Só o Hub Loja lê a flag hoje;
+   nos demais hubs o recorte vira a base inteira, o que é uma visão válida. */
 function SeletorAno() {
-  const { ano, setAno, anos } = usePeriodo();
+  const { ano, setAno, anos, geral, setGeral } = usePeriodo();
   const [aberto, setAberto] = useState(false);
   return (
     <div style={{ position: "relative" }}>
@@ -407,11 +411,12 @@ function SeletorAno() {
         fontWeight: 700, color: C.gold, background: "rgba(255,255,255,.04)",
         border: `1px solid ${C.cardLine}`, borderRadius: 9, padding: "6px 10px", cursor: "pointer",
       }}>
-        {ano} <ChevronDown size={13} />
+        {geral ? "Geral" : ano} <ChevronDown size={13} />
       </button>
       <Popover aberto={aberto} onFechar={() => setAberto(false)} largura={110}>
+        <button style={itemPop(geral)} onClick={() => { setGeral(true); setAberto(false); }}>Geral</button>
         {anos.map((a) => (
-          <button key={a} style={itemPop(a === ano)} onClick={() => { setAno(a); setAberto(false); }}>{a}</button>
+          <button key={a} style={itemPop(!geral && a === ano)} onClick={() => { setAno(a); setAberto(false); }}>{a}</button>
         ))}
       </Popover>
     </div>
@@ -1052,18 +1057,36 @@ function BarrasCategoria({ reais, orfas, semVinc, cobertura }) {
 /* `formatar` existe porque nem toda série é dinheiro grande: custo por lead
    vive na casa dos centavos e o `moeda` compacto arredondaria R$ 2,01 pra
    R$ 2. Sem o prop, o comportamento é o de antes. */
-function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda }) {
+/* Props opt-in (todas com default que PRESERVA o comportamento antigo, então
+   Financeiro e Marketing seguem idênticos):
+   - `rotularVar=false`  esconde os ▲%/▼% mês a mês (poluíam o gráfico).
+   - `soDestaques=true`  rotula só máximo, mínimo e mês atual, não todos.
+   - `yRedondo=true`     eixo Y com poucos marcadores arredondados (R$0/35mil/70mil).
+   - `meta` array paralelo a `serie` = linha de referência (meta mínima do mês). */
+const ARRED_META = "#6BA8E5"; // linha de meta: azul discreto, distinto do dourado da receita
+function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda, mostrarNota = true, rotularParcial = true, meta = null, metaLabel = "meta", rotularVar = true, soDestaques = false, yRedondo = false }) {
   if (serie.length < 2) return null;
   const W = 720, H = 228, padL = 54, padR = 14, padT = 44, padB = 26;
   const plotW = W - padL - padR, plotH = H - padT - padB, plotBottom = padT + plotH;
 
-  // Domínio só com meses FECHADOS.
+  const temMeta = Array.isArray(meta) && meta.some((v) => v != null);
+  const metaVals = temMeta ? meta.filter((v) => v != null) : [];
+
+  // Domínio: meses FECHADOS + a linha de meta (se houver). Com `yRedondo`,
+  // arredonda o topo pra cima (68k → 70k) e ancora em 0, pra os marcadores
+  // do eixo saírem redondos.
   const fechados = serie.filter((s) => !s.parcial).map((s) => s.valor);
-  const base = fechados.length ? fechados : serie.map((s) => s.valor);
-  let vMax = Math.max(...base), vMin = Math.min(...base);
+  const dom = [...(fechados.length ? fechados : serie.map((s) => s.valor)), ...metaVals];
+  let vMax = Math.max(...dom), vMin = Math.min(...dom);
   if (vMax === vMin) { vMax = vMax || 1; vMin = 0; }
-  const folga = (vMax - vMin) * 0.08;
-  vMax += folga; vMin = Math.max(0, vMin - folga);
+  if (yRedondo) {
+    vMin = 0;
+    const pot = Math.pow(10, Math.floor(Math.log10(vMax || 1)));
+    vMax = Math.ceil((vMax || 1) / pot) * pot;
+  } else {
+    const folga = (vMax - vMin) * 0.08;
+    vMax += folga; vMin = Math.max(0, vMin - folga);
+  }
 
   const n = serie.length;
   const x = (i) => padL + (i / (n - 1)) * plotW;
@@ -1078,6 +1101,18 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
   const tracejado = temParcial ? [pts[parcialIdx - 1], pts[parcialIdx]].map((p) => p.join(",")).join(" ") : null;
   const area = `M ${solidPts.map((p) => p.join(",")).join(" L ")} L ${solidPts.at(-1)[0]},${plotBottom} L ${solidPts[0][0]},${plotBottom} Z`;
 
+  // Linha de meta: segmentos contíguos de meses com meta definida (não liga
+  // por cima de buracos, senão inventaria meta onde não há).
+  const metaSegs = [];
+  if (temMeta) {
+    let run = [];
+    serie.forEach((s, i) => {
+      if (meta[i] != null) run.push([x(i), y(meta[i])]);
+      else { if (run.length > 1) metaSegs.push(run); run = []; }
+    });
+    if (run.length > 1) metaSegs.push(run);
+  }
+
   const yticks = [vMin, (vMin + vMax) / 2, vMax];
   const alvo = 7, passo = Math.max(1, Math.round((n - 1) / (alvo - 1)));
   const xticks = [];
@@ -1087,6 +1122,15 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
     const d = new Date(String(iso).slice(0, 10) + "T00:00:00");
     return d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "") + "/" + String(d.getFullYear()).slice(2);
   };
+
+  // Quais pontos ganham rótulo de valor. `soDestaques`: só máximo, mínimo
+  // (entre meses fechados) e o mês atual — em vez de um rótulo em cada tick.
+  const fechadosI = serie.map((s, i) => i).filter((i) => !serie[i].parcial);
+  const iMax = fechadosI.reduce((b, i) => serie[i].valor > serie[b].valor ? i : b, fechadosI[0] ?? 0);
+  const iMin = fechadosI.reduce((b, i) => serie[i].valor < serie[b].valor ? i : b, fechadosI[0] ?? 0);
+  const rotulados = soDestaques
+    ? [...new Set([iMax, iMin, ...(temParcial ? [parcialIdx] : [])])]
+    : xticks;
 
   return (
     <>
@@ -1107,15 +1151,21 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
           );
         })}
         <path d={area} fill={`url(#${idGrad})`} />
+        {/* Meta: linha de referência azul tracejada, distinta da receita. */}
+        {metaSegs.map((seg, i) => (
+          <polyline key={"meta" + i} points={seg.map((p) => p.join(",")).join(" ")} fill="none"
+            stroke={ARRED_META} strokeWidth="1.4" strokeDasharray="5 4" strokeLinecap="round" opacity="0.85" />
+        ))}
         <polyline points={solido} fill="none" stroke={cor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
         {tracejado && <polyline points={tracejado} fill="none" stroke={cor} strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" opacity="0.6" />}
-        {/* pontinho nos meses rotulados + o ponto parcial destacado */}
+        {/* pontinho nos meses rotulados + o ponto parcial destacado (vazado) */}
         {xticks.map((i) => serie[i].parcial ? null : (
           <circle key={"d" + i} cx={pts[i][0]} cy={pts[i][1]} r="2.4" fill={cor} />
         ))}
         {temParcial && <circle cx={pts[parcialIdx][0]} cy={pts[parcialIdx][1]} r="3.5" fill={C.void} stroke={cor} strokeWidth="1.6" />}
-        {/* rótulos de dados (valor + variação mês a mês) nos meses rotulados */}
-        {xticks.map((i) => {
+        {/* rótulos de dados. Variação (▲%) só com rotularVar; "parcial" só com
+            rotularParcial; o valor sempre. */}
+        {rotulados.map((i) => {
           const [lx, ly] = pts[i];
           const val = serie[i].valor;
           const prev = serie[i - 1]?.valor;
@@ -1125,13 +1175,14 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
           const baseY = Math.max(26, ly - 12);
           return (
             <g key={"lbl" + i}>
-              {parc
-                ? <text x={lx} y={baseY - 13} fontSize="10" fontWeight="700" textAnchor={anchor} fill={C.faint} fontFamily={SANS}>parcial</text>
-                : d != null && (
-                  <text x={lx} y={baseY - 13} fontSize="10.5" fontWeight="800" textAnchor={anchor} fill={(inverso ? d <= 0 : d >= 0) ? C.up : C.down} fontFamily={SANS}>
-                    {d >= 0 ? "▲" : "▼"} {Math.abs(d).toFixed(0)}%
-                  </text>
-                )}
+              {parc && rotularParcial && (
+                <text x={lx} y={baseY - 13} fontSize="10" fontWeight="700" textAnchor={anchor} fill={C.faint} fontFamily={SANS}>parcial</text>
+              )}
+              {rotularVar && !parc && d != null && (
+                <text x={lx} y={baseY - 13} fontSize="10.5" fontWeight="800" textAnchor={anchor} fill={(inverso ? d <= 0 : d >= 0) ? C.up : C.down} fontFamily={SANS}>
+                  {d >= 0 ? "▲" : "▼"} {Math.abs(d).toFixed(0)}%
+                </text>
+              )}
               <text x={lx} y={baseY} fontSize="11.5" fontWeight="700" textAnchor={anchor} fill={parc ? C.faint : C.bright} fontFamily={GROTESK}>{formatar(val)}</text>
             </g>
           );
@@ -1142,9 +1193,16 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
           </text>
         ))}
       </svg>
-      <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6 }}>
-        Último ponto = mês em curso (parcial), não comparável a mês fechado. Escala do eixo Y calculada só sobre meses fechados.
-      </div>
+      {temMeta && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: C.faint, marginTop: 4 }}>
+          <span style={{ width: 16, height: 0, borderTop: `1.4px dashed ${ARRED_META}`, flexShrink: 0 }} /> {metaLabel}
+        </div>
+      )}
+      {mostrarNota && (
+        <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6 }}>
+          Último ponto = mês em curso (parcial), não comparável a mês fechado. Escala do eixo Y calculada só sobre meses fechados.
+        </div>
+      )}
     </>
   );
 }
@@ -3090,87 +3148,439 @@ function HubEventos() {
   );
 }
 
-/* Hub Loja. Receita da loja é da LOJA — nunca entra num total junto com
-   curso (unidades diferentes). Produto e estoque só existem no Omie, que
-   ainda não está integrado: vazio honesto em vez de número inventado. */
-function HubLoja() {
-  const { inicio, fim, rotulo, modo } = usePeriodo();
-  const kpis = useLojaKpis();
-  const rec = useLojaReceitaPeriodo();
-  const recMensal = useLojaReceitaMensal();
+/* ============ LOJA · PRODUTOS E ESTOQUE (Omie PDV) ============
+   Mesma fonte da parte financeira agora: tudo no Hub Loja vem do Omie
+   (cupom fiscal do PDV). Estes helpers cuidam da visão de PRODUTO — ranking
+   de vendidos e posição de estoque —, complementar à de receita/formas. */
 
-  const k = kpis.data?.[0];
-  const mv = (x) => (x == null ? "—" : moeda(Number(x)));
-  const nv = (x) => (x == null ? "—" : numero(Number(x)));
+// Uma linha por (produto, mês). Soma os meses do recorte e devolve o top-N
+// por faturamento. Mês entra se seu ANO-MÊS cruza o período (dado mensal não
+// tem dia; recortar por dia zeraria a loja em quase todo filtro).
+const produtosNoPeriodo = (linhas, inicio, fim, topN = 10) => {
+  const de = String(inicio).slice(0, 7), ate = String(fim).slice(0, 7);
+  const m = new Map();
+  for (const l of linhas ?? []) {
+    const ym = String(l.mes ?? "").slice(0, 7);
+    if (!ym || ym < de || ym > ate) continue;
+    const k = l.produto_id ?? l.produto ?? "—";
+    const a = m.get(k) ?? { produto: l.produto ?? "—", quantidade: 0, faturamento: 0 };
+    a.quantidade += Number(l.quantidade ?? 0);
+    a.faturamento += Number(l.faturamento ?? 0);
+    m.set(k, a);
+  }
+  return [...m.values()].sort((a, b) => b.faturamento - a.faturamento).slice(0, topN);
+};
 
-  // Fluxo da loja recortado pelo período e reagregado por forma.
-  const recorte = useMemo(() => noPeriodo(rec.data, { inicio, fim }), [rec.data, inicio, fim]);
-  const somaPeriodo = useMemo(() => recorte.reduce(
-    (a, r) => ({
-      receita: a.receita + Number(r.receita ?? 0),
-      recebido: a.recebido + Number(r.recebido ?? 0),
-      vendas: a.vendas + Number(r.vendas ?? 0),
-    }),
-    { receita: 0, recebido: 0, vendas: 0 }
-  ), [recorte]);
-  const ticket = somaPeriodo.vendas ? somaPeriodo.receita / somaPeriodo.vendas : null;
-
-  const formas = useMemo(
-    () => somarPor(recorte, "forma", ["receita"])
-      .map((r) => ({ rotulo: String(r.forma ?? "—"), valor: Number(r.receita ?? 0) }))
-      .filter((f) => f.valor > 0)
-      .sort((a, b) => b.valor - a.valor)
-      .map((f, i) => ({ ...f, cor: PALETA_FORMAS[i % PALETA_FORMAS.length] })),
-    [recorte]
+/* Ranking de produtos: nome + quantidade + faturamento, barra pelo valor.
+   Duas grandezas por linha, então não cabe no `Lista` genérico. */
+function ProdutosVendidos({ linhas }) {
+  const max = Math.max(...linhas.map((l) => l.faturamento), 1);
+  return (
+    <div>
+      {linhas.map((l, i) => (
+        <div key={l.produto} style={{ padding: "9px 20px", borderBottom: `1px solid ${C.hair}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 6 }}>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+              <span style={{ fontFamily: GROTESK, fontSize: 11, fontWeight: 700, color: i === 0 ? C.gold : C.faint, flexShrink: 0, width: 16 }}>{i + 1}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.produto}>{l.produto}</span>
+            </span>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 8, flexShrink: 0 }}>
+              <span style={{ fontSize: 11, color: C.faint }}>{numero(l.quantidade)} un</span>
+              <span style={{ fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, color: i === 0 ? C.gold : C.text }}>{moeda(l.faturamento)}</span>
+            </span>
+          </div>
+          <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+            <div style={{ width: `${(l.faturamento / max) * 100}%`, height: "100%", borderRadius: 3, background: i === 0 ? `linear-gradient(90deg, ${C.goldTop}, ${C.goldBase})` : `linear-gradient(90deg, ${C.goldBase}, ${C.gold})` }} />
+          </div>
+        </div>
+      ))}
+    </div>
   );
-  const formasTot = formas.reduce((s, f) => s + f.valor, 0);
-  const leaderPct = formasTot ? Math.round((formas[0].valor / formasTot) * 100) : 0;
+}
 
-  const evol = useMemo(() => serieMensal(recMensal.data, "receita"), [recMensal.data]);
-  const evolSemFonte = !!recMensal.error || evol.length < 2;
+/* Número de estoque. `alerta` pinta em vermelho. `compacto` é a faixa
+   horizontal do card de estoque: ícone + "Rótulo · Valor · detalhe" numa
+   linha que QUEBRA (sem corte) — o valor destacado no meio. */
+function EstoqueNum({ Icone, label, valor, sub, alerta, compacto }) {
+  const cor = alerta ? C.down : C.gold;
+  if (compacto) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: 11,
+        background: "rgba(255,255,255,.03)",
+        border: `1px solid ${alerta ? `${C.down}44` : C.cardLine}`, borderRadius: 11, padding: "10px 13px",
+      }}>
+        <span style={{
+          width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+          background: alerta ? `${C.down}1e` : `${C.gold}18`, color: cor,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <Icone size={15} />
+        </span>
+        <div style={{ minWidth: 0, flex: 1, fontSize: 12, lineHeight: 1.4, color: C.faint }}>
+          <b style={{ color: C.muted, fontWeight: 700 }}>{label}</b>
+          <span style={{ color: C.dim }}> · </span>
+          <b style={{ fontFamily: GROTESK, fontSize: 15.5, fontWeight: 700, letterSpacing: "-.3px", color: cor }}>{valor}</b>
+          {sub && <><span style={{ color: C.dim }}> · </span>{sub}</>}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div style={{
+      flex: 1, minWidth: 150, background: "rgba(255,255,255,.03)",
+      border: `1px solid ${alerta ? `${C.down}44` : C.cardLine}`, borderRadius: 13, padding: "16px 18px",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <span style={{
+          width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+          background: alerta ? `${C.down}1e` : `${C.gold}18`, color: cor,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <Icone size={15} />
+        </span>
+        <span style={{ fontSize: 11.5, color: C.muted, fontWeight: 600 }}>{label}</span>
+      </div>
+      <div style={{ fontFamily: GROTESK, fontSize: 30, fontWeight: 700, letterSpacing: "-1px", color: cor, lineHeight: 1 }}>{valor}</div>
+      {sub && <div style={{ fontSize: 11, color: alerta ? C.down : C.faint, marginTop: 6, lineHeight: 1.45 }}>{sub}</div>}
+    </div>
+  );
+}
+
+
+/* Nível da meta (planilha da gestora): Máster > Básica > Mínima > Abaixo >
+   Sem meta. Máster é verde FORTE (distinto do verde da Básica). */
+const VERDE_FORTE = "#3DBE6B";
+const NIVEL_COR = {
+  "máster": VERDE_FORTE, master: VERDE_FORTE,
+  "básica": C.up, basica: C.up,
+  "mínima": C.warn, minima: C.warn,
+  abaixo: C.down, "sem meta": C.muted,
+};
+// Casa por nome (com ou sem acento), sem regex de combinantes.
+const corNivel = (n) => NIVEL_COR[String(n ?? "").trim().toLowerCase()] ?? C.muted;
+
+/* Frase da meta. A vw_loja_receita_total_mes traz o nível e os patamares
+   (min/básica/máster) sobre o consolidado, mas não a frase pronta — então é
+   montada aqui, nas mesmas quatro variações da planilha da gestora. */
+function resumoMeta(m) {
+  const r = Number(m.receita ?? 0);
+  const min = Number(m.meta_minima ?? 0), bas = Number(m.meta_basica ?? 0), mas = Number(m.meta_master ?? 0);
+  const nivel = String(m.nivel_atingido ?? "").trim().toLowerCase();
+  if (nivel.startsWith("máster") || nivel.startsWith("master")) return `Meta máster batida · superou em ${moeda(r - mas)}`;
+  if (nivel.startsWith("bás") || nivel.startsWith("bas")) return `Meta básica batida · faltam ${moeda(mas - r)} para a máster`;
+  if (nivel.startsWith("mín") || nivel.startsWith("min")) return `Meta mínima batida · faltam ${moeda(bas - r)} para a básica`;
+  if (nivel.startsWith("abaixo")) return `Abaixo da mínima · faltam ${moeda(min - r)}`;
+  return "Sem meta cadastrada";
+}
+
+/* Selo de meta no card de receita. Lê a linha do mês da
+   vw_loja_receita_total_mes (consolidado). Em vez de um "59%" solto (que não
+   diz se é bom ou ruim), mostra a FRASE — ex.: "Meta básica batida · faltam
+   R$ 5.000 para a máster" — colorida pelo nível. Mês EM CURSO não classifica
+   (o mês não acabou): mostra só realizado x meta mínima com o rótulo "em
+   curso". Metas são mensais — o selo some no "Geral". */
+function MetaBadge({ meta }) {
+  if (!meta) return null;
+  const emCurso = !!meta.em_curso;
+  const realizado = Number(meta.receita ?? 0);
+  const minima = Number(meta.meta_minima ?? 0);
+  const nivel = meta.nivel_atingido ?? "—";
+  const mm = String(meta.mes ?? "").slice(5, 7);
+  const mesNome = mm ? MESES[Number(mm) - 1] : null;
+  const cor = emCurso ? C.muted : corNivel(nivel);
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap",
+      background: "rgba(255,255,255,.03)", border: `1px solid ${cor}44`,
+      borderRadius: 11, padding: "9px 13px",
+    }}>
+      <Target size={15} style={{ color: cor, flexShrink: 0 }} />
+      {mesNome && <span style={{ fontSize: 11.5, color: C.dim, fontWeight: 700 }}>{mesNome}</span>}
+      {emCurso ? (
+        <span style={{ display: "inline-flex", alignItems: "baseline", gap: 7, flexWrap: "wrap", fontSize: 12, color: C.faint }}>
+          <b style={{ fontFamily: GROTESK, fontSize: 15, fontWeight: 700, color: C.bright }}>{moeda(realizado)}</b>
+          <span>de {moeda(minima)} · meta mínima</span>
+          <span style={{
+            fontSize: 11, fontWeight: 800, color: C.muted, background: "rgba(255,255,255,.06)",
+            border: `1px solid ${C.cardLine}`, padding: "1px 8px", borderRadius: 6,
+          }}>em curso</span>
+        </span>
+      ) : (
+        <span style={{ fontSize: 12.5, fontWeight: 700, color: cor }}>
+          {resumoMeta(meta)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* Quebra da receita por fonte — barra 100% empilhada + legenda com %. Detalhe
+   do card de receita: Produtos domina (~91%); as outras são complementos
+   (livrão, cursos premium, aluguel de sala, Sentido de Brincar). */
+const CORES_FONTE = [C.gold, C.up, ARRED_META, C.warn, "#B98AD9", C.faint];
+function FonteBreakdown({ fontes }) {
+  const total = fontes.reduce((s, f) => s + f.valor, 0);
+  if (!total) return null;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+      <div style={{ display: "flex", height: 9, borderRadius: 5, overflow: "hidden", background: "rgba(255,255,255,.05)" }}>
+        {fontes.map((f, i) => (
+          <div key={f.fonte} title={`${f.fonte} · ${moeda(f.valor)} · ${f.pct.toFixed(0)}%`}
+            style={{ width: `${f.pct}%`, background: CORES_FONTE[i % CORES_FONTE.length] }} />
+        ))}
+      </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 12px", fontSize: 10.5, color: C.faint }}>
+        {fontes.map((f, i) => (
+          <span key={f.fonte} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 2, background: CORES_FONTE[i % CORES_FONTE.length], flexShrink: 0 }} />
+            <b style={{ color: C.muted, fontWeight: 700 }}>{f.fonte}</b>
+            <span style={{ color: C.dim }}>{f.pct.toFixed(0)}%</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* Performance por curso — quanto a loja vende DURANTE cada curso (planilha da
+   gestora). Duas ordens bem diferentes e ambas importam: por faturamento
+   total e por valor por aluno. Barra pela métrica escolhida; mostra alunos. */
+function PerformanceCurso({ linhas, modo, formatarValor }) {
+  const max = Math.max(...linhas.map((l) => l[modo]), 1);
+  return (
+    <div>
+      {linhas.map((l, i) => (
+        <div key={l.curso} style={{ padding: "8px 20px", borderBottom: `1px solid ${C.hair}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 5 }}>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 8, minWidth: 0 }}>
+              <span style={{ fontFamily: GROTESK, fontSize: 11, fontWeight: 700, color: i === 0 ? C.gold : C.faint, width: 15, flexShrink: 0 }}>{i + 1}</span>
+              <span style={{ fontSize: 12.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.curso}>{l.curso}</span>
+            </span>
+            <span style={{ display: "flex", alignItems: "baseline", gap: 8, flexShrink: 0 }}>
+              <span style={{ fontSize: 10.5, color: C.faint }}>{numero(l.alunos)} alunos</span>
+              <span style={{ fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, color: i === 0 ? C.gold : C.text }}>{formatarValor(l[modo])}</span>
+            </span>
+          </div>
+          <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+            <div style={{ width: `${(l[modo] / max) * 100}%`, height: "100%", borderRadius: 3, background: i === 0 ? `linear-gradient(90deg, ${C.goldTop}, ${C.goldBase})` : `linear-gradient(90deg, ${C.goldBase}, ${C.gold})` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* Hub Loja. Receita da loja é da LOJA — nunca entra num total junto com
+   curso (unidades diferentes). Receita agora é CONSOLIDADA
+   (vw_loja_receita_total_mes): produtos/Omie + livrão, cursos premium,
+   aluguel de sala e Sentido de Brincar. A meta é recalculada sobre esse
+   total. A série começa em mar/2025 (antes não havia Omie). */
+function HubLoja() {
+  const { inicio, fim, modo, ano, mesIdx, rotulo, geral } = usePeriodo();
+  const totalMes = useLojaReceitaTotalMes();
+  const consolidada = useLojaReceitaConsolidada();
+  const prodVend = useLojaProdutosVendidosMes();
+  const estoque = useLojaEstoque();
+  const perfCurso = useLojaPerformanceCurso();
+  const [cursoModo, setCursoModo] = useState("faturamento");
+
+  const porMes = modo === "mes" && !geral;
+
+  // Recorte por ANO-MÊS (dado mensal). Em "Geral", inicio/fim já são a base
+  // inteira, então o mesmo filtro cobre todo o histórico.
+  const noRecorte = (linhas, campo) => {
+    const de = String(inicio).slice(0, 7), ate = String(fim).slice(0, 7);
+    return (linhas ?? []).filter((r) => {
+      const ym = String(r[campo] ?? "").slice(0, 7);
+      return ym && ym >= de && ym <= ate;
+    });
+  };
+
+  /* Receita/vendas/ticket = soma dos meses do recorte, do total consolidado.
+     Um mês no modo mês; o ano no modo ano; tudo no "Geral". */
+  const totRecorte = useMemo(() => noRecorte(totalMes.data, "mes"), [totalMes.data, inicio, fim]);
+  const receita = totRecorte.reduce((s, r) => s + Number(r.receita ?? 0), 0);
+  const vendas = totRecorte.reduce((s, r) => s + Number(r.vendas ?? 0), 0);
+  const ticket = vendas ? receita / vendas : null;
+  const notaKpi = geral ? "todo o histórico" : porMes ? rotulo : `ano ${ano}`;
+
+  // Série mensal consolidada pro gráfico (começa em mar/2025).
+  const evol = useMemo(() => serieMensal(totalMes.data, "receita"), [totalMes.data]);
+  const evolSemFonte = !!totalMes.error || evol.length < 2;
+
+  /* ---- Meta x realizado (consolidada) ---- */
+  // Selo: a linha do mês da vw_loja_receita_total_mes (traz meta e em_curso
+  // sobre o total). Em modo mês, o mês escolhido; em ano, o mais recente do
+  // ano. Some no "Geral" (meta é mensal, acumulado não compara).
+  const metaMes = useMemo(() => {
+    if (geral) return null;
+    const doAno = (totalMes.data ?? []).filter((r) => Number(r.ano) === Number(ano));
+    if (!doAno.length) return null;
+    const alvo = chaveMes(ano, mesIdx);
+    return porMes
+      ? doAno.find((r) => String(r.mes).slice(0, 7) === alvo) ?? null
+      : [...doAno].sort((a, b) => String(a.mes).localeCompare(String(b.mes))).at(-1) ?? null;
+  }, [totalMes.data, ano, mesIdx, porMes, geral]);
+
+  // Linha tracejada de meta mínima no gráfico, alinhada índice a índice com
+  // `evol` — mesma fonte consolidada.
+  const metaLinha = useMemo(() => {
+    const map = new Map((totalMes.data ?? []).map((r) => [String(r.mes).slice(0, 7), Number(r.meta_minima ?? 0)]));
+    const arr = evol.map((p) => { const v = map.get(String(p.mes).slice(0, 7)); return v ? v : null; });
+    return arr.some((v) => v != null) ? arr : null;
+  }, [totalMes.data, evol]);
+
+  /* ---- Quebra por fonte ---- */
+  const fontes = useMemo(() => {
+    const m = new Map();
+    for (const r of noRecorte(consolidada.data, "mes")) {
+      const k = r.fonte ?? "—";
+      m.set(k, (m.get(k) ?? 0) + Number(r.valor ?? 0));
+    }
+    const arr = [...m.entries()].map(([fonte, valor]) => ({ fonte, valor })).sort((a, b) => b.valor - a.valor);
+    const tot = arr.reduce((s, f) => s + f.valor, 0);
+    return arr.filter((f) => f.valor > 0).map((f) => ({ ...f, pct: tot ? (f.valor / tot) * 100 : 0 }));
+  }, [consolidada.data, inicio, fim]);
+
+  /* ---- Performance por curso ---- */
+  // Agrega por curso no recorte; por_aluno é recalculado (média de médias mente).
+  const cursos = useMemo(() => {
+    const m = new Map();
+    for (const r of noRecorte(perfCurso.data, "mes_ref")) {
+      const k = r.curso ?? "—";
+      const a = m.get(k) ?? { curso: k, alunos: 0, faturamento: 0, turmas: 0 };
+      a.alunos += Number(r.alunos ?? 0);
+      a.faturamento += Number(r.faturamento ?? 0);
+      a.turmas += Number(r.turmas ?? 0);
+      m.set(k, a);
+    }
+    return [...m.values()]
+      .map((c) => ({ ...c, por_aluno: c.alunos ? c.faturamento / c.alunos : 0 }))
+      .filter((c) => c.faturamento > 0)
+      .sort((a, b) => b[cursoModo] - a[cursoModo])
+      .slice(0, 8);
+  }, [perfCurso.data, inicio, fim, cursoModo]);
+
+  /* ---- Operacional (Omie) ---- */
+  // Mais vendidos: soma os meses do recorte e ranqueia (top 5 por faturamento).
+  const maisVendidos = useMemo(
+    () => produtosNoPeriodo(prodVend.data, inicio, fim, 5),
+    [prodVend.data, inicio, fim]
+  );
+
+  // Estoque é POSIÇÃO (snapshot do dia) — ignora o período de propósito.
+  // Imobilizado a CUSTO (o capital de fato parado); o preço de venda
+  // superestima. `sem_movimento` = zerado e sem mínimo cadastrado: limpeza
+  // de cadastro, não reposição — a view já não marca nada como abaixo do
+  // mínimo (a comparação 0 < 0 era falso positivo).
+  const est = useMemo(() => {
+    const linhas = estoque.data ?? [];
+    return {
+      total: linhas.length,
+      custo: linhas.reduce((s, x) => s + Number(x.valor_custo ?? 0), 0),
+      venda: linhas.reduce((s, x) => s + Number(x.valor_venda ?? 0), 0),
+      semMov: linhas.filter((x) => x.sem_movimento).length,
+    };
+  }, [estoque.data]);
 
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
-        <ChipKpi hero Icone={Wallet} label="Receita da loja" valor={moeda(somaPeriodo.receita)} nota={rotulo} />
-        <ChipKpi Icone={ShoppingBag} label="Vendas" valor={numero(somaPeriodo.vendas)} nota={rotulo} />
-        <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
-        <ChipKpi Icone={TrendingUp} label="Recebido" valor={moeda(somaPeriodo.recebido)} nota={rotulo} />
-        <ChipKpi Icone={AlertTriangle} label="A receber vencido" valor={mv(k?.a_receber_vencido)} nota="posição atual" />
+      <style>{`
+        /* Uma tela só, sem rolagem vertical (alvo 1080p). Três faixas. */
+        .lojaKpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+        @media (min-width: 720px)  { .lojaKpis { grid-template-columns: repeat(4, 1fr); } }
+        .lojaMid, .lojaBot { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
+        @media (min-width: 1000px) {
+          .lojaMid { grid-template-columns: 7fr 5fr; }       /* receita · estoque */
+          .lojaBot { grid-template-columns: 3fr 4fr; }       /* mais vendidos · performance curso */
+        }
+      `}</style>
+
+      {/* ---- Faixa 1: KPIs da loja (receita CONSOLIDADA) ---- */}
+      <div className="lojaKpis" style={{ marginBottom: 8 }}>
+        <ChipKpi compacto hero Icone={Wallet} label="Receita da loja" valor={moeda(receita)} nota={notaKpi} />
+        <ChipKpi compacto Icone={Receipt} label="Vendas" valor={numero(vendas)} nota={notaKpi} />
+        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={notaKpi} />
+        <ChipKpi compacto Icone={Package} label="Valor em estoque" valor={moeda(est.custo)} nota="a custo · posição atual" />
       </div>
 
-      <div className="finRow2" style={{ marginBottom: 16 }}>
-        <Bloco titulo="Receita mensal da loja" canto="R$ · mês" altura={ALTURA_PAINEL}>
-          {recMensal.isLoading
+      {/* Quebra da receita por fonte + selo de meta (some no "Geral"). */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
+        <div style={{ flex: "1 1 340px", minWidth: 260 }}>
+          <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase", color: C.dim, marginBottom: 6 }}>
+            Receita por fonte · {notaKpi}
+          </div>
+          {consolidada.error
+            ? <span style={{ fontSize: 11, color: C.faint }}>Sem a quebra por fonte neste recorte.</span>
+            : fontes.length
+              ? <FonteBreakdown fontes={fontes} />
+              : <span style={{ fontSize: 11, color: C.faint }}>Sem receita neste recorte.</span>}
+        </div>
+        {!geral && <MetaBadge meta={metaMes} />}
+      </div>
+
+      {/* ---- Faixa 2: receita mensal (consolidada, com meta) · estoque ---- */}
+      <div className="lojaMid" style={{ marginBottom: 12 }}>
+        <Bloco titulo="Receita mensal da loja" canto="consolidada · R$/mês" altura={214}>
+          {totalMes.isLoading
             ? <Estado carregando />
             : evolSemFonte
               ? <Estado vazio />
-              : <LinhaEvolucao serie={evol} idGrad="fillLoja" />}
+              : <LinhaEvolucao serie={evol} idGrad="fillLoja" mostrarNota={false}
+                  rotularParcial={false} rotularVar={false} soDestaques yRedondo
+                  meta={metaLinha} metaLabel="meta mínima do mês" />}
         </Bloco>
-        <Bloco titulo="Formas de pagamento" canto={rotulo} altura={ALTURA_PAINEL}>
-          <Estado
-            carregando={rec.isLoading}
-            erro={rec.error}
-            vazio={!formas.length}
-            vazioTitulo={tituloVazioFluxo(modo)}
-            vazioDica={`Nenhuma venda com data entre ${inicio} e ${fim}. É normal: a loja vende em lote — troque o período no topo.`}
-          >
-            <Donut segmentos={formas} size={118} centroSize={17} centroValor={formas[0] ? abreviaForma(formas[0].rotulo) : "—"} centroLabel={`${leaderPct}% líder`} centroCor={C.gold} />
+        <Bloco titulo="Estoque" canto="Omie · posição atual">
+          <Estado carregando={estoque.isLoading} erro={estoque.error} vazio={!est.total}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <EstoqueNum compacto Icone={Boxes} label="Produtos" valor={numero(est.total)} sub="no catálogo" />
+              <EstoqueNum compacto Icone={Package} label="Imobilizado" valor={moeda(est.custo)}
+                sub={`a custo (${moeda(est.venda)} a preço de venda)`} />
+              <EstoqueNum compacto Icone={PackageX} label="Sem movimento" valor={numero(est.semMov)}
+                sub="saldo zero e sem estoque mínimo cadastrado" />
+            </div>
           </Estado>
         </Bloco>
       </div>
 
-      <Bloco titulo="Produtos e estoque" canto="aguardando integração">
-        <div style={{ display: "flex", gap: 10, padding: "6px 0" }}>
-          <Package size={16} style={{ color: C.faint, marginTop: 2, flexShrink: 0 }} />
-          <div>
-            <div style={{ fontSize: 13, color: C.muted, fontWeight: 700 }}>Aguardando integração Omie</div>
-            <div style={{ fontSize: 11.5, color: C.faint, marginTop: 4, lineHeight: 1.55, maxWidth: 620 }}>
-              A loja já entrega venda, receita e recebimento. <b style={{ color: C.muted }}>Produto vendido e saldo de estoque só existem no Omie</b> — enquanto a integração não vier, esses números não aparecem aqui em vez de serem estimados.
-            </div>
+      {/* ---- Faixa 3: mais vendidos · performance por curso ---- */}
+      <div className="lojaBot" style={{ marginBottom: 10 }}>
+        <Bloco titulo="Mais vendidos" canto="Omie · top 5" sem altura={252}>
+          <Estado
+            carregando={prodVend.isLoading}
+            erro={prodVend.error}
+            vazio={!maisVendidos.length}
+            vazioTitulo={tituloVazioFluxo(modo)}
+            vazioDica="O Omie entrega venda por mês. Período curto (Hoje, 7 dias) pode não cruzar mês fechado — use Mês ou Ano no topo."
+          >
+            <ProdutosVendidos linhas={maisVendidos} />
+          </Estado>
+        </Bloco>
+        <Bloco titulo="Performance por curso"
+          canto={cursoModo === "faturamento" ? "por faturamento" : "por valor/aluno"}
+          sem altura={252}>
+          <div style={{ padding: "12px 20px 8px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+            <Segmentado valor={cursoModo} onChange={setCursoModo}
+              opcoes={[{ key: "faturamento", label: "Faturamento" }, { key: "por_aluno", label: "Por aluno" }]} />
           </div>
-        </div>
-      </Bloco>
+          <Estado
+            carregando={perfCurso.isLoading}
+            erro={perfCurso.error}
+            vazio={!cursos.length}
+            vazioTitulo={tituloVazioFluxo(modo)}
+            vazioDica="Sem curso com faturamento neste recorte. Troque o período no topo."
+          >
+            <PerformanceCurso linhas={cursos} modo={cursoModo} formatarValor={moeda} />
+            <div style={{ padding: "10px 20px 4px", fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+              Quanto a loja vende durante cada curso · planilha da gestora.
+              <b style={{ color: C.muted }}> Não somar com a receita total</b> — é o mesmo dinheiro, visto por curso.
+            </div>
+          </Estado>
+        </Bloco>
+      </div>
+
+      <RodapeIntegracoes fontes={["omie"]} />
     </>
   );
 }
@@ -3301,6 +3711,7 @@ function Shell({ perfil }) {
   const [modo, setModo] = useState("ano");
   const [ano, setAno] = useState(() => new Date().getFullYear());
   const [mesIdx, setMesIdx] = useState(() => new Date().getMonth());
+  const [geral, setGeral] = useState(false); // "Geral": todo o histórico, sem recorte de ano
   const { minMes, maxMes, anos } = useRangeDatas();
 
   // Categoria: só recorta o Hub Comercial. A lista vem do dado; sem opção
@@ -3312,10 +3723,17 @@ function Shell({ perfil }) {
 
   const ctxPeriodo = useMemo(() => {
     const dentro = (k) => k >= minMes && k <= maxMes;
-    const aplicar = (a, m) => { setAno(a); setMesIdx(m); };
+    // Qualquer navegação por ano/mês desliga o "Geral" (são exclusivos).
+    const aplicar = (a, m) => { setAno(a); setMesIdx(m); setGeral(false); };
+    const h = new Date();
+    const hoje = iso(new Date(h.getFullYear(), h.getMonth(), h.getDate()));
+    // "Geral" = todo o histórico: do primeiro mês com dado até hoje.
+    const base = geral
+      ? { inicio: `${minMes}-01`, fim: hoje, rotulo: "Geral" }
+      : intervaloDe({ modo, ano, mesIdx });
     return {
-      modo, ano, mesIdx, anos, minMes, maxMes,
-      setAno,
+      modo, ano, mesIdx, anos, minMes, maxMes, geral, setGeral,
+      setAno: (a) => { setAno(a); setGeral(false); },
       setMesAno: aplicar,
       // Navega mês a mês virando o ano (Jan ‹ vira Dez do ano anterior).
       irMes: (delta) => {
@@ -3325,7 +3743,9 @@ function Shell({ perfil }) {
         if (dentro(chaveMes(a, m))) aplicar(a, m);
       },
       // Ao entrar no modo Mês, puxa a âncora pra dentro dos limites do dado.
+      // Trocar de modo desliga o "Geral" (que é um conceito do modo Ano).
       escolherModo: (k) => {
+        if (k !== "ano") setGeral(false);
         if (k === "mes") {
           const atual = chaveMes(ano, mesIdx);
           const alvo = atual > maxMes ? maxMes : atual < minMes ? minMes : null;
@@ -3333,9 +3753,9 @@ function Shell({ perfil }) {
         }
         setModo(k);
       },
-      ...intervaloDe({ modo, ano, mesIdx }),
+      ...base,
     };
-  }, [modo, ano, mesIdx, anos, minMes, maxMes]);
+  }, [modo, ano, mesIdx, anos, minMes, maxMes, geral]);
 
   const visiveis = admin ? HUBS : HUBS.filter((h) => setores.includes(h.key));
   const hub = HUBS.find((h) => h.key === tela);
