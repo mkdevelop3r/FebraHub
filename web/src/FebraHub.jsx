@@ -22,7 +22,7 @@ import {
   useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
-  useLojaReceitaMensal, useLojaReceitaPeriodo,
+  useLojaKpis, useLojaReceitaMensal, useLojaReceitaPeriodo,
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaVendasMensal,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingAtribuicao,
@@ -1054,7 +1054,7 @@ function BarrasCategoria({ reais, orfas, semVinc, cobertura }) {
 /* `formatar` existe porque nem toda série é dinheiro grande: custo por lead
    vive na casa dos centavos e o `moeda` compacto arredondaria R$ 2,01 pra
    R$ 2. Sem o prop, o comportamento é o de antes. */
-function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda, mostrarNota = true }) {
+function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda, mostrarNota = true, rotularParcial = true }) {
   if (serie.length < 2) return null;
   const W = 720, H = 228, padL = 54, padR = 14, padT = 44, padB = 26;
   const plotW = W - padL - padR, plotH = H - padT - padB, plotBottom = padT + plotH;
@@ -1123,6 +1123,9 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
           const prev = serie[i - 1]?.valor;
           const d = prev ? ((val - prev) / prev) * 100 : null;
           const parc = serie[i].parcial;
+          // Mês em curso sem rótulo: só o ponto vazado marca o parcial (a
+          // nota abaixo já explica). Evita texto sobreposto na ponta direita.
+          if (parc && !rotularParcial) return null;
           const anchor = i === 0 ? "start" : i === n - 1 ? "end" : "middle";
           const baseY = Math.max(26, ly - 12);
           return (
@@ -3144,10 +3147,9 @@ function ProdutosVendidos({ linhas }) {
   );
 }
 
-/* Número de estoque. `alerta` pinta em vermelho — usado no "abaixo do
-   mínimo", que hoje é mais da metade do catálogo. `compacto` empilha ícone +
-   label + número numa faixa horizontal baixa, pra três caberem numa coluna
-   estreita sem esticar a página. */
+/* Número de estoque. `alerta` pinta em vermelho. `compacto` é a faixa
+   horizontal do card de estoque: ícone + "Rótulo · Valor · detalhe" numa
+   linha que QUEBRA (sem corte) — o valor destacado no meio. */
 function EstoqueNum({ Icone, label, valor, sub, alerta, compacto }) {
   const cor = alerta ? C.down : C.gold;
   if (compacto) {
@@ -3155,7 +3157,7 @@ function EstoqueNum({ Icone, label, valor, sub, alerta, compacto }) {
       <div style={{
         display: "flex", alignItems: "center", gap: 11,
         background: "rgba(255,255,255,.03)",
-        border: `1px solid ${alerta ? `${C.down}44` : C.cardLine}`, borderRadius: 11, padding: "9px 12px",
+        border: `1px solid ${alerta ? `${C.down}44` : C.cardLine}`, borderRadius: 11, padding: "10px 13px",
       }}>
         <span style={{
           width: 30, height: 30, borderRadius: 8, flexShrink: 0,
@@ -3164,11 +3166,12 @@ function EstoqueNum({ Icone, label, valor, sub, alerta, compacto }) {
         }}>
           <Icone size={15} />
         </span>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
-          {sub && <div style={{ fontSize: 9.5, color: alerta ? C.down : C.faint, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
+        <div style={{ minWidth: 0, flex: 1, fontSize: 12, lineHeight: 1.4, color: C.faint }}>
+          <b style={{ color: C.muted, fontWeight: 700 }}>{label}</b>
+          <span style={{ color: C.dim }}> · </span>
+          <b style={{ fontFamily: GROTESK, fontSize: 15.5, fontWeight: 700, letterSpacing: "-.3px", color: cor }}>{valor}</b>
+          {sub && <><span style={{ color: C.dim }}> · </span>{sub}</>}
         </div>
-        <div style={{ fontFamily: GROTESK, fontSize: 21, fontWeight: 700, letterSpacing: "-.5px", color: cor, flexShrink: 0 }}>{valor}</div>
       </div>
     );
   }
@@ -3257,35 +3260,25 @@ function BarrasCupons({ serie }) {
    que a loja passou a usar o Omie (mar/2025). "Vendas" conta cupons, não
    lançamentos: são pagos na hora, então não há "recebido" nem "a receber". */
 function HubLoja() {
-  const { inicio, fim, rotulo, modo } = usePeriodo();
-  const rec = useLojaReceitaPeriodo();
+  const { inicio, fim, modo, ano } = usePeriodo();
+  const kpis = useLojaKpis();
   const recMensal = useLojaReceitaMensal();
   const prodVend = useLojaProdutosVendidosMes();
   const estoque = useLojaEstoque();
   const vendasMensal = useLojaVendasMensal();
 
-  // Fluxo da loja recortado pelo período e reagregado por forma. Cupom é pago
-  // na hora — receita e vendas (contagem de cupons) bastam; nada de recebido.
-  const recorte = useMemo(() => noPeriodo(rec.data, { inicio, fim }), [rec.data, inicio, fim]);
-  const somaPeriodo = useMemo(() => recorte.reduce(
-    (a, r) => ({
-      receita: a.receita + Number(r.receita ?? 0),
-      vendas: a.vendas + Number(r.vendas ?? 0),
-    }),
-    { receita: 0, vendas: 0 }
-  ), [recorte]);
-  const ticket = somaPeriodo.vendas ? somaPeriodo.receita / somaPeriodo.vendas : null;
-
-  const formas = useMemo(
-    () => somarPor(recorte, "forma", ["receita"])
-      .map((r) => ({ rotulo: String(r.forma ?? "—"), valor: Number(r.receita ?? 0) }))
-      .filter((f) => f.valor > 0)
-      .sort((a, b) => b.valor - a.valor)
-      .map((f, i) => ({ ...f, cor: PALETA_FORMAS[i % PALETA_FORMAS.length] })),
-    [recorte]
+  /* Receita/vendas/ticket vêm da vw_loja_kpis, uma linha por ANO (a
+     vw_loja_receita_periodo deixou de trazer valor por venda). `ano` já é
+     inteiro na view corrigida — casa direto com o ano do filtro. Como o
+     grão é anual, a nota mostra o ano, não o rótulo fino do período. */
+  const kpiAno = useMemo(
+    () => (kpis.data ?? []).find((r) => Number(r.ano) === Number(ano)),
+    [kpis.data, ano]
   );
-  const formasTot = formas.reduce((s, f) => s + f.valor, 0);
-  const leaderPct = formasTot ? Math.round((formas[0].valor / formasTot) * 100) : 0;
+  const receita = Number(kpiAno?.receita ?? 0);
+  const vendas = Number(kpiAno?.vendas ?? 0);
+  const ticket = kpiAno?.ticket_medio != null ? Number(kpiAno.ticket_medio)
+    : (vendas ? receita / vendas : null);
 
   const evol = useMemo(() => serieMensal(recMensal.data, "receita"), [recMensal.data]);
   const evolSemFonte = !!recMensal.error || evol.length < 2;
@@ -3331,16 +3324,16 @@ function HubLoja() {
         @media (min-width: 720px)  { .lojaKpis { grid-template-columns: repeat(4, 1fr); } }
         .lojaMid, .lojaBot { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
         @media (min-width: 1000px) {
-          .lojaMid { grid-template-columns: 5fr 4fr 3fr; }   /* receita · formas · estoque */
+          .lojaMid { grid-template-columns: 7fr 5fr; }       /* receita · estoque */
           .lojaBot { grid-template-columns: 3fr 4fr; }       /* mais vendidos · volume */
         }
       `}</style>
 
-      {/* ---- Faixa 1: KPIs da loja (Omie PDV) ---- */}
+      {/* ---- Faixa 1: KPIs da loja (Omie PDV) — grão anual (vw_loja_kpis) ---- */}
       <div className="lojaKpis" style={{ marginBottom: 8 }}>
-        <ChipKpi compacto hero Icone={Wallet} label="Receita da loja" valor={moeda(somaPeriodo.receita)} nota={rotulo} />
-        <ChipKpi compacto Icone={Receipt} label="Vendas · cupons" valor={numero(somaPeriodo.vendas)} nota={rotulo} />
-        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
+        <ChipKpi compacto hero Icone={Wallet} label="Receita da loja" valor={moeda(receita)} nota={`ano ${ano}`} />
+        <ChipKpi compacto Icone={Receipt} label="Vendas · cupons" valor={numero(vendas)} nota={`ano ${ano}`} />
+        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={`ano ${ano}`} />
         <ChipKpi compacto Icone={Package} label="Valor em estoque" valor={moeda(est.custo)} nota="a custo · posição atual" />
       </div>
 
@@ -3353,34 +3346,23 @@ function HubLoja() {
         <span style={{ color: C.dim }}>“Vendas” conta cupons (pagos na hora), não lançamentos de caixa.</span>
       </div>
 
-      {/* ---- Faixa 2: receita mensal · formas · estoque ---- */}
+      {/* ---- Faixa 2: receita mensal · estoque (Formas de pagamento removido) ---- */}
       <div className="lojaMid" style={{ marginBottom: 12 }}>
         <Bloco titulo="Receita mensal da loja" canto="Omie PDV · R$/mês" altura={214}>
           {recMensal.isLoading
             ? <Estado carregando />
             : evolSemFonte
               ? <Estado vazio />
-              : <LinhaEvolucao serie={evol} idGrad="fillLoja" mostrarNota={false} />}
-        </Bloco>
-        <Bloco titulo="Formas de pagamento" canto={`Omie PDV · ${rotulo}`} altura={214}>
-          <Estado
-            carregando={rec.isLoading}
-            erro={rec.error}
-            vazio={!formas.length}
-            vazioTitulo={tituloVazioFluxo(modo)}
-            vazioDica={`Nenhum cupom com data entre ${inicio} e ${fim}. Troque o período no topo.`}
-          >
-            <Donut segmentos={formas} size={108} centroSize={16} centroValor={formas[0] ? abreviaForma(formas[0].rotulo) : "—"} centroLabel={`${leaderPct}% líder`} centroCor={C.gold} />
-          </Estado>
+              : <LinhaEvolucao serie={evol} idGrad="fillLoja" mostrarNota={false} rotularParcial={false} />}
         </Bloco>
         <Bloco titulo="Estoque" canto="Omie · posição atual">
           <Estado carregando={estoque.isLoading} erro={estoque.error} vazio={!est.total}>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <EstoqueNum compacto Icone={Boxes} label="Produtos" valor={numero(est.total)} sub="no catálogo" />
-              <EstoqueNum compacto Icone={Package} label="Imobilizado · a custo" valor={moeda(est.custo)}
-                sub={`${moeda(est.venda)} a preço de venda`} />
+              <EstoqueNum compacto Icone={Package} label="Imobilizado" valor={moeda(est.custo)}
+                sub={`a custo (${moeda(est.venda)} a preço de venda)`} />
               <EstoqueNum compacto Icone={PackageX} label="Sem movimento" valor={numero(est.semMov)}
-                sub="zerados, sem mínimo · revisar cadastro" />
+                sub="saldo zero e sem estoque mínimo cadastrado" />
             </div>
           </Estado>
         </Bloco>
