@@ -1054,7 +1054,7 @@ function BarrasCategoria({ reais, orfas, semVinc, cobertura }) {
 /* `formatar` existe porque nem toda série é dinheiro grande: custo por lead
    vive na casa dos centavos e o `moeda` compacto arredondaria R$ 2,01 pra
    R$ 2. Sem o prop, o comportamento é o de antes. */
-function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda }) {
+function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda, mostrarNota = true }) {
   if (serie.length < 2) return null;
   const W = 720, H = 228, padL = 54, padR = 14, padT = 44, padB = 26;
   const plotW = W - padL - padR, plotH = H - padT - padB, plotBottom = padT + plotH;
@@ -1144,9 +1144,11 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
           </text>
         ))}
       </svg>
-      <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6 }}>
-        Último ponto = mês em curso (parcial), não comparável a mês fechado. Escala do eixo Y calculada só sobre meses fechados.
-      </div>
+      {mostrarNota && (
+        <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6 }}>
+          Último ponto = mês em curso (parcial), não comparável a mês fechado. Escala do eixo Y calculada só sobre meses fechados.
+        </div>
+      )}
     </>
   );
 }
@@ -3144,10 +3146,34 @@ function ProdutosVendidos({ linhas }) {
   );
 }
 
-/* Número grande de estoque. `alerta` pinta em vermelho — usado no "abaixo do
-   mínimo", que hoje é mais da metade do catálogo. */
-function EstoqueNum({ Icone, label, valor, sub, alerta }) {
+/* Número de estoque. `alerta` pinta em vermelho — usado no "abaixo do
+   mínimo", que hoje é mais da metade do catálogo. `compacto` empilha ícone +
+   label + número numa faixa horizontal baixa, pra três caberem numa coluna
+   estreita sem esticar a página. */
+function EstoqueNum({ Icone, label, valor, sub, alerta, compacto }) {
   const cor = alerta ? C.down : C.gold;
+  if (compacto) {
+    return (
+      <div style={{
+        display: "flex", alignItems: "center", gap: 11,
+        background: "rgba(255,255,255,.03)",
+        border: `1px solid ${alerta ? `${C.down}44` : C.cardLine}`, borderRadius: 11, padding: "9px 12px",
+      }}>
+        <span style={{
+          width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+          background: alerta ? `${C.down}1e` : `${C.gold}18`, color: cor,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <Icone size={15} />
+        </span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
+          {sub && <div style={{ fontSize: 9.5, color: alerta ? C.down : C.faint, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
+        </div>
+        <div style={{ fontFamily: GROTESK, fontSize: 21, fontWeight: 700, letterSpacing: "-.5px", color: cor, flexShrink: 0 }}>{valor}</div>
+      </div>
+    );
+  }
   return (
     <div style={{
       flex: 1, minWidth: 150, background: "rgba(255,255,255,.03)",
@@ -3198,16 +3224,20 @@ function ReporEstoque({ linhas }) {
 }
 
 /* Cupons por mês — barras de CONTAGEM (não reais). O mês corrente é parcial
-   e sai hachurado, como nos outros gráficos mensais do painel. */
+   e sai hachurado, como nos outros gráficos mensais do painel. Denso: só as
+   barras mais altas ganham rótulo; o valor de qualquer mês aparece no hover
+   (title nativo do SVG). */
 function BarrasCupons({ serie }) {
   if (!serie.length) return null;
-  const W = 720, H = 210, padL = 34, padR = 12, padT = 26, padB = 24;
+  const W = 720, H = 168, padL = 30, padR = 12, padT = 20, padB = 22;
   const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
   const max = Math.max(...serie.map((s) => s.cupons), 1);
   const n = serie.length, slot = plotW / n, bw = Math.min(34, slot * 0.62);
   const cx = (i) => padL + slot * i + slot / 2;
   const y = (v) => base - (v / max) * plotH;
-  const alvo = 12, passo = Math.max(1, Math.ceil(n / alvo));
+  const alvo = 10, passo = Math.max(1, Math.ceil(n / alvo));
+  // Rótulo só nas barras altas (≥ 70% do pico) — as demais ficam pro hover.
+  const rotular = (v) => v >= max * 0.7;
   return (
     <>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
@@ -3230,18 +3260,21 @@ function BarrasCupons({ serie }) {
         })}
         {serie.map((s, i) => (
           <g key={s.mes}>
+            <title>{`${mesCurto(String(s.mes).slice(0, 7))}: ${numero(s.cupons)} cupons${s.parcial ? " (parcial)" : ""}`}</title>
             <rect x={cx(i) - bw / 2} y={y(s.cupons)} width={bw} height={Math.max(0, base - y(s.cupons))} rx="3"
               fill={s.parcial ? "url(#hachCupons)" : "url(#gradCupons)"}
               stroke={s.parcial ? C.gold : "none"} strokeDasharray={s.parcial ? "4 3" : undefined} strokeWidth={s.parcial ? 1 : 0} />
-            <text x={cx(i)} y={y(s.cupons) - 6} fontSize="9.5" fontWeight="700" textAnchor="middle" fill={s.parcial ? C.faint : C.bright} fontFamily={GROTESK}>{numero(s.cupons)}</text>
+            {rotular(s.cupons) && (
+              <text x={cx(i)} y={y(s.cupons) - 5} fontSize="9.5" fontWeight="700" textAnchor="middle" fill={s.parcial ? C.faint : C.bright} fontFamily={GROTESK}>{numero(s.cupons)}</text>
+            )}
           </g>
         ))}
         {serie.map((s, i) => (i % passo === 0 || i === n - 1) && (
-          <text key={s.mes} x={cx(i)} y={H - 7} fontSize="9.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>{mesCurto(String(s.mes).slice(0, 7))}</text>
+          <text key={s.mes} x={cx(i)} y={H - 7} fontSize="9" textAnchor="middle" fill={C.faint} fontFamily={SANS}>{mesCurto(String(s.mes).slice(0, 7))}</text>
         ))}
       </svg>
-      <div style={{ fontSize: 10.5, color: C.faint, marginTop: 4 }}>
-        Contagem de cupons fiscais, não receita. Último mês hachurado = <b style={{ color: C.muted }}>parcial</b> (em andamento).
+      <div style={{ fontSize: 10, color: C.faint, marginTop: 2 }}>
+        Contagem de cupons, não receita. Passe o mouse para o valor de cada mês. Último hachurado = <b style={{ color: C.muted }}>parcial</b>.
       </div>
     </>
   );
@@ -3262,7 +3295,6 @@ function HubLoja() {
 
   const k = kpis.data?.[0];
   const mv = (x) => (x == null ? "—" : moeda(Number(x)));
-  const nv = (x) => (x == null ? "—" : numero(Number(x)));
 
   // Fluxo da loja recortado pelo período e reagregado por forma.
   const recorte = useMemo(() => noPeriodo(rec.data, { inicio, fim }), [rec.data, inicio, fim]);
@@ -3291,9 +3323,9 @@ function HubLoja() {
   const evolSemFonte = !!recMensal.error || evol.length < 2;
 
   /* ---- Operacional (Omie) ---- */
-  // Mais vendidos: soma os meses do recorte e ranqueia (top 10 por faturamento).
+  // Mais vendidos: soma os meses do recorte e ranqueia (top 5 por faturamento).
   const maisVendidos = useMemo(
-    () => produtosNoPeriodo(prodVend.data, inicio, fim, 10),
+    () => produtosNoPeriodo(prodVend.data, inicio, fim, 5),
     [prodVend.data, inicio, fim]
   );
 
@@ -3331,23 +3363,49 @@ function HubLoja() {
 
   return (
     <>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
-        <ChipKpi hero Icone={Wallet} label="Receita da loja" valor={moeda(somaPeriodo.receita)} nota={rotulo} />
-        <ChipKpi Icone={ShoppingBag} label="Vendas" valor={numero(somaPeriodo.vendas)} nota={rotulo} />
-        <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
-        <ChipKpi Icone={TrendingUp} label="Recebido" valor={moeda(somaPeriodo.recebido)} nota={rotulo} />
-        <ChipKpi Icone={AlertTriangle} label="A receber vencido" valor={mv(k?.a_receber_vencido)} nota="posição atual" />
+      <style>{`
+        /* Uma tela só, sem rolagem vertical (alvo 1080p). Três faixas. */
+        .lojaKpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+        @media (min-width: 720px)  { .lojaKpis { grid-template-columns: repeat(5, 1fr); } }
+        .lojaMid, .lojaBot { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
+        @media (min-width: 1000px) {
+          .lojaMid { grid-template-columns: 5fr 4fr 3fr; }   /* receita · formas · estoque */
+          .lojaBot { grid-template-columns: 1fr 1fr 1fr; }   /* vendidos · repor · volume */
+        }
+      `}</style>
+
+      {/* ---- Faixa 1: KPIs financeiros (Conta Azul) ---- */}
+      <div className="lojaKpis" style={{ marginBottom: 8 }}>
+        <ChipKpi compacto hero Icone={Wallet} label="Receita da loja" valor={moeda(somaPeriodo.receita)} nota={rotulo} />
+        <ChipKpi compacto Icone={ShoppingBag} label="Vendas" valor={numero(somaPeriodo.vendas)} nota={rotulo} />
+        <ChipKpi compacto Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
+        <ChipKpi compacto Icone={TrendingUp} label="Recebido" valor={moeda(somaPeriodo.recebido)} nota={rotulo} />
+        <ChipKpi compacto Icone={AlertTriangle} label="A receber vencido" valor={mv(k?.a_receber_vencido)} nota="posição atual" />
       </div>
 
-      <div className="finRow2" style={{ marginBottom: 16 }}>
-        <Bloco titulo="Receita mensal da loja" canto="R$ · mês" altura={ALTURA_PAINEL}>
+      {/* Legenda das duas fontes: medem coisas diferentes e não se somam. */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 16px", alignItems: "center", fontSize: 10.5, color: C.faint, marginBottom: 14 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 7, height: 7, borderRadius: 2, background: C.gold, flexShrink: 0 }} />
+          <b style={{ color: C.muted, fontWeight: 700 }}>Conta Azul</b> · financeiro (lançamentos de caixa)
+        </span>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <span style={{ width: 7, height: 7, borderRadius: 2, background: C.faint, flexShrink: 0 }} />
+          <b style={{ color: C.muted, fontWeight: 700 }}>Omie PDV</b> · produtos e estoque (cupom fiscal)
+        </span>
+        <span style={{ color: C.dim }}>— medem coisas diferentes; os totais não se somam nem se comparam.</span>
+      </div>
+
+      {/* ---- Faixa 2: receita mensal · formas · estoque ---- */}
+      <div className="lojaMid" style={{ marginBottom: 12 }}>
+        <Bloco titulo="Receita mensal da loja" canto="Conta Azul · R$/mês" altura={214}>
           {recMensal.isLoading
             ? <Estado carregando />
             : evolSemFonte
               ? <Estado vazio />
-              : <LinhaEvolucao serie={evol} idGrad="fillLoja" />}
+              : <LinhaEvolucao serie={evol} idGrad="fillLoja" mostrarNota={false} />}
         </Bloco>
-        <Bloco titulo="Formas de pagamento" canto={rotulo} altura={ALTURA_PAINEL}>
+        <Bloco titulo="Formas de pagamento" canto={`Conta Azul · ${rotulo}`} altura={214}>
           <Estado
             carregando={rec.isLoading}
             erro={rec.error}
@@ -3355,76 +3413,57 @@ function HubLoja() {
             vazioTitulo={tituloVazioFluxo(modo)}
             vazioDica={`Nenhuma venda com data entre ${inicio} e ${fim}. É normal: a loja vende em lote — troque o período no topo.`}
           >
-            <Donut segmentos={formas} size={118} centroSize={17} centroValor={formas[0] ? abreviaForma(formas[0].rotulo) : "—"} centroLabel={`${leaderPct}% líder`} centroCor={C.gold} />
+            <Donut segmentos={formas} size={108} centroSize={16} centroValor={formas[0] ? abreviaForma(formas[0].rotulo) : "—"} centroLabel={`${leaderPct}% líder`} centroCor={C.gold} />
+          </Estado>
+        </Bloco>
+        <Bloco titulo="Estoque" canto="Omie · posição atual">
+          <Estado carregando={estoque.isLoading} erro={estoque.error} vazio={!est.total}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <EstoqueNum compacto Icone={Boxes} label="Produtos" valor={numero(est.total)} sub="no catálogo" />
+              <EstoqueNum compacto Icone={Package} label="Valor em estoque" valor={moeda(est.valor)} sub="parado na prateleira" />
+              <EstoqueNum compacto Icone={PackageX} label="Abaixo do mínimo" valor={numero(est.abaixo)} alerta
+                sub={`${pctAbaixo}% do catálogo`} />
+            </div>
           </Estado>
         </Bloco>
       </div>
 
-      {/* ---- Seção operacional (Omie PDV) ---- */}
-      <div style={{ margin: "30px 0 16px" }}>
-        <h2 style={{ fontSize: 16, fontWeight: 800, color: C.bright }}>Produtos e estoque</h2>
-        <div style={{ fontSize: 12.5, color: C.faint, marginTop: 4, display: "flex", alignItems: "center", gap: 7 }}>
-          <Package size={13} style={{ color: C.gold }} />
-          O que sai da prateleira · Omie PDV
-        </div>
-        <div style={{ fontSize: 11.5, color: C.dim, marginTop: 8, lineHeight: 1.55, maxWidth: 760 }}>
-          Visão de <b style={{ color: C.muted }}>produto e estoque</b>, não de receita. Vem do Omie (cada cupom fiscal
-          do balcão); a parte financeira acima vem da Conta Azul (lançamentos de caixa). Os totais das duas
-          <b style={{ color: C.muted }}> não batem entre si</b> — a Conta Azul agrupa vendas em lançamentos —, então
-          não são somados nem comparados.
-        </div>
-      </div>
-
-      <div className="finRow2" style={{ marginBottom: 16 }}>
-        <Bloco titulo="Mais vendidos" canto={`${rotulo} · top 10 por faturamento`} sem altura={ALTURA_PAINEL + 60}>
+      {/* ---- Faixa 3: mais vendidos · repor · volume (tudo Omie) ---- */}
+      <div className="lojaBot" style={{ marginBottom: 10 }}>
+        <Bloco titulo="Mais vendidos" canto="Omie · top 5" sem altura={214}>
           <Estado
             carregando={prodVend.isLoading}
             erro={prodVend.error}
             vazio={!maisVendidos.length}
             vazioTitulo={tituloVazioFluxo(modo)}
-            vazioDica="O Omie entrega venda de produto por mês. Períodos curtos (Hoje, 7 dias) podem não cruzar nenhum mês fechado — troque para Mês ou Ano no topo."
+            vazioDica="O Omie entrega venda por mês. Período curto (Hoje, 7 dias) pode não cruzar mês fechado — use Mês ou Ano no topo."
           >
             <ProdutosVendidos linhas={maisVendidos} />
           </Estado>
         </Bloco>
-
-        <div>
-          <Bloco titulo="Estoque" canto="posição atual">
-            <Estado carregando={estoque.isLoading} erro={estoque.error} vazio={!est.total}>
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
-                <EstoqueNum Icone={Boxes} label="Produtos" valor={numero(est.total)} sub="no catálogo" />
-                <EstoqueNum Icone={Package} label="Valor em estoque" valor={moeda(est.valor)} sub="parado na prateleira" />
-                <EstoqueNum Icone={PackageX} label="Abaixo do mínimo" valor={numero(est.abaixo)} alerta
-                  sub={`${pctAbaixo}% do catálogo — mais da metade`} />
-              </div>
-            </Estado>
-          </Bloco>
-
-          <Bloco titulo="Repor com urgência" canto="lista de compras · mais crítico primeiro" sem altura={ALTURA_PAINEL - 40}>
-            <Estado
-              carregando={estoque.isLoading}
-              erro={estoque.error}
-              vazio={!repor.length}
-              vazioTitulo="Nada abaixo do mínimo"
-              vazioDica="Nenhum produto precisa de reposição agora."
-            >
-              <ReporEstoque linhas={repor} />
-            </Estado>
-          </Bloco>
-        </div>
+        <Bloco titulo="Repor com urgência" canto="Omie · crítico primeiro" sem altura={214}>
+          <Estado
+            carregando={estoque.isLoading}
+            erro={estoque.error}
+            vazio={!repor.length}
+            vazioTitulo="Nada abaixo do mínimo"
+            vazioDica="Nenhum produto precisa de reposição agora."
+          >
+            <ReporEstoque linhas={repor} />
+          </Estado>
+        </Bloco>
+        <Bloco titulo="Volume de vendas" canto="Omie · cupons/mês">
+          <Estado
+            carregando={vendasMensal.isLoading}
+            erro={vendasMensal.error}
+            vazio={serieCupons.length < 2}
+            vazioTitulo="Histórico insuficiente"
+            vazioDica="São necessários pelo menos dois meses para o gráfico."
+          >
+            <BarrasCupons serie={serieCupons} />
+          </Estado>
+        </Bloco>
       </div>
-
-      <Bloco titulo="Cupons por mês" canto="volume de vendas · contagem de cupons">
-        <Estado
-          carregando={vendasMensal.isLoading}
-          erro={vendasMensal.error}
-          vazio={serieCupons.length < 2}
-          vazioTitulo="Histórico insuficiente"
-          vazioDica="São necessários pelo menos dois meses para o gráfico."
-        >
-          <BarrasCupons serie={serieCupons} />
-        </Estado>
-      </Bloco>
 
       <RodapeIntegracoes fontes={["omie"]} />
     </>
