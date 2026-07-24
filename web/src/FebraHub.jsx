@@ -23,6 +23,7 @@ import {
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
   useLojaReceitaPeriodo, useLojaReceitaTotalMes, useLojaReceitaConsolidada,
+  useLojaSerie, useLojaKpisAno,
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingAtribuicao,
@@ -148,11 +149,11 @@ function useRangeDatas() {
   const b = useFinanceiroDespesaCategoriaPeriodo();
   const c = useLojaReceitaPeriodo();
   // A loja (gestora RLS) não enxerga as views financeiras, então os anos dela
-  // saíam só de `c`, que hoje traz só 2026 — 2025 sumia do seletor. A receita
-  // consolidada mensal cobre desde mar/2025, então entra como fonte dos anos
-  // (e do minMes). Cada view usa sua coluna de data: `data` nas _periodo,
-  // `mes` na total_mes. Para quem não é da loja ela vem vazia (RLS), sem efeito.
-  const d = useLojaReceitaTotalMes();
+  // saíam só de `c`, que traz só 2026. A série longa da loja cobre 2022-2026,
+  // então entra como fonte dos anos (e do minMes). Cada view usa sua coluna de
+  // data: `data` nas _periodo, `mes` na série. Para quem não é da loja ela vem
+  // vazia (RLS), sem efeito nos outros hubs.
+  const d = useLojaSerie();
   return useMemo(() => {
     const h = new Date();
     const maxMes = chaveMes(h.getFullYear(), h.getMonth());
@@ -1103,11 +1104,30 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
 
   const parcialIdx = serie.findIndex((s) => s.parcial);
   const temParcial = parcialIdx > 0;
-  const ultSolido = temParcial ? parcialIdx - 1 : n - 1;
-  const solidPts = pts.slice(0, ultSolido + 1);
-  const solido = solidPts.map((p) => p.join(",")).join(" ");
-  const tracejado = temParcial ? [pts[parcialIdx - 1], pts[parcialIdx]].map((p) => p.join(",")).join(" ") : null;
-  const area = `M ${solidPts.map((p) => p.join(",")).join(" L ")} L ${solidPts.at(-1)[0]},${plotBottom} L ${solidPts[0][0]},${plotBottom} Z`;
+
+  // Linha em SEGMENTOS por estilo: 'parcial' (entra no mês em curso, tracejado
+  // leve), 'prov' (ponto com `provisorio` — ex.: fonte planilha 2022-24,
+  // tracejado) e 'solido' (o resto). Consecutivos do mesmo estilo viram uma
+  // polyline. Sem nenhum `provisorio` nem parcial, vira uma única linha sólida
+  // — comportamento idêntico ao de antes (Financeiro/Marketing intactos).
+  const segEstiloDe = (i) => {
+    if (serie[i + 1].parcial) return "parcial";
+    if (serie[i].provisorio || serie[i + 1].provisorio) return "prov";
+    return "solido";
+  };
+  const segmentos = [];
+  for (let i = 0; i < n - 1; i++) {
+    const e = segEstiloDe(i);
+    const ult = segmentos.at(-1);
+    if (ult && ult.estilo === e) ult.pts.push(pts[i + 1]);
+    else segmentos.push({ estilo: e, pts: [pts[i], pts[i + 1]] });
+  }
+  // Área só sob os pontos SÓLIDOS (fechados e não-provisórios) — bloco contíguo.
+  const solidoIdx = serie.map((s, i) => i).filter((i) => !serie[i].provisorio && !serie[i].parcial);
+  const areaPts = solidoIdx.map((i) => pts[i]);
+  const area = areaPts.length > 1
+    ? `M ${areaPts.map((p) => p.join(",")).join(" L ")} L ${areaPts.at(-1)[0]},${plotBottom} L ${areaPts[0][0]},${plotBottom} Z`
+    : "";
 
   // Linha de meta: segmentos contíguos de meses com meta definida (não liga
   // por cima de buracos, senão inventaria meta onde não há).
@@ -1158,14 +1178,20 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
             </g>
           );
         })}
-        <path d={area} fill={`url(#${idGrad})`} />
+        {area && <path d={area} fill={`url(#${idGrad})`} />}
         {/* Meta: linha de referência azul tracejada, distinta da receita. */}
         {metaSegs.map((seg, i) => (
           <polyline key={"meta" + i} points={seg.map((p) => p.join(",")).join(" ")} fill="none"
             stroke={ARRED_META} strokeWidth="1.4" strokeDasharray="5 4" strokeLinecap="round" opacity="0.85" />
         ))}
-        <polyline points={solido} fill="none" stroke={cor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-        {tracejado && <polyline points={tracejado} fill="none" stroke={cor} strokeWidth="2" strokeDasharray="5 4" strokeLinecap="round" opacity="0.6" />}
+        {/* Linha da receita, em segmentos: sólido = consolidado; tracejado =
+            planilha (provisório) ou mês em curso. */}
+        {segmentos.map((s, i) => (
+          <polyline key={"seg" + i} points={s.pts.map((p) => p.join(",")).join(" ")} fill="none"
+            stroke={cor} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"
+            strokeDasharray={s.estilo === "solido" ? undefined : "5 4"}
+            opacity={s.estilo === "parcial" ? 0.6 : s.estilo === "prov" ? 0.85 : 1} />
+        ))}
         {/* pontinho nos meses rotulados + o ponto parcial destacado (vazado) */}
         {xticks.map((i) => serie[i].parcial ? null : (
           <circle key={"d" + i} cx={pts[i][0]} cy={pts[i][1]} r="2.4" fill={cor} />
@@ -3380,12 +3406,16 @@ function PerformanceCurso({ linhas, modo, formatarValor }) {
 }
 
 /* Hub Loja. Receita da loja é da LOJA — nunca entra num total junto com
-   curso (unidades diferentes). Receita agora é CONSOLIDADA
-   (vw_loja_receita_total_mes): produtos/Omie + livrão, cursos premium,
-   aluguel de sala e Sentido de Brincar. A meta é recalculada sobre esse
-   total. A série começa em mar/2025 (antes não havia Omie). */
+   curso (unidades diferentes). A série de receita é LONGA (2022-2026) e a
+   fonte muda no meio: 2022-2024 = planilha de fechamento da gestora,
+   2025+ = consolidado (Omie + livrão, cursos premium, aluguel, Sentido de
+   Brincar). O gráfico marca a transição (tracejado→sólido) porque a queda
+   entre os dois reflete a troca de fonte, não o negócio. As metas vêm todas
+   da planilha (2022-2026). Vendas/ticket só existem no consolidado (2025+). */
 function HubLoja() {
   const { inicio, fim, modo, ano, mesIdx, rotulo, geral } = usePeriodo();
+  const serie = useLojaSerie();
+  const kpisAno = useLojaKpisAno();
   const totalMes = useLojaReceitaTotalMes();
   const consolidada = useLojaReceitaConsolidada();
   const prodVend = useLojaProdutosVendidosMes();
@@ -3405,39 +3435,63 @@ function HubLoja() {
     });
   };
 
-  /* Receita/vendas/ticket = soma dos meses do recorte, do total consolidado.
-     Um mês no modo mês; o ano no modo ano; tudo no "Geral". */
+  /* RECEITA (2022-2026): por MÊS vem da série longa; por ANO/"Geral", da
+     vw_loja_kpis_ano — linha por ano + a de `ano = null` (acumulado). Casa o
+     ano; no Geral, a linha nula. */
+  const receita = useMemo(() => {
+    if (porMes) {
+      const alvo = chaveMes(ano, mesIdx);
+      const r = (serie.data ?? []).find((x) => String(x.mes).slice(0, 7) === alvo);
+      return Number(r?.receita ?? 0);
+    }
+    const linha = (kpisAno.data ?? []).find((r) => (geral ? r.ano == null : Number(r.ano) === Number(ano)));
+    return Number(linha?.receita ?? 0);
+  }, [serie.data, kpisAno.data, porMes, ano, mesIdx, geral]);
+
+  /* VENDAS/TICKET só existem no consolidado (2025+, vw_loja_receita_total_mes).
+     Somam o recorte; para 2022-2024 (sem cupom) ficam vazios — honesto. */
   const totRecorte = useMemo(() => noRecorte(totalMes.data, "mes"), [totalMes.data, inicio, fim]);
-  const receita = totRecorte.reduce((s, r) => s + Number(r.receita ?? 0), 0);
   const vendas = totRecorte.reduce((s, r) => s + Number(r.vendas ?? 0), 0);
-  const ticket = vendas ? receita / vendas : null;
+  const ticketBase = totRecorte.reduce((s, r) => s + Number(r.receita ?? 0), 0);
+  const ticket = vendas ? ticketBase / vendas : null;
   const notaKpi = geral ? "todo o histórico" : porMes ? rotulo : `ano ${ano}`;
 
-  // Série mensal consolidada pro gráfico (começa em mar/2025).
-  const evol = useMemo(() => serieMensal(totalMes.data, "receita"), [totalMes.data]);
-  const evolSemFonte = !!totalMes.error || evol.length < 2;
+  // Série do gráfico (2022-2026): valor + meta + `provisorio` (planilha, <2025,
+  // sai tracejado) + `parcial` (mês em curso). Meses ausentes (abr/2023) não
+  // vêm da view, então o gráfico pula — nunca desenha zero.
+  const evol = useMemo(() => {
+    const d = new Date();
+    const cm = chaveMes(d.getFullYear(), d.getMonth());
+    return (serie.data ?? [])
+      .filter((r) => r.mes)
+      .map((r) => ({
+        mes: r.mes,
+        valor: Number(r.receita ?? 0),
+        meta: r.meta_minima != null ? Number(r.meta_minima) : null,
+        provisorio: String(r.mes).slice(0, 7) < "2025-01",
+        parcial: !!r.em_curso || String(r.mes).slice(0, 7) === cm,
+      }))
+      .sort((a, b) => String(a.mes).localeCompare(String(b.mes)));
+  }, [serie.data]);
+  const evolSemFonte = !!serie.error || evol.length < 2;
+  const metaLinha = useMemo(() => {
+    const arr = evol.map((p) => p.meta);
+    return arr.some((v) => v != null) ? arr : null;
+  }, [evol]);
+  const temTransicao = evol.some((p) => p.provisorio) && evol.some((p) => !p.provisorio);
 
-  /* ---- Meta x realizado (consolidada) ---- */
-  // Selo: a linha do mês da vw_loja_receita_total_mes (traz meta e em_curso
-  // sobre o total). Em modo mês, o mês escolhido; em ano, o mais recente do
-  // ano. Some no "Geral" (meta é mensal, acumulado não compara).
+  /* ---- Meta x realizado ---- */
+  // Selo: a linha do mês da série longa (traz meta, nível e em_curso). Em modo
+  // mês, o mês escolhido; em ano, o mais recente do ano. Some no "Geral".
   const metaMes = useMemo(() => {
     if (geral) return null;
-    const doAno = (totalMes.data ?? []).filter((r) => Number(r.ano) === Number(ano));
+    const doAno = (serie.data ?? []).filter((r) => Number(r.ano) === Number(ano));
     if (!doAno.length) return null;
     const alvo = chaveMes(ano, mesIdx);
     return porMes
       ? doAno.find((r) => String(r.mes).slice(0, 7) === alvo) ?? null
       : [...doAno].sort((a, b) => String(a.mes).localeCompare(String(b.mes))).at(-1) ?? null;
-  }, [totalMes.data, ano, mesIdx, porMes, geral]);
-
-  // Linha tracejada de meta mínima no gráfico, alinhada índice a índice com
-  // `evol` — mesma fonte consolidada.
-  const metaLinha = useMemo(() => {
-    const map = new Map((totalMes.data ?? []).map((r) => [String(r.mes).slice(0, 7), Number(r.meta_minima ?? 0)]));
-    const arr = evol.map((p) => { const v = map.get(String(p.mes).slice(0, 7)); return v ? v : null; });
-    return arr.some((v) => v != null) ? arr : null;
-  }, [totalMes.data, evol]);
+  }, [serie.data, ano, mesIdx, porMes, geral]);
 
   /* ---- Quebra por fonte ---- */
   const fontes = useMemo(() => {
@@ -3505,11 +3559,11 @@ function HubLoja() {
         }
       `}</style>
 
-      {/* ---- Faixa 1: KPIs da loja (receita CONSOLIDADA) ---- */}
+      {/* ---- Faixa 1: KPIs da loja (receita 2022-2026) ---- */}
       <div className="lojaKpis" style={{ marginBottom: 8 }}>
         <ChipKpi compacto hero Icone={Wallet} label="Receita da loja" valor={moeda(receita)} nota={notaKpi} />
-        <ChipKpi compacto Icone={Receipt} label="Vendas" valor={numero(vendas)} nota={notaKpi} />
-        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={notaKpi} />
+        <ChipKpi compacto Icone={Receipt} label="Vendas" valor={vendas ? numero(vendas) : "—"} nota={vendas ? notaKpi : "só no consolidado (2025+)"} />
+        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={ticket != null ? notaKpi : "só no consolidado (2025+)"} />
         <ChipKpi compacto Icone={Package} label="Valor em estoque" valor={moeda(est.custo)} nota="a custo · posição atual" />
       </div>
 
@@ -3523,21 +3577,34 @@ function HubLoja() {
             ? <span style={{ fontSize: 11, color: C.faint }}>Sem a quebra por fonte neste recorte.</span>
             : fontes.length
               ? <FonteBreakdown fontes={fontes} />
-              : <span style={{ fontSize: 11, color: C.faint }}>Sem receita neste recorte.</span>}
+              : <span style={{ fontSize: 11, color: C.faint }}>Quebra por fonte só a partir de 2025 (consolidado).</span>}
         </div>
         {!geral && <MetaBadge meta={metaMes} />}
       </div>
 
       {/* ---- Faixa 2: receita mensal (consolidada, com meta) · estoque ---- */}
       <div className="lojaMid" style={{ marginBottom: 12 }}>
-        <Bloco titulo="Receita mensal da loja" canto="consolidada · R$/mês" altura={214}>
-          {totalMes.isLoading
+        <Bloco titulo="Receita mensal da loja" canto="2022–2026 · R$/mês" altura={230}>
+          {serie.isLoading
             ? <Estado carregando />
             : evolSemFonte
               ? <Estado vazio />
-              : <LinhaEvolucao serie={evol} idGrad="fillLoja" mostrarNota={false}
-                  rotularParcial={false} rotularVar={false} soDestaques yRedondo
-                  meta={metaLinha} metaLabel="meta mínima do mês" />}
+              : <>
+                  <LinhaEvolucao serie={evol} idGrad="fillLoja" mostrarNota={false}
+                    rotularParcial={false} rotularVar={false} soDestaques yRedondo
+                    meta={metaLinha} metaLabel="meta mínima do mês" />
+                  {temTransicao && (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 14px", alignItems: "center", fontSize: 10, color: C.faint, marginTop: 4 }}>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ width: 16, height: 0, borderTop: `2px dashed ${C.gold}`, opacity: 0.85, flexShrink: 0 }} /> planilha (2022–2024)
+                      </span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                        <span style={{ width: 16, height: 0, borderTop: `2px solid ${C.gold}`, flexShrink: 0 }} /> consolidado (2025+)
+                      </span>
+                      <span style={{ color: C.dim }}>A queda em 2025 é a <b style={{ color: C.muted }}>troca de fonte</b>, não o desempenho.</span>
+                    </div>
+                  )}
+                </>}
         </Bloco>
         <Bloco titulo="Estoque" canto="Omie · posição atual">
           <Estado carregando={estoque.isLoading} erro={estoque.error} vazio={!est.total}>

@@ -216,6 +216,23 @@ export const useLojaReceitaTotalMes = () =>
 export const useLojaReceitaConsolidada = () =>
   useView("vw_loja_receita_consolidada", { ordem: ["mes", "fonte"] });
 
+/* Série mensal LONGA da receita (2022 a 2026) — a fonte muda ao longo dela:
+   2022-2024 vêm da planilha de fechamento da gestora, 2025+ do consolidado
+   (Omie + livrão, cursos premium, aluguel de sala, Sentido de Brincar). O
+   campo `fonte` diz qual em cada mês; a transição é marcada no gráfico
+   (tracejado até 2024, sólido de 2025) porque a queda entre os dois reflete
+   a troca de fonte, não o negócio. Traz também a meta do mês (planilha, cobre
+   2022-2026) e o nível. Meses não preenchidos (ex.: abr/2023) simplesmente
+   não vêm — o gráfico pula, não desenha zero. */
+export const useLojaSerie = () =>
+  useView("vw_loja_serie", { ordem: ["mes"] });
+
+/* Receita por ANO (uma linha por ano + uma com ano = null = acumulado geral).
+   Alimenta a lista de anos do seletor (2022-2026) e o número de receita nos
+   modos Ano e "Geral". Só receita — vendas/ticket não existem pra 2022-2024. */
+export const useLojaKpisAno = () =>
+  useView("vw_loja_kpis_ano", { ordem: ["ano"] });
+
 /* Views com dimensão de data. Entregam as linhas com `data`; o front
    recorta pelo período e reagrega. Só métricas de FLUXO — estado
    (inadimplência, horizontes) é snapshot e não tem recorte. */
