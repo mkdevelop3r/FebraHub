@@ -17,9 +17,9 @@
 #   GOOGLE_SERVICE_ACCOUNT               (JSON inteiro da conta de serviço)
 #
 # PLANILHAS: todas precisam estar compartilhadas com o client_email da
-# conta de serviço, senão o passo falha com 403. São 4:
-#   faturamento/metas da loja · cursos premium · aluguel 2025 · aluguel 2026
-#   · Sentido de Brincar
+# conta de serviço, senão o passo falha com 403. São 5:
+#   faturamento/metas por curso · cursos premium · aluguel 2025 ·
+#   aluguel 2026 · Sentido de Brincar · fechamento mensal (metas oficiais)
 #
 # ATENÇÃO: o META_TOKEN expira a cada 60 dias. Quando expirar, o passo do
 # Meta falha e o investimento para de atualizar. Renovar e recadastrar o
@@ -197,6 +197,18 @@ jobs:
         run: python etl/sheets_extras_sync.py
         continue-on-error: true
 
+      # Fechamento oficial da loja: faturamento e metas por mês, 2022-2026.
+      # Planilha "FECHAMENTO MES/ META" — é a fonte das metas de todos os
+      # anos e do faturamento histórico (2022-2024).
+      - name: Planilha da Loja — fechamento e metas históricas
+        id: sheets_fech
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+        run: python etl/sheets_fechamento_sync.py
+        continue-on-error: true
+
       - name: Status — Planilha da Loja
         if: always()
         run: |
@@ -205,4 +217,4 @@ jobs:
             -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=merge-duplicates" \
-            -d "{\"fonte\":\"sheets\",\"nome_exibicao\":\"Planilha da Loja\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.sheets_fat.outcome == 'success' && steps.sheets_metas.outcome == 'success' && steps.sheets_extras.outcome == 'success' && 'ok' || 'parcial' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+            -d "{\"fonte\":\"sheets\",\"nome_exibicao\":\"Planilha da Loja\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.sheets_fat.outcome == 'success' && steps.sheets_metas.outcome == 'success' && steps.sheets_extras.outcome == 'success' && steps.sheets_fech.outcome == 'success' && 'ok' || 'parcial' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
