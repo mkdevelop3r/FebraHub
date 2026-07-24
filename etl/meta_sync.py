@@ -28,13 +28,16 @@ def get(path, params, tentativa=0):
         with urllib.request.urlopen(url, timeout=60) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
+        corpo = e.read().decode(errors='replace')
         # 403/429 = rate limit da Meta. Espera progressiva e tenta de novo.
         if e.code in (403, 429) and tentativa < 5:
             espera = 60 * (tentativa + 1)
             print(f"  rate limit ({e.code}) — aguardando {espera}s")
             time.sleep(espera)
             return get(path, params, tentativa + 1)
-        raise
+        # 400 costuma ser token expirado/inválido ou parâmetro errado —
+        # mostrar o motivo em vez de estourar sem explicação
+        raise RuntimeError(f"Meta {e.code}: {corpo[:500]}")
 
 def insights_mes(desde, ate):
     """Puxa insights por anúncio no intervalo, paginando."""
