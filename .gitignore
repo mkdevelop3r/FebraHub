@@ -7,6 +7,10 @@
 *.key
 secrets/
 
+#service
+service_account.json
+*service_account*.json
+
 # Node
 node_modules/
 dist/
