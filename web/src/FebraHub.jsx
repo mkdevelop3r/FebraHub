@@ -147,23 +147,31 @@ function useRangeDatas() {
   const a = useFinanceiroReceitaCategoriaPeriodo();
   const b = useFinanceiroDespesaCategoriaPeriodo();
   const c = useLojaReceitaPeriodo();
+  // A loja (gestora RLS) não enxerga as views financeiras, então os anos dela
+  // saíam só de `c`, que hoje traz só 2026 — 2025 sumia do seletor. A receita
+  // consolidada mensal cobre desde mar/2025, então entra como fonte dos anos
+  // (e do minMes). Cada view usa sua coluna de data: `data` nas _periodo,
+  // `mes` na total_mes. Para quem não é da loja ela vem vazia (RLS), sem efeito.
+  const d = useLojaReceitaTotalMes();
   return useMemo(() => {
     const h = new Date();
     const maxMes = chaveMes(h.getFullYear(), h.getMonth());
     let min = null;
     const anos = new Set();
-    for (const src of [a.data, b.data, c.data]) {
+    const somar = (src, campo) => {
       for (const r of src ?? []) {
-        const d = String(r.data ?? "").slice(0, 10);
-        if (!d) continue;
-        if (!min || d < min) min = d;
-        anos.add(Number(d.slice(0, 4)));
+        const dt = String(r[campo] ?? "").slice(0, 10);
+        if (!dt) continue;
+        if (!min || dt < min) min = dt;
+        anos.add(Number(dt.slice(0, 4)));
       }
-    }
+    };
+    for (const src of [a.data, b.data, c.data]) somar(src, "data");
+    somar(d.data, "mes");
     const minMes = min ? min.slice(0, 7) : maxMes;
     const lista = anos.size ? [...anos].sort((x, y) => y - x) : [h.getFullYear()];
     return { minMes, maxMes: maxMes < minMes ? minMes : maxMes, anos: lista };
-  }, [a.data, b.data, c.data]);
+  }, [a.data, b.data, c.data, d.data]);
 }
 
 const PeriodoCtx = createContext(null);
