@@ -233,6 +233,15 @@ export const useLojaSerie = () =>
 export const useLojaKpisAno = () =>
   useView("vw_loja_kpis_ano", { ordem: ["ano"] });
 
+/* KPIs por RECORTE CURTO já prontos: uma linha por período — periodo = 'hoje',
+   '7dias' ou '30dias' (vendas, receita, ticket_medio). Cobre SÓ produtos
+   (PDV/Omie), a única fonte com data exata de venda; livrão, cursos premium e
+   aluguel são mensais e não entram no recorte diário. Alimenta os cards quando
+   o filtro é "Hoje" ou "7 dias" — a agregação mensal não tem granularidade
+   diária e mostraria o mês/ano inteiro. */
+export const useLojaKpisPeriodo = () =>
+  useView("vw_loja_kpis_periodo", { ordem: ["periodo"] });
+
 /* Views com dimensão de data. Entregam as linhas com `data`; o front
    recorta pelo período e reagrega. Só métricas de FLUXO — estado
    (inadimplência, horizontes) é snapshot e não tem recorte. */

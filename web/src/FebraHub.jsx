@@ -23,7 +23,7 @@ import {
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
   useLojaReceitaPeriodo, useLojaReceitaTotalMes, useLojaReceitaConsolidada,
-  useLojaSerie, useLojaKpisAno,
+  useLojaSerie, useLojaKpisAno, useLojaKpisPeriodo,
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingAtribuicao,
@@ -3416,6 +3416,7 @@ function HubLoja() {
   const { inicio, fim, modo, ano, mesIdx, rotulo, geral } = usePeriodo();
   const serie = useLojaSerie();
   const kpisAno = useLojaKpisAno();
+  const kpisPeriodo = useLojaKpisPeriodo();
   const totalMes = useLojaReceitaTotalMes();
   const consolidada = useLojaReceitaConsolidada();
   const prodVend = useLojaProdutosVendidosMes();
@@ -3424,6 +3425,16 @@ function HubLoja() {
   const [cursoModo, setCursoModo] = useState("faturamento");
 
   const porMes = modo === "mes" && !geral;
+  // Recorte curto (Hoje / 7 dias): a fonte mensal (serie/kpisAno/total_mes) só
+  // agrega por mês/ano e mostraria o acumulado, não a janela. Nesses modos os
+  // cards vêm da vw_loja_kpis_periodo — que cobre SÓ produtos (PDV/Omie), a
+  // única fonte com data exata. O rótulo avisa ("produtos · ...").
+  const curto = modo === "hoje" || modo === "7d";
+  const linhaCurta = useMemo(() => {
+    if (!curto) return null;
+    const alvo = modo === "hoje" ? "hoje" : "7dias";
+    return (kpisPeriodo.data ?? []).find((r) => r.periodo === alvo) ?? null;
+  }, [kpisPeriodo.data, curto, modo]);
 
   // Recorte por ANO-MÊS (dado mensal). Em "Geral", inicio/fim já são a base
   // inteira, então o mesmo filtro cobre todo o histórico.
@@ -3439,6 +3450,7 @@ function HubLoja() {
      vw_loja_kpis_ano — linha por ano + a de `ano = null` (acumulado). Casa o
      ano; no Geral, a linha nula. */
   const receita = useMemo(() => {
+    if (curto) return Number(linhaCurta?.receita ?? 0);
     if (porMes) {
       const alvo = chaveMes(ano, mesIdx);
       const r = (serie.data ?? []).find((x) => String(x.mes).slice(0, 7) === alvo);
@@ -3446,15 +3458,24 @@ function HubLoja() {
     }
     const linha = (kpisAno.data ?? []).find((r) => (geral ? r.ano == null : Number(r.ano) === Number(ano)));
     return Number(linha?.receita ?? 0);
-  }, [serie.data, kpisAno.data, porMes, ano, mesIdx, geral]);
+  }, [serie.data, kpisAno.data, curto, linhaCurta, porMes, ano, mesIdx, geral]);
 
-  /* VENDAS/TICKET só existem no consolidado (2025+, vw_loja_receita_total_mes).
-     Somam o recorte; para 2022-2024 (sem cupom) ficam vazios — honesto. */
+  /* VENDAS/TICKET. No recorte curto vêm prontos da vw_loja_kpis_periodo; nos
+     demais modos, do consolidado mensal (2025+, vw_loja_receita_total_mes) —
+     para 2022-2024 (sem cupom) ficam vazios, honesto. */
   const totRecorte = useMemo(() => noRecorte(totalMes.data, "mes"), [totalMes.data, inicio, fim]);
-  const vendas = totRecorte.reduce((s, r) => s + Number(r.vendas ?? 0), 0);
-  const ticketBase = totRecorte.reduce((s, r) => s + Number(r.receita ?? 0), 0);
-  const ticket = vendas ? ticketBase / vendas : null;
-  const notaKpi = geral ? "todo o histórico" : porMes ? rotulo : `ano ${ano}`;
+  const vendas = curto
+    ? Number(linhaCurta?.vendas ?? 0)
+    : totRecorte.reduce((s, r) => s + Number(r.vendas ?? 0), 0);
+  const ticket = curto
+    ? (linhaCurta?.ticket_medio != null ? Number(linhaCurta.ticket_medio) : (vendas ? Number(linhaCurta?.receita ?? 0) / vendas : null))
+    : (() => {
+        const base = totRecorte.reduce((s, r) => s + Number(r.receita ?? 0), 0);
+        return vendas ? base / vendas : null;
+      })();
+  // Rótulo: no curto, avisa que é só produto (PDV/Omie), não a receita cheia.
+  const notaKpi = curto ? `produtos · ${String(rotulo).toLowerCase()}`
+    : geral ? "todo o histórico" : porMes ? rotulo : `ano ${ano}`;
 
   // Série do gráfico (2022-2026): valor + meta + `provisorio` (planilha, <2025,
   // sai tracejado) + `parcial` (mês em curso). Meses ausentes (abr/2023) não
@@ -3562,8 +3583,8 @@ function HubLoja() {
       {/* ---- Faixa 1: KPIs da loja (receita 2022-2026) ---- */}
       <div className="lojaKpis" style={{ marginBottom: 8 }}>
         <ChipKpi compacto hero Icone={Wallet} label="Receita da loja" valor={moeda(receita)} nota={notaKpi} />
-        <ChipKpi compacto Icone={Receipt} label="Vendas" valor={vendas ? numero(vendas) : "—"} nota={vendas ? notaKpi : "só no consolidado (2025+)"} />
-        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={ticket != null ? notaKpi : "só no consolidado (2025+)"} />
+        <ChipKpi compacto Icone={Receipt} label="Vendas" valor={vendas ? numero(vendas) : "—"} nota={vendas || curto ? notaKpi : "só no consolidado (2025+)"} />
+        <ChipKpi compacto Icone={ShoppingBag} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={ticket != null || curto ? notaKpi : "só no consolidado (2025+)"} />
         <ChipKpi compacto Icone={Package} label="Valor em estoque" valor={moeda(est.custo)} nota="a custo · posição atual" />
       </div>
 
@@ -3571,15 +3592,17 @@ function HubLoja() {
       <div style={{ display: "flex", flexWrap: "wrap", gap: 14, alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
         <div style={{ flex: "1 1 340px", minWidth: 260 }}>
           <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase", color: C.dim, marginBottom: 6 }}>
-            Receita por fonte · {notaKpi}
+            Receita por fonte{curto ? "" : ` · ${notaKpi}`}
           </div>
-          {consolidada.error
-            ? <span style={{ fontSize: 11, color: C.faint }}>Sem a quebra por fonte neste recorte.</span>
-            : fontes.length
-              ? <FonteBreakdown fontes={fontes} />
-              : <span style={{ fontSize: 11, color: C.faint }}>Quebra por fonte só a partir de 2025 (consolidado).</span>}
+          {curto
+            ? <span style={{ fontSize: 11, color: C.faint }}>A quebra por fonte é mensal (consolidado) — não se aplica a Hoje / 7 dias.</span>
+            : consolidada.error
+              ? <span style={{ fontSize: 11, color: C.faint }}>Sem a quebra por fonte neste recorte.</span>
+              : fontes.length
+                ? <FonteBreakdown fontes={fontes} />
+                : <span style={{ fontSize: 11, color: C.faint }}>Quebra por fonte só a partir de 2025 (consolidado).</span>}
         </div>
-        {!geral && <MetaBadge meta={metaMes} />}
+        {!geral && !curto && <MetaBadge meta={metaMes} />}
       </div>
 
       {/* ---- Faixa 2: receita mensal (consolidada, com meta) · estoque ---- */}
