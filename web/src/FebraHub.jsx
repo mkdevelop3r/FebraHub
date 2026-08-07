@@ -4868,23 +4868,25 @@ function BlocoMensagemPrazo({ fila, status, notificar, onFeito }) {
   };
 
   const carregando = fila.isLoading || status.isLoading;
+  const erro = !!fila.error;
+  const inativo = enviando || erro || naFila === 0; // botão sem ação disponível
   return (
     <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12, marginTop: 12 }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
         <div style={{ minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontFamily: GROTESK, fontSize: 26, fontWeight: 700, color: C.gold }}>{carregando ? "…" : numero(naFila)}</span>
-            <span style={{ fontSize: 12, color: C.muted }}>na fila de envio</span>
+            <span style={{ fontFamily: GROTESK, fontSize: 26, fontWeight: 700, color: erro ? C.down : C.gold }}>{carregando ? "…" : erro ? "—" : numero(naFila)}</span>
+            <span style={{ fontSize: 12, color: erro ? C.down : C.muted }}>{erro ? "fila indisponível — recarregue" : "na fila de envio"}</span>
           </div>
           <div style={{ fontSize: 10.5, color: C.faint, marginTop: 3, lineHeight: 1.45, maxWidth: 420 }}>
             A tela enfileira; o disparo é de outro processo. Comece com 10, veja o que volta, depois abra.
           </div>
         </div>
-        <button onClick={enfileirar} disabled={enviando || fila.error || naFila === 0} style={{
+        <button onClick={enfileirar} disabled={inativo} style={{
           display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 800, fontFamily: SANS,
-          color: enviando || naFila === 0 ? C.faint : "#1A1305",
-          background: enviando || naFila === 0 ? "rgba(255,255,255,.06)" : `linear-gradient(90deg, ${C.goldTop}, ${C.goldBase})`,
-          border: "none", borderRadius: 10, padding: "9px 16px", cursor: enviando || naFila === 0 ? "default" : "pointer", whiteSpace: "nowrap",
+          color: inativo ? C.faint : "#1A1305",
+          background: inativo ? "rgba(255,255,255,.06)" : `linear-gradient(90deg, ${C.goldTop}, ${C.goldBase})`,
+          border: "none", borderRadius: 10, padding: "9px 16px", cursor: inativo ? "default" : "pointer", whiteSpace: "nowrap",
         }}>
           {enviando ? <Loader2 size={14} className="girar" /> : <Send size={14} />} Enfileirar 10 mensagens
         </button>
