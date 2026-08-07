@@ -81,21 +81,26 @@ export async function sair() {
    o Postgres livre pra repetir/pular linhas entre páginas. */
 const PAGINA = 1000;
 
-async function buscarTudo(nome, seletor, ordem) {
+async function buscarTudo(nome, seletor, ordem, contarExato = true) {
   let todos = [], de = 0, total = null;
   for (;;) {
+    // `count: exact` faz o PostgREST rodar a query DUAS vezes (uma pro count,
+    // outra pros dados). Em view pesada isso dobra o custo e estoura o
+    // statement-timeout — `contarExato: false` pula o count; a paginação para
+    // sozinha quando volta uma página incompleta.
     let q = supabase
       .from(nome)
-      .select(seletor, de === 0 ? { count: "exact" } : undefined);
+      .select(seletor, de === 0 && contarExato ? { count: "exact" } : undefined);
     for (const col of ordem ?? []) q = q.order(col, { ascending: true });
     const { data, error, count } = await q.range(de, de + PAGINA - 1);
     if (error) throw error;
     const lote = data ?? [];
-    if (de === 0) total = count ?? lote.length;
+    if (de === 0 && contarExato) total = count ?? lote.length;
     todos = todos.concat(lote);
     de += lote.length;
-    // Para quando o servidor esvazia ou já temos tudo que ele contou.
-    if (!lote.length || (total != null && todos.length >= total)) break;
+    // Para quando o servidor esvazia, manda página incompleta (fim) ou já
+    // temos tudo que ele contou.
+    if (!lote.length || lote.length < PAGINA || (total != null && todos.length >= total)) break;
   }
   return todos;
 }
@@ -109,7 +114,7 @@ function useView(nome, opcoes = {}) {
     // Views pesadas dão statement-timeout no primeiro acesso frio; mais uma
     // tentativa (com backoff do react-query) pega a segunda, já quente.
     retry: opcoes.retry,
-    queryFn: () => buscarTudo(nome, opcoes.seletor ?? "*", opcoes.ordem),
+    queryFn: () => buscarTudo(nome, opcoes.seletor ?? "*", opcoes.ordem, opcoes.contarExato ?? true),
   });
 }
 
@@ -420,10 +425,72 @@ export const usePedagogicoRetencaoMotivos = () =>
    linha por turma futura com os contadores do fluxo e a `pendencia` pronta. */
 export const usePedagogicoPainel = () =>
   useView("vw_pedagogico_painel", { ordem: ["data_inicio", "turma_id"], staleTime: 60 * 1000 });
-// Lista de reativação (secundária): aluno_id, curso, turma, valor. Sem id
-// único — ordeno por todas as colunas discriminantes pra paginação estável.
-export const usePedagogicoAusentes = () =>
-  useView("vw_pedagogico_ausentes", { ordem: ["aluno_id", "curso", "turma"] });
+/* FILA DE PRAZO (Hub Pedagógico). Aluno tem 1 ano da compra pra fazer o curso;
+   passando disso paga taxa de transferência (cobrada de verdade). Toda a lógica
+   vive no banco (migration 97) — o front só lê, não recalcula, não filtra setor
+   (RLS já filtra). O card-resumo é 1 linha. `presenca_carregada_em` PRECISA
+   aparecer na tela: a carga é manual e a fonte anterior morreu sem esse aviso. */
+export const usePedagogicoPrazoResumo = () =>
+  useView("vw_pedagogico_prazo_resumo", { staleTime: 60 * 1000, retry: 2, contarExato: false });
+// A fila de ligação: 1 linha por pessoa, mais urgente primeiro (vence_em_dias).
+// Sem coluna de valor de propósito — a linha do aluno é CONSUMIDOR DE VAGAS,
+// zero por construção; somar zeros destruiria a confiança na tela.
+export const usePedagogicoPrazoPessoa = () =>
+  useView("vw_pedagogico_prazo_pessoa", { ordem: ["vence_em_dias", "cpf"], staleTime: 60 * 1000, retry: 2, contarExato: false });
+// Detalhe por pessoa: as linhas de vw_pedagogico_prazo_salvador daquele CPF.
+export function usePedagogicoPrazoDetalhe(cpf) {
+  return useQuery({
+    queryKey: ["prazo_detalhe", cpf],
+    enabled: !!cpf,
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vw_pedagogico_prazo_salvador")
+        .select("cpf,curso,comprou_em,vence_em,dias_restantes,situacao,turma_da_venda,proxima_turma_em,tipos,ja_transferiu")
+        .eq("cpf", cpf)
+        .order("dias_restantes");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+// Urgentes SEM telefone: fila de trabalho, não erro. `motivo` diz o que fazer
+// (CPF sem cadastro, venda PJ, e-mail no lugar do CPF).
+export const usePedagogicoPrazoSemContato = () =>
+  useView("vw_pedagogico_prazo_sem_contato", { ordem: ["dias_restantes"], staleTime: 60 * 1000, retry: 2, contarExato: false });
+// "Sem turma no prazo" — decisão de CALENDÁRIO, não de ligação. Recorte no
+// servidor por `situacao` (atributo de exibição, não setor); o front só agrupa
+// por curso pra mostrar quantas turmas precisam existir e até quando.
+export function usePedagogicoSemTurma() {
+  return useQuery({
+    queryKey: ["prazo_sem_turma"],
+    staleTime: 60 * 1000,
+    retry: 2,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vw_pedagogico_prazo_salvador")
+        .select("cpf,curso,dias_restantes,vence_em")
+        .eq("situacao", "sem turma no prazo");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+// Quem deve receber a mensagem de prazo (vencendo + tem telefone + tem turma
+// antes do vencimento + ainda não recebeu). A contagem é o tamanho da fila.
+export const usePrazoFilaEnvio = () =>
+  useView("vw_prazo_fila_envio", { ordem: ["dias_restantes"], staleTime: 60 * 1000, retry: 2, contarExato: false });
+// O que voltou das mensagens: 1 linha por status; o front soma.
+export const usePrazoEnviosStatus = () =>
+  useView("vw_prazo_envios_status", { staleTime: 60 * 1000, retry: 2, contarExato: false });
+/* Enfileira a mensagem — NÃO envia. Grava a intenção em pedagogico_envios pro
+   disparador existente consumir. Única escrita da tela. Devolve
+   { enfileirados, restantes_na_fila }. Só authenticated (pode_ver pedagógico). */
+export async function enfileirarPrazoVencendo(limite) {
+  const { data, error } = await supabase.rpc("enfileirar_prazo_vencendo", { p_limite: limite });
+  if (error) throw new Error(error.message);
+  return data;
+}
 
 /* ESCRITA (exceção sancionada ao "front só lê view"): a tabela
    maestro_anotacao tem policy de INSERT/UPDATE com pode_ver('pedagogico').
