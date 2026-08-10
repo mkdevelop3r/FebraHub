@@ -1,0 +1,85 @@
+# FebraHub · .github/workflows/sync-presenca.yml
+#
+# Lê o relatório de PRESENÇA do Salesforce que chega por e-mail (Gmail)
+# e atualiza fato_presenca. Roda 1x/dia, às 17h Salvador.
+#
+# POR QUE 1x E POR QUE ÀS 17h:
+#   - o credenciamento acontece por volta das 9h, com atrasados ao longo
+#     do dia e cursos de vários dias (FCIS chega ao Dia 4)
+#   - às 17h o dia está praticamente fechado e a presença entra junto com
+#     a rodada de compras do sync-salesforce, então o dado do dia fica
+#     consistente entre si
+#   - a cauda depois das 17h entra na rodada seguinte. Não muda nada no
+#     uso real: decisão sobre represado nunca é no mesmo dia da turma
+#
+# SEPARADO do sync-salesforce de propósito: aquele roda 3x/dia para
+# compras. Presença rodando junto seria trabalho desperdiçado, e falha
+# misturada é mais difícil de diagnosticar.
+#
+# COMO FUNCIONA — E A DIFERENÇA CRÍTICA PARA OS OUTROS RELATÓRIOS:
+#   pagamentos e alunos APAGAM e reinserem por janela de data de aprovação.
+#   PRESENÇA NÃO APAGA NADA. É acumulativa: a promoção usa
+#   `on conflict (cpf, turma, dia) do update`, então reprocessar o mesmo
+#   arquivo é inofensivo e nenhum registro histórico se perde.
+#
+#   NÃO herde a lógica de delete por janela dos outros dois. Não há trava
+#   de 120 dias aqui porque não há delete a proteger.
+#
+# ARMADILHAS DO ARQUIVO (medidas no relatório real):
+#   - vem em ISO-8859-1 (latin1). Converter antes, ou acento vira lixo
+#   - o dia da aula está EMBUTIDO no texto do campo "Presença", no
+#     formato "NOME-SIGLA-Dia N". O script extrai o N por regex
+#   - "Presença: Data de criação" é a data em que o registro foi criado
+#     no Salesforce, NÃO a data da aula. Nunca use para filtrar janela
+#   - ~26 linhas vêm sem CPF e são descartadas. É esperado
+#   - ~180 linhas são duplicatas exatas. O distinct on da função resolve
+#
+# O SCRIPT DEVE:
+#   1. baixar o anexo do e-mail pelo assunto
+#   2. converter latin1 -> utf8
+#   3. truncate stg_presenca
+#   4. inserir o CSV bruto em stg_presenca (tudo text)
+#   5. select promover_presenca()   <- já existe, arquivo 93
+#   6. truncate stg_presenca
+#
+# Secrets necessários:
+#   GMAIL_ADDRESS, GMAIL_APP_PASSWORD   (senha de APP, não a senha real)
+#   SUPABASE_URL, SUPABASE_SERVICE_KEY
+#   SF_ASSUNTO_PRESENCA  (opcional, padrão 'Base presenca')
+name: Sync Presença (e-mail)
+on:
+  schedule:
+    - cron: '0 20 * * *'    # 17:00 Salvador
+  workflow_dispatch:
+jobs:
+  presenca:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r etl/requirements.txt
+      - name: Presença (e-mail)
+        id: pres
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SF_ASSUNTO_PRESENCA: ${{ secrets.SF_ASSUNTO_PRESENCA }}
+        run: python etl/presenca_email_sync.py
+        continue-on-error: true
+      - name: Status — Presença
+        if: always()
+        run: |
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"presenca\",\"nome_exibicao\":\"Presença\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.pres.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
