@@ -41,9 +41,6 @@ import {
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
-  usePedagogicoPrazoResumo, usePedagogicoPrazoPessoa, usePedagogicoPrazoDetalhe,
-  usePedagogicoPrazoSemContato, usePedagogicoSemTurma,
-  usePrazoFilaEnvio, usePrazoEnviosStatus, enfileirarPrazoVencendo,
   useEventosDesempenho,
   useIntegracaoStatus,
   porMes, moeda, numero,
@@ -4657,253 +4654,6 @@ function SecaoAvaliacaoEventos({ notificar }) {
   );
 }
 
-/* ============ FILA DE PRAZO (Hub Pedagógico) ============
-   Aluno tem 1 ano da compra pra fazer o curso; passando disso paga taxa de
-   transferência (cobrada de verdade). A tela mede PRAZO, não presença na turma
-   da venda (que é ficção comercial). Tudo vem das views da migration 97 — o
-   front só lê. Tarefa 1: o card-resumo. */
-const S_CARD_PRAZO = { background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 14, marginBottom: 12 };
-
-// Contador discreto (vencidos / aguardando), sempre com o contexto ao lado —
-// número solto convida à decisão errada.
-function LinhaResumoPrazo({ valor, label, contexto, cor }) {
-  return (
-    <div style={{ flex: "1 1 240px", minWidth: 0 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
-        <span style={{ fontFamily: GROTESK, fontSize: 20, fontWeight: 700, color: cor }}>{numero(valor)}</span>
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: C.muted }}>{label}</span>
-      </div>
-      <div style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.45, marginTop: 3 }}>{contexto}</div>
-    </div>
-  );
-}
-
-function CardFilaPrazo({ resumo, carregando, erro }) {
-  const r = resumo ?? {};
-  const cargaDias = r.presenca_carregada_em
-    ? Math.floor((Date.now() - new Date(String(r.presenca_carregada_em).slice(0, 10) + "T00:00:00").getTime()) / 86400000)
-    : null;
-  const desatualizado = cargaDias != null && cargaDias > 30;
-  const semTurma30 = Number(r.sem_turma_em_30d ?? 0);
-
-  if (carregando) return <div style={S_CARD_PRAZO}><span style={{ color: C.faint, fontSize: 13 }}>Carregando…</span></div>;
-  if (erro) return <div style={S_CARD_PRAZO}><span style={{ color: C.down, fontSize: 13 }}>Fonte indisponível.</span></div>;
-
-  return (
-    <div style={S_CARD_PRAZO}>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 18, flexWrap: "wrap" }}>
-        {/* Destaque: o número de trabalho */}
-        <div style={{ minWidth: 120 }}>
-          <div style={{ fontFamily: GROTESK, fontSize: 40, fontWeight: 700, lineHeight: 1, color: C.gold }}>{numero(r.pessoas_para_ligar)}</div>
-          <div style={{ fontSize: 11.5, color: C.muted, marginTop: 5 }}>pessoas para ligar · prazo de 1 ano vencendo</div>
-        </div>
-        {/* Ao lado, em alerta: vencem em 30 dias sem turma */}
-        <div style={{ display: "flex", alignItems: "center", gap: 9, background: semTurma30 > 0 ? `${C.warn}12` : "rgba(255,255,255,.03)", border: `1px solid ${semTurma30 > 0 ? `${C.warn}55` : C.cardLine}`, borderRadius: 12, padding: "10px 13px" }}>
-          <AlertTriangle size={16} style={{ color: semTurma30 > 0 ? C.warn : C.faint, flexShrink: 0 }} />
-          <span style={{ minWidth: 0 }}>
-            <span style={{ display: "block", fontFamily: GROTESK, fontSize: 18, fontWeight: 700, color: semTurma30 > 0 ? C.warn : C.faint }}>{numero(semTurma30)}</span>
-            <span style={{ display: "block", fontSize: 10.5, color: C.faint }}>vencem em 30 dias sem turma disponível</span>
-          </span>
-        </div>
-      </div>
-
-      <div style={{ display: "flex", gap: 24, flexWrap: "wrap", borderTop: `1px solid ${C.hair}`, paddingTop: 12 }}>
-        <LinhaResumoPrazo valor={r.vencidos} label="vencidos" cor={C.faint}
-          contexto="Boa parte comprou em 2024/2025, quando a presença era mal registrada — provavelmente fizeram o curso sem ficar na lista. Não é lista de cobrança." />
-        <LinhaResumoPrazo valor={r.aguardando_calendario} label="aguardando calendário" cor={C.muted}
-          contexto={`Vencem depois de ${dataBR(r.calendario_ate)}, quando o calendário acaba. Planejamento pendente, não problema.`} />
-      </div>
-
-      <div style={{ fontSize: 10.5, color: desatualizado ? C.down : C.faint, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-        <Clock size={12} style={{ flexShrink: 0 }} />
-        Presença carregada em {r.presenca_carregada_em ? dataBR(r.presenca_carregada_em) : "—"}
-        {desatualizado && <b style={{ color: C.down }}>· dado desatualizado ({cargaDias} dias sem carregar)</b>}
-      </div>
-    </div>
-  );
-}
-
-const corSituacaoPrazo = (s) => {
-  const k = String(s ?? "").trim().toLowerCase();
-  return k === "vencido" ? C.down : k === "sem turma no prazo" ? C.warn : k === "vencendo" ? C.gold : k === "no prazo" ? C.up : C.faint;
-};
-
-// Chip pequeno da fila de prazo.
-function ChipPrazo({ children, cor }) {
-  return <span style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 7px", borderRadius: 999, color: cor, background: `${cor}1A`, border: `1px solid ${cor}44`, whiteSpace: "nowrap" }}>{children}</span>;
-}
-
-/* A fila de trabalho (Tarefa 2). Uma linha por pessoa, mais urgente primeiro.
-   Sem coluna de valor (a linha do aluno vale zero por construção). `cursos` já
-   vem formatado do banco. Clique abre o detalhe da pessoa. */
-function FilaPrazo({ pessoas, onAbrir }) {
-  const th = (t, a) => <th style={{ textAlign: a, padding: "8px 12px", fontSize: 9.5, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, whiteSpace: "nowrap" }}>{t}</th>;
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: SANS }}>
-        <thead>
-          <tr style={{ borderBottom: `1px solid ${C.hair}` }}>{th("Pessoa", "left")}{th("Telefone", "left")}{th("Cursos", "left")}{th("Vence em", "right")}</tr>
-        </thead>
-        <tbody>
-          {pessoas.map((p) => {
-            const cor = corDias(p.vence_em_dias);
-            return (
-              <tr key={p.cpf} onClick={() => onAbrir(p)} style={{ borderBottom: `1px solid ${C.hair}`, cursor: "pointer" }}>
-                <td style={{ padding: "9px 12px" }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 200 }} title={p.nome}>{p.nome || "—"}</div>
-                  {(p.tem_curso_sem_turma || p.ja_transferiu_antes) && (
-                    <div style={{ display: "flex", gap: 5, marginTop: 4, flexWrap: "wrap" }}>
-                      {p.tem_curso_sem_turma && <ChipPrazo cor={C.warn}>sem turma</ChipPrazo>}
-                      {p.ja_transferiu_antes && <ChipPrazo cor={C.gold}>já transferiu</ChipPrazo>}
-                    </div>
-                  )}
-                </td>
-                <td style={{ padding: "9px 12px", fontSize: 12, color: p.telefone ? C.muted : C.faint, whiteSpace: "nowrap" }}>{p.telefone || "sem telefone"}</td>
-                <td style={{ padding: "9px 12px", fontSize: 11.5, color: C.muted, maxWidth: 320 }} title={p.cursos}>{p.cursos}</td>
-                <td style={{ padding: "9px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
-                  <span style={{ fontSize: 11, fontWeight: 800, padding: "2px 8px", borderRadius: 999, color: cor, background: `${cor}1A`, border: `1px solid ${cor}44` }}>{numero(p.vence_em_dias)}d</span>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-// Detalhe de uma pessoa: as linhas de vw_pedagogico_prazo_salvador do CPF.
-function DetalhePrazo({ pessoa, onFechar }) {
-  const detalhe = usePedagogicoPrazoDetalhe(pessoa.cpf);
-  const linhas = detalhe.data ?? [];
-  return (
-    <DrawerLado titulo={pessoa.nome || "Sem nome"} sub={pessoa.telefone || "sem telefone"} onFechar={onFechar} largura={520}>
-      {detalhe.isLoading ? <div style={{ fontSize: 12, color: C.faint }}>Carregando…</div>
-        : detalhe.error ? <div style={{ fontSize: 12, color: C.down }}>Não foi possível carregar o detalhe.</div>
-          : !linhas.length ? <div style={{ fontSize: 12, color: C.faint }}>Sem cursos pendentes.</div>
-            : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                {linhas.map((l, i) => {
-                  const cor = corSituacaoPrazo(l.situacao);
-                  return (
-                    <div key={i} style={{ border: `1px solid ${C.hair}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-                        <span style={{ fontSize: 13, fontWeight: 700, color: C.bright, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.curso}>{l.curso}</span>
-                        <ChipPrazo cor={cor}>{l.situacao}</ChipPrazo>
-                      </div>
-                      <div style={{ fontSize: 11.5, color: C.muted }}>Comprou em {dataBR(l.comprou_em)} · vence em {dataBR(l.vence_em)} <b style={{ color: corDias(l.dias_restantes) }}>({numero(l.dias_restantes)}d)</b></div>
-                      <div style={{ fontSize: 11, color: C.faint }}>Turma da venda: {l.turma_da_venda || "—"} · próxima turma: {l.proxima_turma_em ? dataBR(l.proxima_turma_em) : "sem turma marcada"}</div>
-                      <div style={{ fontSize: 10.5, color: C.faint }}>Matrícula: {l.tipos || "—"}{l.ja_transferiu ? " · já transferiu antes" : ""}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-    </DrawerLado>
-  );
-}
-
-// Bloco "sem contato": urgentes sem telefone. O `motivo` é a ação — achar o
-// contato antes do prazo virar taxa. Não é erro de dado.
-function BlocoSemContato({ linhas }) {
-  return (
-    <div>
-      {linhas.map((l, i) => (
-        <div key={i} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, padding: "8px 20px", borderBottom: `1px solid ${C.hair}` }}>
-          <div style={{ minWidth: 0 }}>
-            <div style={{ fontSize: 12, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.curso}>{l.curso}</div>
-            <div style={{ fontSize: 10.5, color: C.warn, fontWeight: 700 }}>{l.motivo}</div>
-            <div style={{ fontSize: 10, color: C.faint, fontFamily: GROTESK, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.identificador}>{l.identificador}</div>
-          </div>
-          <span style={{ fontSize: 10.5, fontWeight: 800, color: corDias(l.dias_restantes), whiteSpace: "nowrap", flexShrink: 0 }}>{numero(l.dias_restantes)}d</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// Bloco "sem turma no prazo": agrupado por curso. NÃO é para ligar — é insumo
-// da reunião de calendário. Cada curso: quantas pessoas e quando vence a 1ª.
-function BlocoSemTurma({ grupos }) {
-  return (
-    <div>
-      {grupos.map((g, i) => (
-        <div key={i} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, padding: "8px 20px", borderBottom: `1px solid ${C.hair}` }}>
-          <span style={{ fontSize: 12, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }} title={g.curso}>{g.curso}</span>
-          <span style={{ display: "flex", alignItems: "baseline", gap: 10, flexShrink: 0 }}>
-            <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: C.text }}>{numero(g.pessoas)}</span>
-            <span style={{ fontSize: 10, color: C.faint }}>1ª vence {dataBR(g.vence_em)}</span>
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* Fila de mensagem (Tarefa 4). Enfileira 10, vê o que volta, depois abre. A
-   tela NÃO envia — grava a intenção pro disparador existente. Por isso o botão
-   diz "enfileirar" e o resultado diz "enfileiradas", nunca "enviadas". */
-function BlocoMensagemPrazo({ fila, status, notificar, onFeito }) {
-  const [enviando, setEnviando] = useState(false);
-  const naFila = (fila.data ?? []).length;
-  const resumo = useMemo(() => {
-    const arr = status.data ?? [];
-    return {
-      envios: arr.reduce((s, r) => s + Number(r.envios ?? 0), 0),
-      responderam: arr.reduce((s, r) => s + Number(r.responderam ?? 0), 0),
-      sim: arr.reduce((s, r) => s + Number(r.disseram_sim ?? 0), 0),
-      nao: arr.reduce((s, r) => s + Number(r.disseram_nao ?? 0), 0),
-    };
-  }, [status.data]);
-
-  const enfileirar = async () => {
-    setEnviando(true);
-    try {
-      const d = await enfileirarPrazoVencendo(10);
-      const n = Number(d?.enfileirados ?? 0);
-      notificar(`${numero(n)} ${n === 1 ? "mensagem enfileirada" : "mensagens enfileiradas"}${d?.restantes_na_fila ? ` · ${numero(d.restantes_na_fila)} ainda na fila` : ""}`, "ok");
-      onFeito?.();
-    } catch (e) { notificar(e.message || "Não foi possível enfileirar.", "erro"); }
-    setEnviando(false);
-  };
-
-  const carregando = fila.isLoading || status.isLoading;
-  const erro = !!fila.error;
-  const inativo = enviando || erro || naFila === 0; // botão sem ação disponível
-  return (
-    <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12, marginTop: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
-        <div style={{ minWidth: 0 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-            <span style={{ fontFamily: GROTESK, fontSize: 26, fontWeight: 700, color: erro ? C.down : C.gold }}>{carregando ? "…" : erro ? "—" : numero(naFila)}</span>
-            <span style={{ fontSize: 12, color: erro ? C.down : C.muted }}>{erro ? "fila indisponível — recarregue" : "na fila de envio"}</span>
-          </div>
-          <div style={{ fontSize: 10.5, color: C.faint, marginTop: 3, lineHeight: 1.45, maxWidth: 420 }}>
-            A tela enfileira; o disparo é de outro processo. Comece com 10, veja o que volta, depois abra.
-          </div>
-        </div>
-        <button onClick={enfileirar} disabled={inativo} style={{
-          display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 800, fontFamily: SANS,
-          color: inativo ? C.faint : "#1A1305",
-          background: inativo ? "rgba(255,255,255,.06)" : `linear-gradient(90deg, ${C.goldTop}, ${C.goldBase})`,
-          border: "none", borderRadius: 10, padding: "9px 16px", cursor: inativo ? "default" : "pointer", whiteSpace: "nowrap",
-        }}>
-          {enviando ? <Loader2 size={14} className="girar" /> : <Send size={14} />} Enfileirar 10 mensagens
-        </button>
-      </div>
-
-      {resumo.envios > 0 && (
-        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", borderTop: `1px solid ${C.hair}`, paddingTop: 12, fontSize: 12 }}>
-          <span style={{ color: C.muted }}><b style={{ color: C.text, fontFamily: GROTESK }}>{numero(resumo.envios)}</b> enfileiradas</span>
-          <span style={{ color: C.muted }}><b style={{ color: C.text, fontFamily: GROTESK }}>{numero(resumo.responderam)}</b> responderam</span>
-          <span style={{ color: C.up }}><b style={{ fontFamily: GROTESK }}>{numero(resumo.sim)}</b> SIM</span>
-          <span style={{ color: C.down }}><b style={{ fontFamily: GROTESK }}>{numero(resumo.nao)}</b> NÃO</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
 /* Hub Pedagógico / Sucesso do Cliente. Foco em SAÚDE: acompanhamento, não
    fila de tarefas. Tudo vem do Salesforce; conclusão, notas e NPS não são
    medidos (não existem na fonte). Presença cobre só as turmas com
@@ -4921,15 +4671,8 @@ function HubPedagogico() {
   const retencao = usePedagogicoRetencao();
   const retencaoMotivos = usePedagogicoRetencaoMotivos();
   const painel = usePedagogicoPainel();
-  const prazoResumo = usePedagogicoPrazoResumo();
-  const prazoPessoa = usePedagogicoPrazoPessoa();
-  const semContato = usePedagogicoPrazoSemContato();
-  const semTurma = usePedagogicoSemTurma();
-  const filaEnvio = usePrazoFilaEnvio();
-  const enviosStatus = usePrazoEnviosStatus();
   const qc = useQueryClient();
   const [turmaSel, setTurmaSel] = useState(null); // turma aberta no drawer (bloco 2)
-  const [prazoSel, setPrazoSel] = useState(null); // pessoa aberta no detalhe da fila
   const [toast, setToast] = useState(null);       // feedback de escrita (some sozinho)
   const [statusMaestro, setStatusMaestro] = useState("todos");
   const [maestroEdit, setMaestroEdit] = useState(null); // maestro sendo editado
@@ -5010,19 +4753,6 @@ function HubPedagogico() {
     [...(retencaoMotivos.data ?? [])].sort((a, b) => (Number(b.retidos ?? 0) + Number(b.cancelados ?? 0)) - (Number(a.retidos ?? 0) + Number(a.cancelados ?? 0))),
     [retencaoMotivos.data]);
   const ret = retencao.data?.[0] ?? {};
-
-  // Sem turma no prazo, agrupado por curso (só exibição — o filtro de situação
-  // vem do servidor). Quantas pessoas e quando vence a primeira, por curso.
-  const gruposSemTurma = useMemo(() => {
-    const m = new Map();
-    for (const r of semTurma.data ?? []) {
-      if (!m.has(r.curso)) m.set(r.curso, { curso: r.curso, pessoas: 0, vence_em: r.vence_em });
-      const g = m.get(r.curso);
-      g.pessoas += 1;
-      if (String(r.vence_em) < String(g.vence_em)) g.vence_em = r.vence_em;
-    }
-    return [...m.values()].sort((a, b) => String(a.vence_em).localeCompare(String(b.vence_em)));
-  }, [semTurma.data]);
 
   // Automação de confirmações: derivações do painel (1 linha por turma).
   const turmasPainel = painel.data ?? [];
@@ -5161,38 +4891,6 @@ function HubPedagogico() {
         </Bloco>
       </div>
 
-      {/* ---- Fila de prazo (Tarefa 1: card-resumo; fila e blocos vêm depois) ---- */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, marginTop: 4 }}>
-        <Clock size={15} style={{ color: C.gold, flexShrink: 0 }} />
-        <span style={{ fontSize: 13.5, fontWeight: 800, color: C.bright }}>Fila de prazo</span>
-        <span style={{ fontSize: 11, color: C.faint }}>prazo de 1 ano da compra · quem está perto de perder</span>
-      </div>
-      <CardFilaPrazo resumo={prazoResumo.data?.[0]} carregando={prazoResumo.isLoading} erro={prazoResumo.error} />
-      <Bloco titulo="Fila de ligação" canto="mais urgente primeiro · clique para o detalhe" sem altura={360}>
-        <Estado carregando={prazoPessoa.isLoading} erro={prazoPessoa.error} vazio={!(prazoPessoa.data ?? []).length}
-          vazioTitulo="Ninguém na fila" vazioDica="Aparece com o setor pedagógico conectado e a presença carregada.">
-          <FilaPrazo pessoas={prazoPessoa.data ?? []} onAbrir={setPrazoSel} />
-        </Estado>
-      </Bloco>
-      <div className="pedBot" style={{ marginTop: 12 }}>
-        <Bloco titulo="Sem contato" canto="urgentes sem telefone · o motivo diz o que fazer" sem altura={230}>
-          <Estado carregando={semContato.isLoading} erro={semContato.error} vazio={!(semContato.data ?? []).length}
-            vazioTitulo="Todos com contato" vazioDica="Ninguém urgente sem telefone agora.">
-            <BlocoSemContato linhas={semContato.data ?? []} />
-          </Estado>
-        </Bloco>
-        <Bloco titulo="Sem turma no prazo" canto="decisão de calendário, não de ligação" sem altura={230}>
-          <Estado carregando={semTurma.isLoading} erro={semTurma.error} vazio={!gruposSemTurma.length}
-            vazioTitulo="Todo curso com turma no prazo" vazioDica="Ninguém vence sem turma disponível.">
-            <div style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5, padding: "8px 20px 4px" }}>
-              Estas pessoas não têm turma do curso antes do vencimento. Levar para a reunião de calendário.
-            </div>
-            <BlocoSemTurma grupos={gruposSemTurma} />
-          </Estado>
-        </Bloco>
-      </div>
-      <BlocoMensagemPrazo fila={filaEnvio} status={enviosStatus} notificar={notificar} onFeito={() => qc.invalidateQueries()} />
-
       {/* ---- Automação de confirmações (KPIs + tabela; drawer no bloco 2) ---- */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, marginTop: 4 }}>
         <Send size={15} style={{ color: C.gold, flexShrink: 0 }} />
@@ -5246,7 +4944,6 @@ function HubPedagogico() {
           onSalvo={() => { qc.invalidateQueries(); setTurmaSel(null); }}
           notificar={notificar} />
       )}
-      {prazoSel && <DetalhePrazo pessoa={prazoSel} onFechar={() => setPrazoSel(null)} />}
       <Toast toast={toast} onFechar={() => setToast(null)} />
     </>
   );

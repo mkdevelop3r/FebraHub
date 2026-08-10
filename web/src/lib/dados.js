@@ -425,11 +425,16 @@ export const usePedagogicoRetencaoMotivos = () =>
    linha por turma futura com os contadores do fluxo e a `pendencia` pronta. */
 export const usePedagogicoPainel = () =>
   useView("vw_pedagogico_painel", { ordem: ["data_inicio", "turma_id"], staleTime: 60 * 1000 });
-/* FILA DE PRAZO (Hub Pedagógico). Aluno tem 1 ano da compra pra fazer o curso;
-   passando disso paga taxa de transferência (cobrada de verdade). Toda a lógica
-   vive no banco (migration 97) — o front só lê, não recalcula, não filtra setor
-   (RLS já filtra). O card-resumo é 1 linha. `presenca_carregada_em` PRECISA
-   aparecer na tela: a carga é manual e a fonte anterior morreu sem esse aviso. */
+/* FILA DE PRAZO. Aluno tem 1 ano da compra pra fazer o curso; passando disso
+   paga taxa de transferência (cobrada de verdade). Toda a lógica vive no banco
+   (migration 97) — o front só lê, não recalcula, não filtra setor (RLS já
+   filtra). O card-resumo é 1 linha. `presenca_carregada_em` PRECISA aparecer na
+   tela: a carga é manual e a fonte anterior morreu sem esse aviso.
+
+   NOTA: a UI saiu do Hub Pedagógico (vai pra outro hub). Estes hooks ficam aqui
+   prontos pra reuso — a UI (CardFilaPrazo/FilaPrazo/etc.) está no commit 7459d8b
+   se precisar restaurar. As views são pesadas: contarExato:false é obrigatório
+   (o count exato do PostgREST dobra o custo e estoura o statement_timeout). */
 export const usePedagogicoPrazoResumo = () =>
   useView("vw_pedagogico_prazo_resumo", { staleTime: 60 * 1000, retry: 2, contarExato: false });
 // A fila de ligação: 1 linha por pessoa, mais urgente primeiro (vence_em_dias).
