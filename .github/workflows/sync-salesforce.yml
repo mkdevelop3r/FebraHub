@@ -31,10 +31,10 @@
 # o histórico do git mostra quando mudou e por quê.
 name: Sync Salesforce (e-mail)
 on:
-  schedule:
-    - cron: '15 9 * * *'    # 06:15 Salvador (após disparo das 06h)
-    - cron: '15 15 * * *'   # 12:15 Salvador (após disparo das 12h)
-    - cron: '15 20 * * *'   # 17:15 Salvador (após disparo das 17h)
+  # schedule:
+  #   - cron: '15 9 * * *'    # 06:15 Salvador
+  #   - cron: '15 15 * * *'   # 12:15 Salvador
+  #   - cron: '15 20 * * *'   # 17:15 Salvador
   workflow_dispatch:
 jobs:
   salesforce:
