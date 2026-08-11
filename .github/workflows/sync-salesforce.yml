@@ -71,6 +71,34 @@ jobs:
             -d "{\"fonte\":\"salesforce\",\"nome_exibicao\":\"Salesforce\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.sf.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 
       # ----------------------------------------------------------------
+      # FILA DE PRAZO
+      #
+      # Recalcula a tabela materializada fila_prazo. Precisa rodar entre
+      # o sync e as mensagens: depois do sync porque lê fato_base_alunos
+      # e fato_presenca recém-atualizados, antes das mensagens porque
+      # vw_prazo_fila_envio lê desta tabela.
+      #
+      # A fila é tabela, e não view, porque a consulta original estoura
+      # o statement timeout do PostgREST — `norm_curso()` nas junções
+      # impede o uso de índice comum. O custo fica aqui, no ETL, que
+      # tem tempo de sobra.
+      # ----------------------------------------------------------------
+      - name: Atualizar fila de prazo
+        id: fila
+        if: steps.sf.outcome == 'success'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          curl -s --fail-with-body -X POST \
+            "$SUPABASE_URL/rest/v1/rpc/atualizar_fila_prazo" \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}'
+        continue-on-error: true
+
+      # ----------------------------------------------------------------
       # MENSAGENS DO PEDAGÓGICO
       #
       # Lê as filas (views), grava os campos no CRM, aplica a tag que
