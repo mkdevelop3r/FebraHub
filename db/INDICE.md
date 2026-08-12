@@ -107,3 +107,11 @@ Ordem de aplicação e o que cada uma faz. Gerado a partir do cabeçalho de cada
 | 88 | `88_remover_smart_notas.sql` | FebraHub · Migration 88 — Remover Smart Notas da Central de APIs |
 | 89 | `89_eventos_avaliacao.sql` | FebraHub · Migration 89 — Avaliação de eventos por QR (palestras, eventos, perguntas, respostas, funções, trigger de trava, RLS e views) |
 | 90 | `90_eventos_sympla_id.sql` | FebraHub · Migration 90 — Coluna eventos.sympla_evento_id (ponte Sympla, fora do formulário) |
+| 92 | `92_represado_fonte_viva.sql` | FebraHub · Migration 92 — Represado sobre a fonte viva |
+| 93 | `93_presenca_por_dia.sql` | FebraHub · Migration 93 — Presença por dia + conserto do CPF |
+| 94 | `94_represado_fonte_presenca.sql` | FebraHub · Migration 94 — Represado sobre presença, validado contra o Salesforce |
+| 95 | `95_prazo_do_aluno.sql` | FebraHub · Migration 95 — Prazo do aluno (1 ano da compra) |
+| 96 | `96_limpeza_fila_prazo.sql` | FebraHub · Migration 96 — Limpeza da fila de prazo |
+| 97 | `97_tipo_matricula.sql` | FebraHub · Migration 97 — Tipo de matrícula (recria a cadeia de views do prazo) |
+| 98 | `98_prazo_mensagens.sql` | FebraHub · Migration 98 — Mensagem de prazo vencendo (enfileirar, não envia) |
+| 99 | `99_prazo_timeout.sql` | FebraHub · Migration 99 — Folga de statement_timeout (authenticated) para a fila de prazo |

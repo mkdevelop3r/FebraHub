@@ -1,0 +1,46 @@
+-- ============================================================
+-- 99 — FOLGA DE TIMEOUT PARA A FILA DE PRAZO
+--
+-- Rodar no SQL Editor do Supabase. NÃO cria nem altera tabela/view —
+-- só ajusta o statement_timeout do papel `authenticated`.
+--
+-- O PROBLEMA
+-- As views do prazo (migrations 95-98) recomputam vw_pedagogico_prazo,
+-- que faz seq scan em fato_base_alunos (~20k) e fato_presenca (~14k) e
+-- um merge join com filtro por norm_curso(). Isolada, roda em ~1,2s —
+-- cabe nos 8s do timeout. Mas o Hub Pedagógico dispara ~5 dessas de uma
+-- vez (card, fila, sem-contato, sem-turma, fila-de-envio); sob
+-- concorrência numa instância pequena, cada uma estica além dos 8s.
+-- A fila de envio foi a que caiu: aparecia "0", quando o real são 48
+-- (48 vencendo com turma + telefone, 0 já enfileirados — conferido).
+--
+-- pedagogico_envios (o NOT EXISTS) tem só 10 linhas e PK em
+-- (aluno_id, turma_id, tipo) — não é gargalo. O custo é a recomputação
+-- concorrente da base.
+--
+-- A CORREÇÃO
+-- Sobe o teto pra 15s. As queries seguem ~1,2s cada; só ganham folga
+-- pra rodar concorrentes sem serem canceladas. Baixo risco num BI
+-- interno com poucos usuários. (O anon segue em 3s — não muda.)
+-- ============================================================
+
+alter role authenticated set statement_timeout = '15s';
+
+-- Depois de aplicar, o PostgREST recarrega o pool sozinho em segundos.
+-- Para forçar: notify pgrst, 'reload config';
+
+
+-- ============================================================
+-- ALTERNATIVA ROBUSTA — se o hub crescer / muitos acessos simultâneos
+--
+-- Materializar a base e apontar as views dependentes pra ela:
+--
+--   create materialized view mv_pedagogico_prazo as <corpo de vw_pedagogico_prazo>;
+--   -- recriar salvador/pessoa/resumo/sem_contato/demanda/fila_envio
+--   -- lendo de mv_pedagogico_prazo em vez da view.
+--   -- refresh materialized view mv_pedagogico_prazo;  -- diário + no load da presença
+--
+-- Aí cada query lê um snapshot barato e o teto de 15s vira desnecessário.
+-- Precisa de refresh diário porque situacao/dias_restantes dependem de
+-- current_date. Me peça o SQL completo quando for a hora.
+-- ============================================================
