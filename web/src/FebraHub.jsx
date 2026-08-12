@@ -17,7 +17,7 @@ import {
   useComercialRankingHistorico, useComercialSymplaJennifer, useComercialCarinhas,
   useComercialVerdesDetalhe,
   useComercialMatriculasFaturamento, useComercialCursosPorConsultora,
-  useComercialRankingGeralConsolidado, useComercialGeralMensal,
+  useComercialRankingGeralConsolidado, useComercialGeralMensal, useFaturamentoMensal,
   useFinanceiroPagamentos,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
   useFinanceiroReceitaMensal, useFinanceiroCaixaMensal,
@@ -1608,8 +1608,11 @@ function HeroFaturamento({ fat, ateDia, carregando, erro, onIr }) {
           <div style={{ fontSize: 12, color: C.muted }}>
             {temComp
               ? <>vs {moeda(fat.ant)} no mesmo período do mês passado ({ateDia} {ateDia === 1 ? "dia" : "dias"})</>
-              : <>sem base comparável no mês passado</>}
+              : fat.compErro
+                ? <>comparação com o mês passado indisponível</>
+                : <>sem base comparável no mês passado</>}
           </div>
+          <div style={{ fontSize: 10.5, color: C.dim, marginTop: 5 }}>valor vendido · por data de aprovação</div>
         </>
       )}
     </button>
@@ -1719,17 +1722,41 @@ function HubExecutivo({ onIr }) {
   const fimAnt = isoDia(new Date(Y, Mo - 1, Math.min(Di, ultDiaAnt)));
   const desde30 = isoDia(new Date(Y, Mo, Di - 30)); // últimos 30 dias (concentração/top 3)
 
-  // Bloco 1 — faturamento (recorte servidor: só datas recentes).
+  /* Bloco 1 — faturamento do mês. O VALOR vem da fonte canônica
+     (vw_faturamento_mensal): o que foi VENDIDO no mês, por data de aprovação,
+     deduplicado por venda no banco. É a mesma fonte do card do Hub Comercial —
+     é isso que garante que os dois mostram o mesmo número.
+
+     A COMPARAÇÃO com o mesmo período do mês passado precisa de granularidade
+     de dia, que a view mensal não tem: sai da base linha a linha, aplicando o
+     MESMO critério (data de aprovação + dedup por venda) pra ser comparável. */
+  const fatMensal = useFaturamentoMensal();
   const fatHook = useVendaFaturamentoDesde(inicioAnt);
   const fat = useMemo(() => {
-    const rows = fatHook.data ?? [];
-    const soma = (ini, fim) => rows.reduce((s, r) => {
-      const d = String(r.data_aprovacao ?? r.data_pagamento ?? "").slice(0, 10);
-      return d >= ini && d <= fim ? s + Number(r.valor_bruto ?? 0) : s;
-    }, 0);
-    const atual = soma(inicioMes, fimMes), ant = soma(inicioAnt, fimAnt);
-    return { atual, ant, delta: ant > 0 ? ((atual - ant) / ant) * 100 : null, up: atual >= ant };
-  }, [fatHook.data, inicioMes, fimMes, inicioAnt, fimAnt]);
+    const linhaMes = (fatMensal.data ?? []).find((r) => noMesYM(r.mes, ym));
+    const atual = Number(linhaMes?.faturamento_bruto ?? 0);
+    const soma = (ini, fim) => {
+      const porVenda = new Map(); // MAX(valor_bruto) por venda, como na view
+      for (const r of fatHook.data ?? []) {
+        const d = String(r.data_aprovacao ?? r.data_pagamento ?? "").slice(0, 10);
+        if (!(d >= ini && d <= fim)) continue;
+        const k = r.original_id_venda ?? `${d}|${r.valor_bruto}`;
+        porVenda.set(k, Math.max(porVenda.get(k) ?? 0, Number(r.valor_bruto ?? 0)));
+      }
+      let s = 0;
+      for (const v of porVenda.values()) s += v;
+      return s;
+    };
+    // Sem a base do mês passado não dá pra comparar — e "sem base" é diferente
+    // de "falhou ao carregar": o card diz qual dos dois é.
+    const ant = fatHook.error ? null : soma(inicioAnt, fimAnt);
+    return {
+      atual, ant,
+      compErro: !!fatHook.error,
+      delta: ant > 0 ? ((atual - ant) / ant) * 100 : null,
+      up: ant != null && atual >= ant,
+    };
+  }, [fatMensal.data, fatHook.data, fatHook.error, ym, inicioAnt, fimAnt]);
 
   // Fontes dos demais blocos.
   const inadimp = useFinanceiroInadimp();
@@ -1760,11 +1787,18 @@ function HubExecutivo({ onIr }) {
     ...(consultoras.concentracao != null && consultoras.concentracao > 40 ? [{ cor: C.down, Icone: AlertTriangle, titulo: "Concentração comercial", valor: `${Math.round(consultoras.concentracao)}%`, sub: `da receita de 30 dias em ${consultoras.lider ? primeiroNome(consultoras.lider) : "1 consultora"}` }] : []),
   ];
 
-  // Bloco 3 — cards por setor (mês corrente).
+  /* Bloco 3 — cards por setor (mês corrente). O faturamento do card Comercial
+     sai da MESMA fonte canônica do topo (não da soma por mês de pagamento, que
+     é caixa e mostrava outro número na mesma tela). As matrículas a view
+     canônica não tem — vêm do consolidado, recortadas pelo mesmo critério
+     (aprovação), porque comprador de vaga é receita mas não é aluno. */
   const com = useMemo(() => {
-    const rows = (comMensal.data ?? []).filter((r) => noMesYM(r.data ?? r.mes, ym));
-    return { fat: rows.reduce((s, r) => s + Number(r.valor_bruto ?? 0), 0), mat: rows.reduce((s, r) => s + Number(r.conta_matricula ?? 0), 0) };
-  }, [comMensal.data, ym]);
+    const linhaMes = (fatMensal.data ?? []).find((r) => noMesYM(r.mes, ym));
+    const mat = (comMensal.data ?? [])
+      .filter((r) => noMesYM(r.data_aprovacao ?? r.data, ym))
+      .reduce((s, r) => s + Number(r.conta_matricula ?? 0), 0);
+    return { fat: Number(linhaMes?.faturamento_bruto ?? 0), mat };
+  }, [fatMensal.data, comMensal.data, ym]);
   const recebido = useMemo(() => recebidoMaisRecente(recMensal.data, ym), [recMensal.data, ym]);
   const investMes = useMemo(() => (mktInv.data ?? []).filter((r) => noMesYM(r.mes, ym)).reduce((s, r) => s + Number(r.gasto ?? 0), 0), [mktInv.data, ym]);
   const retornoMes = useMemo(() => (mktAtr.data ?? []).filter((r) => noMesYM(r.mes, ym)).reduce((s, r) => s + Number(r.faturamento_atribuido ?? 0), 0), [mktAtr.data, ym]);
@@ -1785,7 +1819,7 @@ function HubExecutivo({ onIr }) {
       </div>
 
       {/* Bloco 1 */}
-      <HeroFaturamento fat={fat} ateDia={Di} carregando={fatHook.isLoading} erro={fatHook.error} onIr={() => onIr("comercial")} />
+      <HeroFaturamento fat={fat} ateDia={Di} carregando={fatMensal.isLoading} erro={fatMensal.error} onIr={() => onIr("comercial")} />
 
       {/* Bloco 2 */}
       <RadarAlertas alertas={alertas} />
@@ -1793,7 +1827,7 @@ function HubExecutivo({ onIr }) {
       {/* Bloco 3 */}
       <div className="execCards">
         <CardSetor Icone={TrendingUp} titulo="Comercial" onIr={() => onIr("comercial")}
-          estado={{ carregando: comMensal.isLoading, erro: comMensal.error }}
+          estado={{ carregando: fatMensal.isLoading, erro: fatMensal.error }}
           linhas={[{ label: "faturamento bruto", valor: moeda(com.fat), cor: C.gold }, { label: "matrículas", valor: numero(com.mat) }]} />
         <CardSetor Icone={Wallet} titulo="Financeiro" onIr={() => onIr("financeiro")}
           estado={{ carregando: recMensal.isLoading, erro: recMensal.error }}
@@ -1835,6 +1869,7 @@ function HubComercial() {
   const cursos = useComercialCursosPorConsultora();
   const geralCons = useComercialRankingGeralConsolidado();
   const geralMensal = useComercialGeralMensal();
+  const fatMensal = useFaturamentoMensal();
 
   // Consultora com o detalhe de verdes aberto (null = fechado).
   const [verdesDe, setVerdesDe] = useState(null);
@@ -1858,20 +1893,48 @@ function HubComercial() {
   const carregFluxo = ehGeral ? geralMensal.isLoading : rankCat.isLoading;
   const erroFluxo = ehGeral ? geralMensal.error : rankCat.error;
 
-  /* Recorte curto (Hoje / 7 dias) conta pela data de APROVAÇÃO: uma venda
-     aprovada hoje é o movimento do dia, mesmo que paga dias antes — por
-     pagamento ela não aparecia. Onde não há data_aprovacao (linhas antigas)
-     cai no pagamento, via coalesce, pra não sumir nada. Mês, ano e os totais
-     seguem por data_pagamento (`data`/`data_pagamento`), critério do
-     financeiro já validado. Só substitui a coluna de data; nada mais muda. */
+  /* FATURAMENTO conta por data de APROVAÇÃO — o que foi VENDIDO no período,
+     independente de quando o pagamento cai. Mesma regra da view canônica
+     vw_faturamento_mensal; o que já foi PAGO (caixa) é outra métrica e vive no
+     Financeiro (recebido). Era o critério de pagamento aqui que fazia agosto
+     aparecer como R$ 278 mil enquanto o Executivo mostrava R$ 647 mil.
+     Onde não há data_aprovacao (linhas antigas) cai no pagamento, via
+     coalesce, pra não sumir nada. */
   const curto = modo === "hoje" || modo === "7d";
   const recorte = (linhas, faixa, campoPag = "data") =>
-    curto
-      ? (linhas ?? []).filter((r) => {
-          const d = String(r.data_aprovacao ?? r[campoPag] ?? "").slice(0, 10);
-          return d && d >= faixa.inicio && d <= faixa.fim;
-        })
-      : noPeriodo(linhas, faixa, campoPag);
+    (linhas ?? []).filter((r) => {
+      const d = String(r.data_aprovacao ?? r[campoPag] ?? "").slice(0, 10);
+      return d && d >= faixa.inicio && d <= faixa.fim;
+    });
+  /* Carinhas e verdes ficam de fora da regra: ali o assunto É a forma de
+     PAGAMENTO (o placar conta pagamentos, não vendas). Só o recorte curto
+     segue por aprovação, como já era — uma venda aprovada hoje é o movimento
+     do dia. */
+  const recortePag = (linhas, faixa, campoPag = "data") =>
+    curto ? recorte(linhas, faixa, campoPag) : noPeriodo(linhas, faixa, campoPag);
+
+  /* Faturamento canônico por mês (`YYYY-MM` -> bruto), da view única que o Hub
+     Executivo também lê. Já vem deduplicado por venda do banco. */
+  const canonPorMes = useMemo(() => {
+    const m = new Map();
+    for (const r of fatMensal.data ?? []) {
+      const k = String(r.mes ?? "").slice(0, 7);
+      if (k) m.set(k, Number(r.faturamento_bruto ?? 0));
+    }
+    return m;
+  }, [fatMensal.data]);
+
+  /* Soma canônica de um recorte, quando ele é um conjunto de meses inteiros
+     (Mês / Ano) e a visão é o Geral — a view não tem categoria nem dia.
+     Devolve null quando não se aplica (Hoje/7d, categoria, view indisponível):
+     aí o front soma linha a linha, pelo mesmo critério de aprovação. */
+  const somaCanonica = (faixa) => {
+    if (!ehGeral || curto || !canonPorMes.size) return null;
+    const de = faixa.inicio.slice(0, 7), ate = faixa.fim.slice(0, 7);
+    let s = 0;
+    for (const [m, v] of canonPorMes) if (m >= de && m <= ate) s += v;
+    return s;
+  };
 
   /* KPIs do período. O Comercial mostra só o BRUTO (valor_bruto = valor
      vendido): a consultora vendeu o valor cheio, o repasse não é decisão
@@ -1883,24 +1946,34 @@ function HubComercial() {
     const somaM = (ls) => ls.reduce((s, r) => s + Number(r.conta_matricula ?? 0), 0);
     const dentro = recorte(linhasFluxo, { inicio, fim }, "data");
     const menosUmAno = (d) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`;
-    const antes = recorte(linhasFluxo, { inicio: menosUmAno(inicio), fim: menosUmAno(fim) }, "data");
-    const bruto = somaB(dentro), brutoAnt = somaB(antes), matriculas = somaM(dentro);
+    const faixaAnt = { inicio: menosUmAno(inicio), fim: menosUmAno(fim) };
+    const antes = recorte(linhasFluxo, faixaAnt, "data");
+    // No Geral, o valor sai da fonte canônica (mesmo número do Hub Executivo);
+    // nas categorias e nos recortes curtos, do somatório por aprovação.
+    const bruto = somaCanonica({ inicio, fim }) ?? somaB(dentro);
+    const brutoAnt = somaCanonica(faixaAnt) ?? somaB(antes);
+    const matriculas = somaM(dentro);
     return {
       receita: bruto,
       matriculas,
       ticket: matriculas ? bruto / matriculas : null,
       yoy: brutoAnt > 0 ? ((bruto - brutoAnt) / brutoAnt) * 100 : null,
     };
-  }, [linhasFluxo, inicio, fim]);
+  }, [linhasFluxo, inicio, fim, canonPorMes, ehGeral, curto]);
 
   /* Evolução: últimos 12 meses da categoria + o mesmo mês do ano anterior.
      Não responde ao filtro de período — é série histórica, como nos outros
      hubs. O mês corrente é parcial. */
   const evolucao = useMemo(() => {
-    const porMes = new Map();
-    for (const r of linhasFluxo) {
-      const m = String(r.data ?? "").slice(0, 7);
-      if (m) porMes.set(m, (porMes.get(m) ?? 0) + Number(r.valor_bruto ?? 0)); // Comercial = bruto
+    // No Geral, as barras vêm da mesma fonte do card — senão o gráfico
+    // contaria por pagamento e mostraria outro número que o KPI acima.
+    let porMes = canonPorMes;
+    if (!ehGeral || !canonPorMes.size) {
+      porMes = new Map();
+      for (const r of linhasFluxo) {
+        const m = String(r.data_aprovacao ?? r.data ?? "").slice(0, 7);
+        if (m) porMes.set(m, (porMes.get(m) ?? 0) + Number(r.valor_bruto ?? 0)); // Comercial = bruto
+      }
     }
     const h = new Date();
     const chave = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -1911,12 +1984,14 @@ function HubComercial() {
       const mAnt = `${d.getFullYear() - 1}-${m.slice(5)}`;
       return { mes: m, valor: porMes.get(m) ?? 0, anterior: porMes.get(mAnt) ?? 0, parcial: m === atual };
     });
-  }, [linhasFluxo]);
+  }, [linhasFluxo, canonPorMes, ehGeral]);
 
   const geral = visao === "geral";
 
   /* Matrículas x faturamento por mês, dentro do recorte. Conta as linhas
-     (volume) e soma o valor (R$) — duas grandezas, dois eixos. */
+     (volume) e soma o valor (R$) — duas grandezas, dois eixos. O mês é o da
+     APROVAÇÃO (a coluna `mes` das views é mês de pagamento, outro critério) e,
+     no Geral, o R$ vem da fonte canônica pra bater com o card. */
   const matFat = useMemo(() => {
     if (ehSympla) return [];
     const origem = ehGeral
@@ -1925,7 +2000,7 @@ function HubComercial() {
     const dentro = recorte(origem, { inicio, fim }, "data");
     const m = new Map();
     for (const r of dentro) {
-      const k = String(r.mes ?? "").slice(0, 7);
+      const k = String(r.data_aprovacao ?? r.data ?? r.mes ?? "").slice(0, 7);
       if (!k) continue;
       const a = m.get(k) ?? { mes: k, matriculas: 0, faturamento: 0 };
       a.matriculas += Number(r.conta_matricula ?? 0); // soma conta_matricula, não conta linha
@@ -1935,8 +2010,12 @@ function HubComercial() {
     const h = new Date();
     const atual = `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, "0")}`;
     return [...m.values()].sort((a, b) => a.mes.localeCompare(b.mes))
-      .map((x) => ({ ...x, parcial: x.mes === atual }));
-  }, [matfat.data, geralMensal.data, categoria, inicio, fim, ehSympla, ehGeral]);
+      .map((x) => ({
+        ...x,
+        faturamento: (ehGeral && canonPorMes.has(x.mes)) ? canonPorMes.get(x.mes) : x.faturamento,
+        parcial: x.mes === atual,
+      }));
+  }, [matfat.data, geralMensal.data, categoria, inicio, fim, ehSympla, ehGeral, canonPorMes]);
 
   /* Top 5 cursos por consultora — em TODAS as categorias (menos Sympla, que
      é evento). No Geral, junta os cursos de todas as categorias que a
@@ -2016,7 +2095,7 @@ function HubComercial() {
         });
       }
     }
-    for (const r of recorte(carinhas.data, { inicio, fim }, "data_pagamento")) {
+    for (const r of recortePag(carinhas.data, { inicio, fim }, "data_pagamento")) {
       const a = time.get(r.consultor_id ?? r.consultora ?? "—");
       if (!a) continue;
       const cor = String(r.carinha ?? "").trim().toLowerCase();
@@ -2034,7 +2113,7 @@ function HubComercial() {
   // filtro global (view = uma linha por venda; filtro por nome + data).
   const verdesLinhas = useMemo(() => {
     if (!verdesDe) return [];
-    return recorte(
+    return recortePag(
       (verdesDet.data ?? []).filter((v) => String(v.consultora) === verdesDe),
       { inicio, fim }, "data"
     ).map((v) => ({
@@ -2077,7 +2156,7 @@ function HubComercial() {
         }}>
           <span style={{ fontSize: 11.5, fontWeight: 800, color: C.gold }}>Geral · todas as categorias</span>
           <span style={{ fontSize: 10.5, color: C.faint }}>
-            consolidado do Comercial (GGB, CI, CIS, Mentoria, eventos, sem categoria) · bruto vendido; o líquido, após repasses, na linha de baixo.
+            consolidado do Comercial (GGB, CI, CIS, Mentoria, eventos, sem categoria) · bruto vendido, por data de aprovação; o que já foi pago é caixa e fica no Financeiro.
           </span>
         </div>
       )}
@@ -2089,7 +2168,7 @@ function HubComercial() {
         <ChipKpi compacto hero Icone={Wallet}
           label={ehSympla ? "Receita · Sympla" : "Faturamento bruto · valor vendido"}
           valor={ehSympla ? moeda(podio[0]?.receita ?? 0) : moeda(kpi.receita)}
-          nota={ehSympla ? "líquida · todos os tempos" : rotulo} />
+          nota={ehSympla ? "líquida · todos os tempos" : `${rotulo} · por aprovação`} />
         <ChipKpi compacto Icone={Receipt} label={ehSympla ? "Ingressos" : "Total de matrículas"}
           valor={ehSympla ? numero(sympla.data?.[0]?.ingressos ?? 0) : numero(kpi.matriculas)}
           nota={ehSympla ? `${numero(sympla.data?.[0]?.eventos ?? 0)} eventos` : rotulo} />

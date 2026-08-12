@@ -154,6 +154,11 @@ export const useComercialCursosPorConsultora = () =>
    o tratamento do Danilo; o front só soma. */
 export const useComercialRankingGeralConsolidado = () =>
   useView("vw_comercial_ranking_geral_consolidado", { ordem: ["data", "consultora", "valor"] });
+/* Uma linha por venda do consolidado. NÃO é mais a fonte do faturamento — a
+   view agrupa por `mes` de PAGAMENTO, e faturamento é o que foi VENDIDO
+   (aprovação). O número vem de `useFaturamentoMensal`; daqui saem só as
+   grandezas que a view canônica não tem: matrículas (conta_matricula) e o
+   volume do gráfico, sempre recortados por `data_aprovacao`. */
 export const useComercialGeralMensal = () =>
   useView("vw_comercial_geral_mensal", { ordem: ["data", "valor"], retry: 2 });
 
@@ -194,11 +199,25 @@ export const useFinanceiroPagoMensal = () => useView("vw_financeiro_pago_mensal"
 export const useFinanceiroRecebidoMensal = () =>
   useView("vw_financeiro_recebido_mensal", { ordem: ["mes"], staleTime: 60 * 1000, retry: 2 });
 
+/* ============ FATURAMENTO — FONTE CANÔNICA ============ */
+/* Uma linha por mês, faturamento por data de APROVAÇÃO (o que foi VENDIDO no
+   mês), já deduplicado por venda no banco (migration 108). É a fonte única do
+   "faturamento" — Hub Executivo e Hub Comercial leem daqui pra mostrarem o
+   MESMO número. Colunas: mes, vendas, faturamento_bruto, faturamento_liquido.
+
+   O que já foi PAGO (caixa/recebido) é OUTRA métrica e vive no Financeiro.
+   Nunca misturar as duas sob o rótulo "faturamento": era isso que fazia o
+   Executivo mostrar R$ 647 mil e o Comercial R$ 278 mil no mesmo mês. */
+export const useFaturamentoMensal = () =>
+  useView("vw_faturamento_mensal", { ordem: ["mes"], staleTime: 60 * 1000, retry: 2 });
+
 /* ============ HUB EXECUTIVO (setor 'geral') ============ */
-/* Faturamento de venda: a view tem 8k+ linhas. Em vez de puxar tudo, filtro no
-   servidor pelas datas recentes (aprovação OU pagamento >= `desde`) e o front
-   soma o mês corrente por coalesce(data_aprovacao, data_pagamento). staleTime
-   60s (operacional). */
+/* Linha a linha, pro que a view mensal não resolve: comparar o mês corrente
+   com o MESMO PERÍODO do mês passado precisa de granularidade de dia. A view
+   tem 8k+ linhas, então filtro no servidor pelas datas recentes (aprovação OU
+   pagamento >= `desde`). Traz `original_id_venda` porque o front aplica o
+   mesmo dedup da view canônica (MAX por venda) — os dois números têm que ser
+   comparáveis. staleTime 60s (operacional). */
 export function useVendaFaturamentoDesde(desde) {
   return useQuery({
     queryKey: ["venda_faturamento", desde],
@@ -210,7 +229,7 @@ export function useVendaFaturamentoDesde(desde) {
       for (;;) {
         const { data, error } = await supabase
           .from("vw_venda_faturamento")
-          .select("valor_bruto,data_aprovacao,data_pagamento")
+          .select("original_id_venda,valor_bruto,data_aprovacao,data_pagamento")
           .or(`data_aprovacao.gte.${desde},data_pagamento.gte.${desde}`)
           .range(de, de + PAGINA - 1);
         if (error) throw error;
