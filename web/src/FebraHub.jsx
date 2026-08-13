@@ -10,7 +10,7 @@ import {
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
   Users, Target, Construction, Percent, Filter, ChevronUp,
   Boxes, PackageX, Repeat, UserCheck, BookOpen, ShieldCheck,
-  Check, Pencil, Star, Plus, PhoneCall, Send, Link2,
+  Check, Pencil, Star, Plus, PhoneCall, Send, Link2, ClipboardList,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
@@ -38,6 +38,7 @@ import {
   useMarketingInvestimento, useLojaMetaRealizado,
   useExecutivoReativacao, useExecutivoComercial30d,
   useTurmaDim, useTurmaSugestao, useFilaTurma, useEnviosTurma,
+  useTurmasCadastro, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
@@ -83,6 +84,10 @@ const HUBS = [
   { key: "financeiro", nome: "Financeiro", Icone: Wallet,        desc: "Receita por curso e cobertura" },
   { key: "marketing",  nome: "Marketing",  Icone: Megaphone,     desc: "Origem de leads e campanhas" },
   { key: "pedagogico", nome: "Pedagógico", Icone: GraduationCap, desc: "Turmas, matrículas e conclusão" },
+  /* A Central é operação, não setor: quem enxerga é quem tem o setor
+     'pedagogico'. `setor` existe só por isso — nos outros, a chave já é o
+     próprio setor. */
+  { key: "central", setor: "pedagogico", nome: "Central Pedagógica", Icone: ClipboardList, desc: "Operação: turmas, represados e presença" },
   { key: "eventos",    nome: "Eventos",    Icone: CalendarDays,  desc: "Ingressos e receita líquida" },
   { key: "loja",       nome: "Loja",       Icone: ShoppingBag,   desc: "Vendas, formas de pagamento e recebimento" },
   { key: "estoque",    nome: "Estoque",    Icone: Package,       desc: "Sem fonte conectada" },
@@ -5770,6 +5775,396 @@ function Login() {
 
 /* ============ SHELL ============ */
 
+/* ============ CENTRAL PEDAGÓGICA ============
+   O Hub Pedagógico é painel: gráfico, KPI, tendência — quem abre está
+   avaliando. Aqui é onde se trabalha: lista, status, botão — quem abre está
+   executando. Nada de gráfico nesta tela.
+
+   Toda escrita passa por função do banco (disparar_turma, marcar_resposta).
+   Nenhum insert ou update direto, nenhuma regra de negócio no front: a
+   `situacao` de cada inscrito já vem pronta da view. */
+
+const ABAS_CENTRAL = [
+  { key: "turmas",     label: "Turmas" },
+  { key: "represados", label: "Represados" },
+  { key: "presenca",   label: "Presença" },
+  { key: "maestros",   label: "Maestros" },
+];
+
+/* Cores da situação. Vêm da view (migration 113), não do front. */
+const COR_SITUACAO = {
+  "confirmado": C.up,
+  "nao vem": C.down,
+  "erro no envio": C.down,
+  "sem resposta": C.warn,
+  "aguardando resposta": C.gold,
+  "aguardando envio": C.gold,
+  "nao enfileirado": C.dim,
+};
+const corSituacao = (s) => COR_SITUACAO[String(s ?? "").trim().toLowerCase()] ?? C.muted;
+
+const ROTULO_SITUACAO = {
+  "nao vem": "não vem",
+  "nao enfileirado": "não enfileirado",
+};
+const rotuloSituacao = (s) => ROTULO_SITUACAO[String(s ?? "").trim().toLowerCase()] ?? (s ?? "—");
+
+function ChipSituacao({ situacao }) {
+  const cor = corSituacao(situacao);
+  return (
+    <span style={{
+      fontSize: 9.5, fontWeight: 800, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap",
+      color: cor, background: `${cor}1A`, border: `1px solid ${cor}44`,
+    }}>{rotuloSituacao(situacao)}</span>
+  );
+}
+
+/* Contador com denominador. Número solto ("12 confirmados") não diz se é
+   muito ou pouco — 12 de 14 e 12 de 400 pedem decisões opostas. */
+function ContaTurma({ rotulo, valor, total, cor }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "baseline", gap: 4, fontSize: 11, color: C.faint }}>
+      <b style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: valor > 0 ? cor : C.dim }}>{numero(valor)}</b>
+      <span>de {numero(total)} {rotulo}</span>
+    </span>
+  );
+}
+
+function CentralPedagogica() {
+  const [aba, setAba] = useState("turmas");
+  const [toast, setToast] = useState(null);
+  const notificar = (msg, tipo = "ok") => setToast({ msg, tipo });
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: C.bright }}>Central Pedagógica</h2>
+        <span style={{ fontSize: 11.5, color: C.faint }}>o dia a dia · o painel com os gráficos fica no Hub Pedagógico</span>
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        <Segmentado opcoes={ABAS_CENTRAL} valor={aba} onChange={setAba} />
+      </div>
+
+      {aba === "turmas" && <CentralTurmas notificar={notificar} />}
+      {aba !== "turmas" && (
+        <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "26px 22px" }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: C.bright, marginBottom: 5 }}>
+            {ABAS_CENTRAL.find((a) => a.key === aba)?.label} chega na próxima etapa
+          </div>
+          <div style={{ fontSize: 12, color: C.faint, lineHeight: 1.55, maxWidth: 520 }}>
+            Esta parte da Central ainda não foi construída. Nada aqui está quebrado — só não existe ainda.
+            Enquanto isso, use a aba Turmas.
+          </div>
+        </div>
+      )}
+
+      <Toast toast={toast} onFechar={() => setToast(null)} />
+    </>
+  );
+}
+
+/* ---- Turmas: a lista ----
+   Substitui a planilha onde a Elis anotava à mão quem confirmou. */
+function CentralTurmas({ notificar }) {
+  const turmas = useTurmasCadastro();
+  const resumo = useTurmaInscritosResumo();
+  const [sel, setSel] = useState(null);
+  const [quando, setQuando] = useState("futuras");
+  const hoje = isoDia(new Date());
+
+  // Resumo indexado por turma e tipo de mensagem. A view entrega uma linha
+  // por (turma, tipo); a lista mostra o fluxo de confirmação, que é o que
+  // acontece primeiro. O link do grupo aparece no detalhe.
+  const porTurma = useMemo(() => {
+    const m = new Map();
+    for (const r of resumo.data ?? []) {
+      const a = m.get(r.turma_id) ?? {};
+      a[r.tipo] = r;
+      m.set(r.turma_id, a);
+    }
+    return m;
+  }, [resumo.data]);
+
+  const lista = useMemo(() => {
+    const rows = (turmas.data ?? []).map((t) => ({ ...t, futura: String(t.data_inicio ?? "") >= hoje }));
+    const alvo = quando === "futuras" ? rows.filter((t) => t.futura) : rows;
+    // Futuras primeiro, da mais próxima à mais distante; passadas depois, da
+    // mais recente à mais antiga — em ambos os casos o que interessa vem no topo.
+    return [...alvo].sort((a, b) =>
+      a.futura !== b.futura ? (a.futura ? -1 : 1)
+        : a.futura ? String(a.data_inicio).localeCompare(String(b.data_inicio))
+          : String(b.data_inicio).localeCompare(String(a.data_inicio)));
+  }, [turmas.data, quando, hoje]);
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11.5, color: C.faint }}>
+          Clique numa turma para abrir o cadastro, disparar as mensagens e ver quem respondeu.
+        </span>
+        <Segmentado opcoes={[{ key: "futuras", label: "Futuras" }, { key: "todas", label: "Todas" }]}
+          valor={quando} onChange={setQuando} />
+      </div>
+
+      <Estado
+        carregando={turmas.isLoading || resumo.isLoading}
+        erro={turmas.error ?? resumo.error}
+        vazio={!lista.length}
+        vazioTitulo={quando === "futuras" ? "Nenhuma turma marcada daqui pra frente" : "Nenhuma turma no cadastro"}
+        vazioDica={quando === "futuras" ? "Assim que uma turma entrar no cadastro com data de início, ela aparece aqui. Troque para Todas para ver as que já aconteceram." : undefined}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {lista.map((t) => (
+            <LinhaTurmaCentral key={t.turma_id} turma={t} resumo={porTurma.get(t.turma_id)} onAbrir={() => setSel(t)} />
+          ))}
+        </div>
+      </Estado>
+
+      {sel && (
+        <DrawerTurmaCentral
+          turma={sel}
+          resumo={porTurma.get(sel.turma_id)}
+          onFechar={() => setSel(null)}
+          notificar={notificar}
+        />
+      )}
+    </>
+  );
+}
+
+function LinhaTurmaCentral({ turma, resumo, onAbrir }) {
+  const conf = resumo?.confirmacao;
+  const total = Number(conf?.matriculados ?? 0);
+  const dias = turma.futura
+    ? Math.round((new Date(turma.data_inicio) - new Date(isoDia(new Date()))) / 86400000)
+    : null;
+
+  return (
+    <button onClick={onAbrir} style={{
+      display: "block", width: "100%", textAlign: "left", cursor: "pointer",
+      background: C.card, border: `1px solid ${turma.futura ? C.cardLine : C.hair}`,
+      borderRadius: 12, padding: "12px 14px", fontFamily: SANS,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {turma.nome_comercial || turma.curso || turma.turma_id}
+          </div>
+          <div style={{ fontSize: 10.5, color: C.faint, marginTop: 2 }}>
+            {turma.turma_id} · {dataBR(turma.data_inicio)}
+            {dias != null && <> · {dias === 0 ? "começa hoje" : dias === 1 ? "em 1 dia" : `em ${numero(dias)} dias`}</>}
+            {turma.cidade ? ` · ${turma.cidade}` : ""}
+          </div>
+        </div>
+        <ArrowUpRight size={15} style={{ color: C.faint, flexShrink: 0 }} />
+      </div>
+
+      {!conf ? (
+        <div style={{ fontSize: 11, color: C.dim, marginTop: 9 }}>Nenhuma matrícula aprovada nesta turma ainda.</div>
+      ) : (
+        <div style={{ display: "flex", gap: 14, marginTop: 9, flexWrap: "wrap" }}>
+          <ContaTurma rotulo="confirmaram" valor={Number(conf.confirmados ?? 0)} total={total} cor={C.up} />
+          <ContaTurma rotulo="não vêm" valor={Number(conf.nao_vem ?? 0)} total={total} cor={C.down} />
+          <ContaTurma rotulo="sem resposta" valor={Number(conf.sem_resposta ?? 0)} total={total} cor={C.warn} />
+          <ContaTurma rotulo="aguardando" valor={Number(conf.aguardando_resposta ?? 0) + Number(conf.aguardando_envio ?? 0)} total={total} cor={C.gold} />
+          {Number(conf.nao_enfileirados ?? 0) > 0 && (
+            <ContaTurma rotulo="ainda não receberam" valor={Number(conf.nao_enfileirados ?? 0)} total={total} cor={C.dim} />
+          )}
+        </div>
+      )}
+    </button>
+  );
+}
+
+/* ---- Turmas: o detalhe ----
+   Cadastro (reaproveita o FormTurma da automação), os dois disparos e a lista
+   de inscritos com a situação de cada um. */
+function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
+  const qc = useQueryClient();
+  const dim = useTurmaDim(turma.turma_id);
+  const sug = useTurmaSugestao(dim.data?.sigla, dim.data?.data_inicio, turma.turma_id);
+  const inscritos = useTurmaInscritos(turma.turma_id);
+  const [tipo, setTipo] = useState("confirmacao");
+  const [disparando, setDisparando] = useState(null);
+  const [retorno, setRetorno] = useState(null); // o que a função devolveu
+
+  const doTipo = useMemo(
+    () => (inscritos.data ?? []).filter((r) => r.tipo === tipo),
+    [inscritos.data, tipo]
+  );
+  const semContato = useMemo(() => doTipo.filter((r) => r.sem_contato).length, [doTipo]);
+
+  const recarregar = () => {
+    qc.invalidateQueries({ queryKey: ["turma_inscritos", turma.turma_id] });
+    qc.invalidateQueries({ queryKey: ["vw_turma_inscritos_resumo"] });
+    qc.invalidateQueries({ queryKey: ["turma_dim", turma.turma_id] });
+  };
+
+  /* A função valida o cadastro e devolve ok:false com o que falta. A tela
+     mostra `mensagem` como veio — reescrever aqui é como mensagem truncada
+     chega no cliente. */
+  const disparar = async (qual) => {
+    setDisparando(qual); setRetorno(null);
+    try {
+      const r = await dispararTurma(turma.turma_id, qual);
+      setRetorno({ ...r, tipo: qual });
+      notificar(r?.mensagem ?? "Pronto.", r?.ok === false ? "erro" : "ok");
+      if (r?.ok !== false) recarregar();
+    } catch (e) {
+      const msg = semPermissao(e) ? "Você não tem permissão para disparar mensagens." : (e.message || "Não foi possível enfileirar.");
+      setRetorno({ ok: false, mensagem: msg, tipo: qual });
+      notificar(msg, "erro");
+    } finally {
+      setDisparando(null);
+    }
+  };
+
+  const marcar = async (alunoId, resposta) => {
+    try {
+      await marcarResposta(alunoId, turma.turma_id, tipo, resposta);
+      notificar("Resposta registrada.", "ok");
+      recarregar();
+    } catch (e) {
+      const msg = semPermissao(e) ? "Você não tem permissão para registrar respostas."
+        : /não encontrado/i.test(String(e.message)) ? "Esta pessoa ainda não entrou em nenhuma rodada de envio. Dispare a mensagem antes de registrar a resposta."
+          : (e.message || "Não foi possível registrar.");
+      notificar(msg, "erro");
+    }
+  };
+
+  return (
+    <DrawerLado
+      titulo={turma.nome_comercial || turma.curso || turma.turma_id}
+      sub={`${turma.turma_id} · início ${dataBR(turma.data_inicio)}`}
+      onFechar={onFechar}
+      largura={620}
+    >
+      {/* ---- Disparo ---- */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>Mensagens</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <BotaoSalvar onClick={() => disparar("confirmacao")} salvando={disparando === "confirmacao"} disabled={!!disparando}>
+            Enviar confirmação
+          </BotaoSalvar>
+          <BotaoSalvar onClick={() => disparar("grupo")} salvando={disparando === "grupo"} disabled={!!disparando}>
+            Enviar link do grupo
+          </BotaoSalvar>
+        </div>
+        <div style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+          O botão coloca as pessoas na fila. Quem envia é o script, na rodada seguinte — em até 5 horas.
+        </div>
+        {retorno && (
+          <div style={{
+            fontSize: 11.5, lineHeight: 1.5, borderRadius: 10, padding: "9px 11px",
+            color: retorno.ok === false ? C.warn : C.up,
+            background: `${retorno.ok === false ? C.warn : C.up}12`,
+            border: `1px solid ${retorno.ok === false ? C.warn : C.up}3A`,
+          }}>
+            {retorno.mensagem}
+            {retorno.ok !== false && Number(retorno.sem_contato ?? 0) > 0 && (
+              <div style={{ color: C.faint, marginTop: 3 }}>
+                {numero(retorno.sem_contato)} sem telefone nem e-mail — essas não têm como receber.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ---- Cadastro (é o que a validação do disparo exige) ---- */}
+      {dim.isLoading ? (
+        <div style={{ fontSize: 12, color: C.faint, marginTop: 16 }}>Carregando o cadastro…</div>
+      ) : dim.error ? (
+        <div style={{ fontSize: 12, color: C.down, marginTop: 16 }}>
+          {semPermissao(dim.error) ? "Você não tem permissão para ver o cadastro desta turma." : "Não foi possível carregar o cadastro."}
+        </div>
+      ) : dim.data ? (
+        <FormTurma
+          dim={dim.data}
+          sug={sug.data}
+          aguardando={Number(resumo?.grupo?.nao_enfileirados ?? 0)}
+          foco={null}
+          onSalvo={recarregar}
+          notificar={notificar}
+        />
+      ) : null}
+
+      {/* ---- Inscritos ---- */}
+      <div style={{ marginTop: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>Inscritos</span>
+          <Segmentado
+            opcoes={[{ key: "confirmacao", label: "Confirmação" }, { key: "grupo", label: "Link do grupo" }]}
+            valor={tipo} onChange={setTipo}
+          />
+        </div>
+
+        <Estado
+          carregando={inscritos.isLoading}
+          erro={inscritos.error}
+          vazio={!doTipo.length}
+          vazioTitulo="Nenhuma matrícula aprovada nesta turma"
+          vazioDica="A lista sai das matrículas aprovadas. Compradores de vaga ficam de fora — eles não são alunos."
+        >
+          <div style={{ fontSize: 10.5, color: C.faint, marginBottom: 7 }}>
+            {numero(doTipo.length)} pessoas
+            {semContato > 0 && <> · <b style={{ color: C.warn }}>{numero(semContato)}</b> sem telefone nem e-mail</>}
+          </div>
+          <div className="rolagem" style={{ maxHeight: 340, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
+            {doTipo.map((r, i) => (
+              <LinhaInscrito key={`${r.aluno_id}-${i}`} r={r} ultima={i === doTipo.length - 1} onMarcar={marcar} />
+            ))}
+          </div>
+        </Estado>
+      </div>
+    </DrawerLado>
+  );
+}
+
+/* Uma pessoa. Os três botões registram a resposta que chegou por fora do
+   WhatsApp — por telefone, no corredor, pela consultora. Sem isso a planilha
+   volta pela porta dos fundos. */
+function LinhaInscrito({ r, ultima, onMarcar }) {
+  const naFila = String(r.situacao ?? "") !== "nao enfileirado";
+  const botao = (valor, rotulo, cor) => (
+    <button
+      key={valor}
+      onClick={(e) => { e.stopPropagation(); onMarcar(r.aluno_id, valor); }}
+      disabled={!naFila}
+      title={naFila ? `Registrar: ${rotulo}` : "Dispare a mensagem antes de registrar a resposta"}
+      style={{
+        fontFamily: SANS, fontSize: 10, fontWeight: 700, padding: "3px 7px", borderRadius: 7,
+        border: `1px solid ${naFila ? `${cor}44` : C.hair}`, background: "transparent",
+        color: naFila ? cor : C.dim, cursor: naFila ? "pointer" : "not-allowed",
+      }}
+    >{rotulo}</button>
+  );
+
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+      padding: "8px 11px", borderBottom: ultima ? "none" : `1px solid ${C.hair}`,
+    }}>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 12, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {r.nome || mascaraCpf(r.aluno_id)}
+        </div>
+        <div style={{ fontSize: 10, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {r.sem_contato ? "sem telefone nem e-mail" : (r.telefone || r.email || "—")}
+          {r.resposta_origem === "hub" && " · registrado na mão"}
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+        <div style={{ display: "flex", gap: 4 }}>
+          {botao("sim", "Sim", C.up)}
+          {botao("nao", "Não", C.down)}
+          {botao("sem_resposta", "Sem resposta", C.warn)}
+        </div>
+        <ChipSituacao situacao={r.situacao} />
+      </div>
+    </div>
+  );
+}
+
 function Shell({ perfil }) {
   // União de setores: o setor do perfil + os de perfil_setores (já vêm em
   // perfil.setores). Admin/geral seguem vendo tudo, agora também se "geral"
@@ -5826,7 +6221,7 @@ function Shell({ perfil }) {
     };
   }, [modo, ano, mesIdx, anos, minMes, maxMes, geral]);
 
-  const visiveis = admin ? HUBS : HUBS.filter((h) => setores.includes(h.key));
+  const visiveis = admin ? HUBS : HUBS.filter((h) => setores.includes(h.setor ?? h.key));
   const hub = HUBS.find((h) => h.key === tela);
 
   const conteudo = () => {
@@ -5836,6 +6231,7 @@ function Shell({ perfil }) {
       case "financeiro": return <HubFinanceiro />;
       case "marketing":  return <HubMarketing />;
       case "pedagogico": return <HubPedagogico />;
+      case "central":    return <CentralPedagogica />;
       case "eventos":    return <HubEventos />;
       case "loja":       return <HubLoja />;
       case "estoque":    return <SemFonte hub={hub} />;

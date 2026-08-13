@@ -1,7 +1,7 @@
 -- ============================================================
 -- 98 — MENSAGEM DE PRAZO VENCENDO
 --
--- NÃO APLICADO. Rodar por blocos.
+-- APLICADO. Conferido no banco em 13/08/2026. Foi rodado por blocos.
 -- Depende de 95, 96 e 97.
 --
 -- Não cria tabela. `pedagogico_envios` já é uma fila de mensagem
@@ -67,16 +67,30 @@ comment on view vw_prazo_fila_envio is
 
 
 -- ------------------------------------------------------------
--- ENFILEIRAR
+-- REGISTRAR O ENVIO
 --
--- Não envia nada. Só grava a intenção em pedagogico_envios, no
--- mesmo padrão do link do grupo, para o disparador existente
--- consumir.
+-- CORREÇÃO de uma versão anterior deste arquivo, que chamava esta
+-- função de "enfileirar" e gravava status='pendente'. Estava
+-- errado, e o erro importa:
 --
--- `p_limite` existe para a primeira rodada não ir com 51 de uma
--- vez. Mandar dez, ver o que volta, depois abrir.
+-- `pedagogico_envios` NÃO é fila de saída. Ninguém a lê para
+-- enviar. Ela é REGISTRO do que já foi feito, e existe para impedir
+-- envio duplicado — o banco é recriado 3x ao dia pelo sync, e sem
+-- ela a mesma pessoa receberia a mensagem toda rodada.
+--
+-- Quem dispara é o workflow do CRM, acionado pela tag que o script
+-- aplica. A cadeia real é:
+--   vw_prazo_fila_envio → script (grava campos + tag) → workflow
+--   → 4zapy → aluno
+--
+-- Logo: o script chama esta função DEPOIS de aplicar a tag, e grava
+-- 'aceito'. Gravar 'pendente' criaria uma linha que bloqueia o
+-- reenvio de uma mensagem que nunca saiu.
+--
+-- Não existe botão de tela para isto. A tela mostra a fila e o que
+-- já saiu; quem escreve é o script.
 -- ------------------------------------------------------------
-create or replace function enfileirar_prazo_vencendo(p_limite int default 50)
+create or replace function registrar_envio_prazo(p_limite int default 50)
 returns jsonb
 language plpgsql
 security definer
@@ -89,20 +103,20 @@ begin
     raise exception 'Sem permissão';
   end if;
 
-  insert into pedagogico_envios (aluno_id, turma_id, origem, tipo, status, criado_em)
-  select f.aluno_id, f.turma_id, 'prazo', 'prazo_vencendo', 'pendente', now()
+  insert into pedagogico_envios (aluno_id, turma_id, origem, tipo, status, enviado_em, criado_em)
+  select f.aluno_id, f.turma_id, 'prazo', 'prazo_vencendo', 'aceito', now(), now()
     from (select * from vw_prazo_fila_envio
            order by dias_restantes limit p_limite) f;
 
   get diagnostics v_gravados = row_count;
 
   return jsonb_build_object(
-    'enfileirados', v_gravados,
+    'registrados', v_gravados,
     'restantes_na_fila', (select count(*) from vw_prazo_fila_envio)
   );
 end $$;
 
-revoke execute on function enfileirar_prazo_vencendo from anon;
+revoke execute on function registrar_envio_prazo from anon;
 
 
 -- ------------------------------------------------------------
@@ -153,10 +167,13 @@ grant select on vw_prazo_fila_envio, vw_prazo_envios_status to authenticated;
 -- COMO RODAR A PRIMEIRA VEZ
 --
 --   select * from vw_prazo_fila_envio order by dias_restantes;
---   select enfileirar_prazo_vencendo(10);   -- dez primeiro
+--
+-- O script aplica a tag no CRM para os 10 primeiros e, só depois,
+-- chama:
+--   select registrar_envio_prazo(10);
 --   select * from vw_prazo_envios_status;
 --
--- Dez, ver o que volta, depois abrir. Fila de 51 disparada de uma
--- vez sem ninguém ter lido a mensagem em produção é como se
+-- Dez primeiro, ver o que volta, depois abrir. Fila de 51 disparada
+-- de uma vez sem ninguém ter lido a mensagem em produção é como se
 -- descobre erro de texto com cliente real.
 -- ============================================================

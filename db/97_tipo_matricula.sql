@@ -1,7 +1,7 @@
 -- ============================================================
--- 08 — TIPO DE MATRÍCULA
+-- 97 — TIPO DE MATRÍCULA
 --
--- NÃO APLICADO. Rodar por blocos, na ordem do arquivo.
+-- APLICADO. Conferido no banco em 13/08/2026. Foi rodado por blocos, na ordem do arquivo.
 --
 -- Recria toda a cadeia de views do prazo. `vw_pedagogico_prazo`
 -- muda de assinatura, e no Postgres isso exige drop — `create or

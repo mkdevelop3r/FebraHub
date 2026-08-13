@@ -1,7 +1,12 @@
 -- ============================================================
--- 99 — FOLGA DE TIMEOUT PARA A FILA DE PRAZO
+-- 99b — FOLGA DE TIMEOUT PARA A FILA DE PRAZO
 --
--- Rodar no SQL Editor do Supabase. NÃO cria nem altera tabela/view —
+-- APLICADO. Conferido no banco em 13/08/2026: `authenticated` está em
+-- 15s e `anon` em 3s (pg_roles.rolconfig).
+--
+-- Recebeu o sufixo `b` porque o número 99 já era das boas-vindas, e
+-- este arquivo chegou a ser sobrescrito por elas — o conteúdo foi
+-- recuperado do histórico do git. NÃO cria nem altera tabela/view:
 -- só ajusta o statement_timeout do papel `authenticated`.
 --
 -- O PROBLEMA

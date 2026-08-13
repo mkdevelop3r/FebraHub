@@ -1,7 +1,7 @@
 -- ============================================================
--- 04 — REPRESADO SOBRE A FONTE VIVA
+-- 92 — REPRESADO SOBRE A FONTE VIVA
 --
--- NÃO APLICADO. Ler as decisões antes de rodar.
+-- APLICADO. Conferido no banco em 13/08/2026. Ler as decisões antes de rodar.
 --
 -- O 03 trouxe a presença para o banco. Este arquivo faz as views de
 -- represado que já existiam voltarem a funcionar, trocando a fonte

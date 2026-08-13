@@ -1,7 +1,7 @@
 -- ============================================================
--- 06 — PRAZO DO ALUNO
+-- 95 — PRAZO DO ALUNO
 --
--- NÃO APLICADO. Rodar por blocos — o editor do Supabase roda tudo
+-- APLICADO. Conferido no banco em 13/08/2026. Foi rodado por blocos — o editor do Supabase roda tudo
 -- em uma transação e um erro no meio desfaz o que já passou.
 --
 -- POR QUE ESTE ARQUIVO EXISTE, E POR QUE ELE SUBSTITUI O REPRESADO

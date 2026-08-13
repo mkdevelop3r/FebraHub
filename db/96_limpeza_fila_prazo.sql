@@ -1,7 +1,7 @@
 -- ============================================================
--- 07 — LIMPEZA DA FILA DE PRAZO
+-- 96 — LIMPEZA DA FILA DE PRAZO
 --
--- NÃO APLICADO. Rodar por blocos.
+-- APLICADO. Conferido no banco em 13/08/2026. Foi rodado por blocos.
 --
 -- O 06 funcionou e já achou coisa urgente: uma pessoa vencendo em
 -- 1 dia, e 91 sem turma disponível dentro do prazo. Mas a lista

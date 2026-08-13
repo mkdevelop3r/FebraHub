@@ -114,4 +114,19 @@ Ordem de aplicação e o que cada uma faz. Gerado a partir do cabeçalho de cada
 | 96 | `96_limpeza_fila_prazo.sql` | FebraHub · Migration 96 — Limpeza da fila de prazo |
 | 97 | `97_tipo_matricula.sql` | FebraHub · Migration 97 — Tipo de matrícula (recria a cadeia de views do prazo) |
 | 98 | `98_prazo_mensagens.sql` | FebraHub · Migration 98 — Mensagem de prazo vencendo (enfileirar, não envia) |
-| 99 | `99_prazo_timeout.sql` | FebraHub · Migration 99 — Folga de statement_timeout (authenticated) para a fila de prazo |
+| 99 | `99_boas_vindas.sql` | FebraHub · Migration 99 — Boas-vindas na compra (registrar_envio_boas_vindas) |
+| 99b | `99b_prazo_timeout.sql` | FebraHub · Migration 99b — Folga de statement_timeout (authenticated 15s) para a fila de prazo |
+| 100 | `100_registro_por_pessoa.sql` | FebraHub · Migration 100 — Registro de envio por pessoa |
+| 101 | `101_boas_vindas_contato.sql` | FebraHub · Migration 101 — Fila de boas-vindas: junção e contato |
+| 102 | `102_constraints_envios.sql` | FebraHub · Migration 102 — Constraints de pedagogico_envios |
+| 103 | `103_prazo_sem_pode_ver.sql` | FebraHub · Migration 103 — Tirar pode_ver() da view base do prazo |
+| 104 | `104_boas_vindas_3_dias.sql` | FebraHub · Migration 104 — Fila de boas-vindas: janela de 3 dias |
+| 105 | `105_indices_fila_prazo.sql` | FebraHub · Migration 105 — Índices da fila de prazo |
+| 106 | `106_conter_marketing_e_materializar_prazo.sql` | FebraHub · Migration 106 — Conter a view de marketing e materializar a fila de prazo |
+| 107 | `107_disparo_por_turma.sql` | FebraHub · Migration 107 — Disparo por turma (disparar_turma, vw_turma_fila_envio, vw_turma_envios) |
+| 108 | `108_faturamento_mensal_aprovacao.sql` | FebraHub · Migration 108 — Faturamento mensal por aprovação (fonte canônica dos dois hubs) |
+| 109 | `109_qualidade_sem_status_periodo.sql` | FebraHub · Migration 109 — Qualidade "sem status" por período |
+| 110 | `110_respostas_de_volta.sql` | FebraHub · Migration 110 — Respostas de volta (registrar_respostas, marcar_resposta, vw_turma_status/resumo) |
+| 111 | `111_represado_lista_e_disparo.sql` | FebraHub · Migration 111 — Represados: a lista e o disparo (reconstruída do banco) |
+| 112 | `112_respostas_so_com_contato.sql` | FebraHub · Migration 112 — Fila de respostas: só quem dá para consultar |
+| 113 | `113_turma_inscritos.sql` | FebraHub · Migration 113 — Inscritos da turma, incluindo quem não foi enfileirado |

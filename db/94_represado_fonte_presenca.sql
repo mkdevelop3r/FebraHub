@@ -1,7 +1,7 @@
 -- ============================================================
--- 05 — REPRESADO SOBRE PRESENÇA, VALIDADO CONTRA O SALESFORCE
+-- 94 — REPRESADO SOBRE PRESENÇA, VALIDADO CONTRA O SALESFORCE
 --
--- NÃO APLICADO. Ler as decisões antes de rodar.
+-- APLICADO. Conferido no banco em 13/08/2026. Ler as decisões antes de rodar.
 --
 -- Validação que motivou este arquivo:
 --

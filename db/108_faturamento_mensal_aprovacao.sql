@@ -1,5 +1,5 @@
 -- ============================================================
--- FebraHub · Migration 89 — Faturamento mensal por aprovação (deduplicado)
+-- FebraHub · Migration 108 — Faturamento mensal por aprovação (deduplicado)
 --
 -- PROBLEMA: Executivo e Comercial mostravam faturamentos diferentes para
 -- agosto (R$ 647 mil vs R$ 278 mil) porque usavam critérios de data

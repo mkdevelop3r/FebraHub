@@ -720,6 +720,74 @@ export function useEnviosTurma(turmaId) {
   });
 }
 
+/* ============================================================
+   CENTRAL PEDAGÓGICA — a tela de operação da Elis e da Gisele
+   ============================================================
+   O Hub Pedagógico é painel (gráfico, KPI, tendência). Aqui é
+   trabalho: lista, status, botão. Toda escrita passa por função do
+   banco — nenhum insert ou update direto daqui. Nunca filtrar por
+   setor: `pode_ver('pedagogico')` já filtra nas views. */
+
+/* Turmas do cadastro. Trago todas (234) e a tela ordena futuras
+   primeiro — o passado serve para conferir o que já saiu. */
+export const useTurmasCadastro = () =>
+  useView("dim_turmas", {
+    ordem: ["data_inicio", "turma_id"],
+    seletor: "turma_id,curso,data_inicio,data_fim,cidade,local,capacidade,nome_comercial,link_grupo,horario_credenciamento,horario_inicio,horario_fim",
+    staleTime: 60 * 1000,
+  });
+
+/* Resumo por turma E por tipo de mensagem (confirmacao | grupo).
+   Vem de vw_turma_inscritos_resumo (migration 113), que parte dos
+   MATRICULADOS: quem nunca foi enfileirado aparece em
+   `nao_enfileirados` em vez de sumir. A vw_turma_resumo antiga só
+   enxergava quem já tinha linha em pedagogico_envios — 48 pessoas
+   de 872 — e por isso não serve para operar. */
+export const useTurmaInscritosResumo = () =>
+  useView("vw_turma_inscritos_resumo", { ordem: ["data_inicio", "turma_id", "tipo"], staleTime: 60 * 1000 });
+
+/* Inscritos de UMA turma, um por (aluno, tipo). `situacao` já vem
+   pronta do banco — o front não recalcula status. `sem_contato`
+   separa "não mandei" de "não tenho como mandar". */
+export function useTurmaInscritos(turmaId) {
+  return useQuery({
+    queryKey: ["turma_inscritos", turmaId],
+    enabled: turmaId != null,
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vw_turma_inscritos")
+        .select("aluno_id,nome,telefone,email,tipo,status,enviado_em,resposta,respondido_em,resposta_origem,situacao,sem_contato")
+        .eq("turma_id", turmaId)
+        .order("nome");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
+/* ENFILEIRA a mensagem da turma — não envia. Quem envia é o script,
+   na rodada seguinte. Devolve { ok, enfileirados, sem_contato,
+   mensagem } ou { ok:false, faltando, mensagem } quando falta campo
+   no cadastro. A tela mostra `mensagem` direto, sem reescrever: é o
+   que impede mensagem truncada chegar no cliente. */
+export async function dispararTurma(turmaId, tipo) {
+  const { data, error } = await supabase.rpc("disparar_turma", { p_turma_id: turmaId, p_tipo: tipo });
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data;
+}
+
+/* Resposta registrada na mão (alguém respondeu por telefone ou no
+   corredor). Grava resposta_origem='hub', que a sincronia do CRM
+   respeita e não sobrescreve. */
+export async function marcarResposta(alunoId, turmaId, tipo, resposta) {
+  const { data, error } = await supabase.rpc("marcar_resposta", {
+    p_aluno_id: alunoId, p_turma_id: turmaId, p_tipo: tipo, p_resposta: resposta,
+  });
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data;
+}
+
 export const useEventosDesempenho = () => useView("vw_eventos_desempenho");
 export const useDiretoriaConsol   = () => useView("vw_diretoria_consolidado");
 
