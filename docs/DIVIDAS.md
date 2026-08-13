@@ -8,15 +8,29 @@ Ordem de ataque sugerida.
 
 ---
 
-## 🔴 1. Inadimplência não é confiável
+## ✅ 1. Inadimplência não é confiável — RESOLVIDO (passivo antigo)
 
-**15% dos pagamentos sem `status_pagamento`** (1.203 de 7.902).
+**Era:** 15% dos pagamentos sem `status_pagamento` (1.203 de 7.902), o que tornava a
+inadimplência um chute.
 
-A inadimplência é calculada em cima desse campo. Com 15% da base sem status, o KPI é
-chute — e é justamente o que a Dulce vai querer olhar.
+**Hoje:** o buraco é histórico, não corrente. `sem_status` por ano de pagamento
+(matrículas, conferido em 12/08/2026):
 
-**Causa:** provável falha no ETL do Salesforce (mesma família dos outros bugs de mapper).
-**Ação:** rodar o método `--diagnostico` no ETL do Salesforce.
+| ano | matrículas | sem status |
+|-----|-----------:|-----------:|
+| 2021 | 36 | 44,4% |
+| 2022 | 2.385 | 14,6% |
+| 2023 | 1.335 | 31,0% |
+| 2024 | 1.785 | 19,6% |
+| 2025 | 1.304 | 4,5% |
+| 2026 | 905 | **0,0%** |
+
+O sync do CisPay traz status automático; o que sobra sem status é o legado batido a mão
+(Stone/outras), de 2021-2024. A inadimplência dos meses recentes é confiável.
+
+**No painel:** o Hub Financeiro mede o ANO CORRENTE, não a média histórica — senão o
+card alarmava sobre um problema já corrigido. O número histórico continua à vista, com
+o rótulo dizendo o que ele é. Não voltar a somar tudo num percentual só.
 
 ---
 

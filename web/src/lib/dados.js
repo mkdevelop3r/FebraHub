@@ -179,6 +179,13 @@ export const useComercialVerdesDetalhe = () =>
 export const useFinanceiroReceita = () => useView("vw_financeiro_receita");
 export const useFinanceiroInadimp = () => useView("vw_financeiro_inadimplencia");
 export const useFinanceiroQualid  = () => useView("vw_financeiro_qualidade");
+/* Qualidade "sem status" POR MÊS (migration 109): { mes, total, sem_status,
+   pct_sem_status }. A view entrega `total` e `sem_status` BRUTOS de propósito:
+   pra juntar meses num período, some os dois e divida — nunca tire média das
+   porcentagens mensais, que distorce quando os meses têm volumes diferentes
+   (2023 dá 13,3% somando e 15,1% na média das médias). */
+export const useFinanceiroQualidadePeriodo = () =>
+  useView("vw_financeiro_qualidade_periodo", { ordem: ["mes"], staleTime: 60 * 1000, retry: 2 });
 export const useFinanceiroPagamentos = () => useView("vw_financeiro_pagamentos");
 export const useFinanceiroReceitaCategoria = () => useView("vw_financeiro_receita_categoria_total");
 export const useFinanceiroCaixaHorizonte = () => useView("vw_financeiro_caixa_horizonte");
