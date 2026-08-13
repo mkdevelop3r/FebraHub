@@ -10,7 +10,7 @@ import {
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
   Users, Target, Construction, Percent, Filter, ChevronUp,
   Boxes, PackageX, Repeat, UserCheck, BookOpen, ShieldCheck,
-  Check, Pencil, Star, Plus, PhoneCall, Send, Link2, ClipboardList,
+  Check, Pencil, Star, Plus, PhoneCall, Send, Link2, ClipboardList, Search,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
@@ -5791,33 +5791,49 @@ const ABAS_CENTRAL = [
   { key: "maestros",   label: "Maestros" },
 ];
 
-/* Cores da situação. Vêm da view (migration 113), não do front. */
-const COR_SITUACAO = {
-  "confirmado": C.up,
-  "nao vem": C.down,
-  "erro no envio": C.down,
-  "sem resposta": C.warn,
-  "aguardando resposta": C.gold,
-  "aguardando envio": C.gold,
-  "nao enfileirado": C.dim,
+/* A situação vem pronta da view (migration 113); aqui só o tom e o rótulo.
+   Cada situação tem um tom próprio: duas situações com a mesma cor obrigam a
+   ler o texto de cada linha, que é o oposto de uma lista escaneável.
+   `ordem` é a prioridade de trabalho — quem precisa de ação sobe. */
+const SITUACOES = {
+  "erro no envio":       { rotulo: "erro no envio",    cor: C.down,  fundo: "1F", ordem: 0 },
+  "nao enfileirado":     { rotulo: "não enfileirado",  cor: C.faint, fundo: null, ordem: 1 },
+  "sem resposta":        { rotulo: "sem resposta",     cor: C.warn,  fundo: "1A", ordem: 2 },
+  "aguardando envio":    { rotulo: "aguardando envio", cor: C.dim,   fundo: "12", ordem: 3 },
+  "aguardando resposta": { rotulo: "aguardando",       cor: C.muted, fundo: "14", ordem: 4 },
+  "confirmado":          { rotulo: "confirmado",       cor: C.up,    fundo: "1A", ordem: 5 },
+  "nao vem":             { rotulo: "não vem",          cor: C.down,  fundo: "10", ordem: 6 },
 };
-const corSituacao = (s) => COR_SITUACAO[String(s ?? "").trim().toLowerCase()] ?? C.muted;
+const daSituacao = (s) =>
+  SITUACOES[String(s ?? "").trim().toLowerCase()] ?? { rotulo: s || "—", cor: C.muted, fundo: "14", ordem: 9 };
 
-const ROTULO_SITUACAO = {
-  "nao vem": "não vem",
-  "nao enfileirado": "não enfileirado",
+/* CPF por extenso. Cinco de seis inscritos não estão em dim_alunos e chegam
+   aqui como CPF no lugar do nome — onze dígitos corridos fazem a tela parecer
+   quebrada, e a Elis precisa conseguir ler para achar a pessoa. Diferente de
+   `mascaraCpf`, que esconde dígitos para telas de leitura. */
+const formataCpf = (v) => {
+  const d = String(v ?? "").replace(/\D/g, "");
+  if (d.length !== 11) return String(v ?? "").trim() || "—";
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
 };
-const rotuloSituacao = (s) => ROTULO_SITUACAO[String(s ?? "").trim().toLowerCase()] ?? (s ?? "—");
+// A view faz coalesce(nome, aluno_id): sem cadastro, o "nome" é o próprio CPF.
+const semCadastro = (r) => !r.nome || String(r.nome).replace(/\D/g, "") === String(r.aluno_id ?? "").replace(/\D/g, "");
 
-function ChipSituacao({ situacao }) {
-  const cor = corSituacao(situacao);
-  return (
-    <span style={{
-      fontSize: 9.5, fontWeight: 800, padding: "2px 8px", borderRadius: 999, whiteSpace: "nowrap",
-      color: cor, background: `${cor}1A`, border: `1px solid ${cor}44`,
-    }}>{rotuloSituacao(situacao)}</span>
-  );
-}
+/* Link do WhatsApp. Só formatação — o número vem do banco. Sem DDI, assume
+   Brasil; com 55 na frente, respeita o que veio. Fora desses tamanhos não
+   inventa link: telefone torto vira texto simples. */
+const linkWhatsapp = (tel) => {
+  const d = String(tel ?? "").replace(/\D/g, "");
+  if (d.length === 10 || d.length === 11) return `https://wa.me/55${d}`;
+  if ((d.length === 12 || d.length === 13) && d.startsWith("55")) return `https://wa.me/${d}`;
+  return null;
+};
+const formataTelefone = (tel) => {
+  const d = String(tel ?? "").replace(/\D/g, "").replace(/^55/, "");
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return String(tel ?? "").trim();
+};
 
 /* Contador com denominador. Número solto ("12 confirmados") não diz se é
    muito ou pouco — 12 de 14 e 12 de 400 pedem decisões opostas. */
@@ -5987,12 +6003,37 @@ function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
   const [tipo, setTipo] = useState("confirmacao");
   const [disparando, setDisparando] = useState(null);
   const [retorno, setRetorno] = useState(null); // o que a função devolveu
+  const [filtro, setFiltro] = useState("todos"); // contador clicado no topo
+  const [busca, setBusca] = useState("");
+  const [aberta, setAberta] = useState(null);    // linha com as opções abertas
 
-  const doTipo = useMemo(
-    () => (inscritos.data ?? []).filter((r) => r.tipo === tipo),
-    [inscritos.data, tipo]
-  );
-  const semContato = useMemo(() => doTipo.filter((r) => r.sem_contato).length, [doTipo]);
+  const resumoTipo = resumo?.[tipo];
+
+  /* Ordem de trabalho: quem precisa de ação sobe. Erro no envio primeiro
+     (alguém tem que consertar), depois quem nunca foi enfileirado, sem
+     resposta, aguardando — e por último quem já está resolvido. Dentro da
+     mesma situação, por nome, pra a lista não dançar entre recargas. */
+  const doTipo = useMemo(() => {
+    const rows = (inscritos.data ?? []).filter((r) => r.tipo === tipo);
+    return [...rows].sort((a, b) =>
+      daSituacao(a.situacao).ordem - daSituacao(b.situacao).ordem
+      || String(a.nome ?? "").localeCompare(String(b.nome ?? ""), "pt-BR"));
+  }, [inscritos.data, tipo]);
+
+  /* Filtro do contador + busca. A busca casa nome, CPF (com ou sem
+     pontuação — ela digita dos dois jeitos) e telefone. */
+  const visiveis = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    const qNum = q.replace(/\D/g, "");
+    return doTipo.filter((r) => {
+      if (filtro === "sem_contato" ? !r.sem_contato : filtro !== "todos" && r.situacao !== filtro) return false;
+      if (!q) return true;
+      const doc = String(r.aluno_id ?? "").replace(/\D/g, "");
+      const tel = String(r.telefone ?? "").replace(/\D/g, "");
+      return String(r.nome ?? "").toLowerCase().includes(q)
+        || (qNum.length >= 3 && (doc.includes(qNum) || tel.includes(qNum)));
+    });
+  }, [doTipo, filtro, busca]);
 
   const recarregar = () => {
     qc.invalidateQueries({ queryKey: ["turma_inscritos", turma.turma_id] });
@@ -6090,11 +6131,14 @@ function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
 
       {/* ---- Inscritos ---- */}
       <div style={{ marginTop: 22 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>Inscritos</span>
+          {/* Confirmação e grupo são estados independentes: dá pra ter
+              confirmado e ainda não ter recebido o link. Cada aba tem os
+              próprios contadores. */}
           <Segmentado
             opcoes={[{ key: "confirmacao", label: "Confirmação" }, { key: "grupo", label: "Link do grupo" }]}
-            valor={tipo} onChange={setTipo}
+            valor={tipo} onChange={(v) => { setTipo(v); setFiltro("todos"); }}
           />
         </div>
 
@@ -6105,62 +6149,183 @@ function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
           vazioTitulo="Nenhuma matrícula aprovada nesta turma"
           vazioDica="A lista sai das matrículas aprovadas. Compradores de vaga ficam de fora — eles não são alunos."
         >
-          <div style={{ fontSize: 10.5, color: C.faint, marginBottom: 7 }}>
-            {numero(doTipo.length)} pessoas
-            {semContato > 0 && <> · <b style={{ color: C.warn }}>{numero(semContato)}</b> sem telefone nem e-mail</>}
+          <FaixaContadores resumo={resumoTipo} total={doTipo.length} filtro={filtro} onFiltrar={setFiltro} />
+
+          <div style={{ position: "relative", margin: "10px 0 8px" }}>
+            <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.dim }} />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar por nome, CPF ou telefone"
+              style={{ ...inputAv, paddingLeft: 30 }}
+            />
           </div>
-          <div className="rolagem" style={{ maxHeight: 340, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
-            {doTipo.map((r, i) => (
-              <LinhaInscrito key={`${r.aluno_id}-${i}`} r={r} ultima={i === doTipo.length - 1} onMarcar={marcar} />
-            ))}
-          </div>
+
+          {!visiveis.length ? (
+            <div style={{ fontSize: 12, color: C.faint, padding: "14px 2px", lineHeight: 1.5 }}>
+              Ninguém nesse recorte.{" "}
+              <button onClick={() => { setFiltro("todos"); setBusca(""); }} style={{
+                background: "none", border: "none", padding: 0, cursor: "pointer",
+                color: C.gold, fontFamily: SANS, fontSize: 12, fontWeight: 700, textDecoration: "underline",
+              }}>Ver todos os {numero(doTipo.length)}</button>
+            </div>
+          ) : (
+            <div className="rolagem" style={{ maxHeight: 380, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
+              {visiveis.map((r, i) => (
+                <LinhaInscrito
+                  key={`${r.aluno_id}-${i}`}
+                  r={r}
+                  ultima={i === visiveis.length - 1}
+                  aberta={aberta === r.aluno_id}
+                  onAbrir={() => setAberta(aberta === r.aluno_id ? null : r.aluno_id)}
+                  onMarcar={marcar}
+                />
+              ))}
+            </div>
+          )}
         </Estado>
       </div>
     </DrawerLado>
   );
 }
 
-/* Uma pessoa. Os três botões registram a resposta que chegou por fora do
-   WhatsApp — por telefone, no corredor, pela consultora. Sem isso a planilha
-   volta pela porta dos fundos. */
-function LinhaInscrito({ r, ultima, onMarcar }) {
+/* Os números do topo são o filtro. É como a Elis passa de "conferir quantos
+   confirmaram" para "trabalhar a lista de quem falta" sem trocar de tela.
+   Os valores vêm da view; só "inscritos" usa o tamanho da lista carregada,
+   que é a mesma fonte, já em mãos. */
+function FaixaContadores({ resumo, total, filtro, onFiltrar }) {
+  const n = (c) => Number(resumo?.[c] ?? 0);
+  const itens = [
+    { key: "todos", rotulo: "inscritos", valor: Number(resumo?.matriculados ?? total), cor: C.bright },
+    { key: "confirmado", rotulo: "confirmados", valor: n("confirmados"), cor: C.up },
+    { key: "nao vem", rotulo: "não vêm", valor: n("nao_vem"), cor: C.down },
+    { key: "sem resposta", rotulo: "sem resposta", valor: n("sem_resposta"), cor: C.warn },
+    { key: "aguardando resposta", rotulo: "aguardando", valor: n("aguardando_resposta"), cor: C.muted },
+    { key: "nao enfileirado", rotulo: "não enfileirados", valor: n("nao_enfileirados"), cor: C.faint },
+    // Estados transitórios/excepcionais: só ocupam espaço quando existem.
+    ...(n("aguardando_envio") > 0 ? [{ key: "aguardando envio", rotulo: "aguardando envio", valor: n("aguardando_envio"), cor: C.dim }] : []),
+    // "Sem contato" não é o mesmo que "não mandei": é "não tenho como mandar".
+    ...(n("sem_contato") > 0 ? [{ key: "sem_contato", rotulo: "sem contato", valor: n("sem_contato"), cor: C.warn }] : []),
+  ];
+
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "stretch" }}>
+      {itens.map((it) => {
+        const ativo = filtro === it.key;
+        const vazio = it.valor === 0 && it.key !== "todos";
+        return (
+          <button
+            key={it.key}
+            onClick={() => onFiltrar(ativo ? "todos" : it.key)}
+            disabled={vazio}
+            aria-pressed={ativo}
+            title={vazio ? "ninguém nesta situação" : ativo ? "Clique para ver todos" : `Filtrar: ${it.rotulo}`}
+            style={{
+              display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1,
+              padding: "6px 10px", borderRadius: 10, fontFamily: SANS, textAlign: "left",
+              cursor: vazio ? "default" : "pointer",
+              background: ativo ? `${it.cor}1C` : "rgba(255,255,255,.03)",
+              border: `1px solid ${ativo ? `${it.cor}66` : C.cardLine}`,
+              opacity: vazio ? 0.45 : 1,
+            }}
+          >
+            <span style={{ fontFamily: GROTESK, fontSize: 15, fontWeight: 700, lineHeight: 1, color: vazio ? C.dim : it.cor }}>
+              {numero(it.valor)}
+            </span>
+            <span style={{ fontSize: 9.5, fontWeight: 700, color: ativo ? it.cor : C.faint, whiteSpace: "nowrap" }}>
+              {it.rotulo}
+            </span>
+          </button>
+        );
+      })}
+      {filtro !== "todos" && (
+        <button onClick={() => onFiltrar("todos")} style={{
+          alignSelf: "center", marginLeft: 2, background: "none", border: "none", padding: "4px 2px",
+          cursor: "pointer", color: C.gold, fontFamily: SANS, fontSize: 11, fontWeight: 700,
+        }}>× limpar filtro</button>
+      )}
+    </div>
+  );
+}
+
+/* Uma pessoa por linha. Nome domina; telefone abaixo, apagado e clicável — é
+   o que transforma a lista em ferramenta de ligação. O chip de status é o
+   único ponto de cor forte, e é ele que abre as três opções: marcar na mão é
+   exceção, não a regra, então os botões não ficam à mostra em toda linha. */
+function LinhaInscrito({ r, ultima, aberta, onAbrir, onMarcar }) {
+  const s = daSituacao(r.situacao);
   const naFila = String(r.situacao ?? "") !== "nao enfileirado";
-  const botao = (valor, rotulo, cor) => (
+  const anonimo = semCadastro(r);
+  const zap = r.sem_contato ? null : linkWhatsapp(r.telefone);
+  const naMao = r.resposta_origem === "hub";
+
+  const opcao = (valor, rotulo, cor) => (
     <button
       key={valor}
-      onClick={(e) => { e.stopPropagation(); onMarcar(r.aluno_id, valor); }}
-      disabled={!naFila}
-      title={naFila ? `Registrar: ${rotulo}` : "Dispare a mensagem antes de registrar a resposta"}
+      onClick={() => { onMarcar(r.aluno_id, valor); onAbrir(); }}
       style={{
-        fontFamily: SANS, fontSize: 10, fontWeight: 700, padding: "3px 7px", borderRadius: 7,
-        border: `1px solid ${naFila ? `${cor}44` : C.hair}`, background: "transparent",
-        color: naFila ? cor : C.dim, cursor: naFila ? "pointer" : "not-allowed",
+        fontFamily: SANS, fontSize: 10.5, fontWeight: 700, padding: "4px 9px", borderRadius: 7,
+        border: `1px solid ${cor}55`, background: `${cor}12`, color: cor, cursor: "pointer",
       }}
     >{rotulo}</button>
   );
 
   return (
-    <div style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-      padding: "8px 11px", borderBottom: ultima ? "none" : `1px solid ${C.hair}`,
-    }}>
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: 12, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {r.nome || mascaraCpf(r.aluno_id)}
+    <div style={{ borderBottom: ultima ? "none" : `1px solid ${C.hair}` }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px" }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+            <span style={{
+              fontSize: 13, fontWeight: 700, color: C.text,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+              fontVariantNumeric: anonimo ? "tabular-nums" : "normal",
+            }}>
+              {anonimo ? formataCpf(r.aluno_id) : r.nome}
+            </span>
+            {anonimo && <span style={{ fontSize: 10, color: C.dim, flexShrink: 0 }}>sem cadastro</span>}
+            {naMao && <span title="resposta registrada na mão" style={{
+              width: 5, height: 5, borderRadius: 999, background: C.gold, flexShrink: 0,
+            }} />}
+          </div>
+          <div style={{ fontSize: 11, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {r.sem_contato ? (
+              <span style={{ color: C.warn }}>sem telefone nem e-mail</span>
+            ) : zap ? (
+              <a href={zap} target="_blank" rel="noreferrer" style={{ color: C.faint, textDecoration: "none" }}
+                 title="Abrir conversa no WhatsApp">
+                {formataTelefone(r.telefone)}
+              </a>
+            ) : (
+              <span style={{ color: C.faint }}>{r.telefone || r.email || "—"}</span>
+            )}
+          </div>
         </div>
-        <div style={{ fontSize: 10, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {r.sem_contato ? "sem telefone nem e-mail" : (r.telefone || r.email || "—")}
-          {r.resposta_origem === "hub" && " · registrado na mão"}
-        </div>
+
+        {/* O chip é o botão. Sem preenchimento quando ninguém foi enfileirado
+            — estado de ausência não deve pesar tanto quanto um resultado. */}
+        <button
+          onClick={onAbrir}
+          disabled={!naFila}
+          aria-expanded={aberta}
+          title={naFila ? "Registrar a resposta que chegou por fora" : "Dispare a mensagem antes de registrar a resposta"}
+          style={{
+            fontFamily: SANS, fontSize: 10, fontWeight: 800, padding: "4px 10px", borderRadius: 999,
+            whiteSpace: "nowrap", flexShrink: 0, color: s.cor,
+            background: s.fundo ? `${s.cor}${s.fundo}` : "transparent",
+            border: `1px solid ${s.cor}${s.fundo ? "44" : "55"}`,
+            cursor: naFila ? "pointer" : "default",
+          }}
+        >{s.rotulo}</button>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-        <div style={{ display: "flex", gap: 4 }}>
-          {botao("sim", "Sim", C.up)}
-          {botao("nao", "Não", C.down)}
-          {botao("sem_resposta", "Sem resposta", C.warn)}
+
+      {aberta && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "0 12px 10px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10.5, color: C.dim }}>Ela respondeu:</span>
+          {opcao("sim", "Sim, vem", C.up)}
+          {opcao("nao", "Não vem", C.down)}
+          {opcao("sem_resposta", "Sem resposta", C.warn)}
         </div>
-        <ChipSituacao situacao={r.situacao} />
-      </div>
+      )}
     </div>
   );
 }
