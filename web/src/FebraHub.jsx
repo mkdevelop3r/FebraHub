@@ -18,7 +18,7 @@ import {
   useComercialVerdesDetalhe,
   useComercialMatriculasFaturamento, useComercialCursosPorConsultora,
   useComercialRankingGeralConsolidado, useComercialGeralMensal, useFaturamentoMensal,
-  useFinanceiroPagamentos,
+  useFinanceiroPagamentos, useFinanceiroQualidadePeriodo,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
   useFinanceiroReceitaMensal, useFinanceiroCaixaMensal,
   useFinanceiroInadimp, useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
@@ -2326,6 +2326,7 @@ function HubFinanceiro() {
   const { inicio, fim, rotulo, modo } = usePeriodo();
   const recCat = useFinanceiroReceitaCategoriaPeriodo();
   const pag = useFinanceiroPagamentos();
+  const qualid = useFinanceiroQualidadePeriodo();
   const caixaHor = useFinanceiroCaixaHorizonte();
   const fpag = useFinanceiroFormasPagamento();
   const recMensal = useFinanceiroReceitaMensal();
@@ -2369,10 +2370,13 @@ function HubFinanceiro() {
      problema já resolvido — dava a entender que a inadimplência recente é
      duvidosa, e ela não é.
 
-     Então o painel mede o ANO CORRENTE (ou o último ano com matrícula, pra
-     não zerar em 1º de janeiro) e mantém o histórico como contexto explícito,
-     em vez de escondê-lo. O donut usa o total INCLUINDO sem_status — assim
-     "Sem status" segue como fatia honesta, não sumido do denominador. */
+     Então o painel segue o ANO DO PERÍODO SELECIONADO (com fallback no último
+     ano com matrícula, pra não zerar num ano sem base): trocar o seletor troca
+     o número, em vez de mostrar sempre a mesma média. Esta view só tem
+     granularidade de ANO — a taxa de "sem status" do chip, que reage mês a
+     mês, vem da vw_financeiro_qualidade_periodo (logo abaixo).
+     O donut usa o total INCLUINDO sem_status — assim "Sem status" segue como
+     fatia honesta, não sumido do denominador. */
   const pagPorAno = useMemo(() => {
     const somar = (linhas) => {
       let pagos = 0, pend = 0, perd = 0, sem = 0, matr = 0;
@@ -2391,17 +2395,44 @@ function HubFinanceiro() {
     };
     const linhas = (pag.data ?? []).filter((r) => r.ano != null && Number(r.matriculas ?? 0) > 0);
     const anos = [...new Set(linhas.map((r) => Number(r.ano)))].sort((a, b) => b - a);
-    const corrente = new Date().getFullYear();
-    const ano = anos.includes(corrente) ? corrente : (anos[0] ?? null);
+    const selecionado = Number(String(inicio).slice(0, 4));
+    const ano = anos.includes(selecionado) ? selecionado : (anos[0] ?? null);
     return {
       ano,
       recente: somar(ano != null ? linhas.filter((r) => Number(r.ano) === ano) : []),
-      historico: somar(pag.data ?? []),
-      anoInicial: anos.length ? anos[anos.length - 1] : null,
+      // `foraDoFiltro` avisa quando caiu no fallback: o painel não pode dizer
+      // "2024" mostrando 2026 sem que ninguém perceba.
+      foraDoFiltro: ano != null && ano !== selecionado,
     };
-  }, [pag.data]);
-  const pagTot = pagPorAno.recente;   // o que o painel mostra
-  const pagHist = pagPorAno.historico; // contexto do legado
+  }, [pag.data, inicio]);
+  const pagTot = pagPorAno.recente;
+
+  /* Taxa de "sem status" do PERÍODO selecionado (migration 109). A view vem
+     por MÊS com `total` e `sem_status` brutos; pra juntar meses do período a
+     conta é sum(sem_status) / sum(total) — média das porcentagens mensais
+     distorce quando os meses têm volumes diferentes (2023 dá 13,3% somando e
+     15,1% na média das médias).
+
+     O chip mostra só a taxa e o rótulo do período. A segunda linha só aparece
+     quando calar seria mentir: em Hoje/7 dias a view mensal não tem
+     granularidade de dia (o número é o do mês), e quando não há venda no
+     período não existe taxa nenhuma pra mostrar. */
+  const semStatus = useMemo(() => {
+    const de = String(inicio).slice(0, 7), ate = String(fim).slice(0, 7);
+    let total = 0, sem = 0;
+    for (const r of qualid.data ?? []) {
+      const m = String(r.mes ?? "").slice(0, 7);
+      if (!m || m < de || m > ate) continue;
+      total += Number(r.total ?? 0);   // brutos: a soma é sobre eles,
+      sem += Number(r.sem_status ?? 0); // nunca sobre os percentuais mensais
+    }
+    const pct = total ? (sem / total) * 100 : null;
+    const curto = modo === "hoje" || modo === "7d";
+    return {
+      total, sem, pct,
+      sub: pct == null ? "sem venda no período" : (curto ? "taxa do mês · a fonte é mensal" : null),
+    };
+  }, [qualid.data, inicio, fim, modo]);
 
   const aReceber = useMemo(
     () => (caixaHor.data ?? []).reduce((s, r) => s + Number(r.a_receber ?? 0), 0),
@@ -2471,16 +2502,14 @@ function HubFinanceiro() {
       {/* Faixa de KPIs compactos — âncora dourada + 4 métricas do mês */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
         <ChipKpi hero Icone={Wallet} label="Receita reconhecida" valor={moeda(categorias.total)} nota={rotulo} />
-        {/* Qualidade do dado RECENTE, não a média que carrega o legado. O
-            número antigo continua à vista, na segunda linha, com o rótulo que
-            diz o que ele é. */}
-        <ChipKpi Icone={Clock} label="Sem status" valor={pagTot.pctSem != null ? pagTot.pctSem.toFixed(1) : "—"} unidade="%"
-          nota={pagPorAno.ano ? `${pagPorAno.ano} · sync CisPay` : "—"}
-          sub={pagHist.pctSem != null && pagPorAno.anoInicial
-            ? `histórico ${pagPorAno.anoInicial}+: ${pagHist.pctSem.toFixed(1)}% · legado já corrigido`
-            : null} />
+        {/* Qualidade do dado do PERÍODO selecionado — trocar o ano troca o
+            número (2026: 0% · 2024: 8,8% · 2023: 13,3%). Sem média histórica:
+            somar tudo escondia que o buraco é passivo antigo, já corrigido. */}
+        <ChipKpi Icone={Clock} label="Sem status" valor={semStatus.pct != null ? semStatus.pct.toFixed(1) : "—"} unidade="%"
+          nota={rotulo}
+          sub={semStatus.sub} />
         <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%"
-          nota={pagPorAno.ano ? `${pagPorAno.ano} · posição atual` : "posição atual"} />
+          nota={pagPorAno.ano ? String(pagPorAno.ano) : "—"} />
         <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
         <ChipKpi Icone={Hourglass} label="A receber" valor={moeda(aReceber)} nota="CisPay · posição atual" />
         <ChipKpi Icone={Receipt} label={recebido ? `Recebido em ${dataCurta(recebido.mes)}` : "Recebido"}
@@ -2502,12 +2531,16 @@ function HubFinanceiro() {
           </Estado>
         </Bloco>
 
-        <Bloco titulo="Status de pagamento" canto={pagTot.tot ? `${pagPorAno.ano ?? ""} · ${pctPagoCentro}% pago` : null} altura={ALTURA_PAINEL}>
+        <Bloco titulo="Status de pagamento"
+          canto={pagTot.tot ? `${pagPorAno.ano ?? ""} · ${pctPagoCentro}% pago` : null} altura={ALTURA_PAINEL}>
           <Estado carregando={pag.isLoading} erro={pag.error} vazio={!pagTot.tot}>
             <Donut segmentos={statusSeg} centroValor={`${pctPagoCentro}%`} centroLabel="pago" centroCor={C.up} />
-            {/* O rodapé só alarma se ainda houver buraco no ano corrente.
-                Resolvido, ele vira o contrário: registra que o legado ficou
-                pra trás, pra ninguém desconfiar da inadimplência recente. */}
+            {/* O rodapé só alarma se ainda houver buraco NO ANO exibido.
+                Resolvido, vira o contrário: registra que o dado do ano está
+                íntegro, pra ninguém desconfiar da inadimplência. Nada de
+                percentual histórico aqui — quem responde por período é o chip
+                "Sem status" acima, e dois números diferentes na mesma tela é
+                exatamente o que confunde. */}
             <div style={{ display: "flex", gap: 8, marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.hair}` }}>
               {pagTot.sem > 0 ? (
                 <>
@@ -2521,13 +2554,17 @@ function HubFinanceiro() {
                   <ShieldCheck size={12} style={{ color: C.up, marginTop: 2, flexShrink: 0 }} />
                   <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
                     Todas as matrículas de {pagPorAno.ano} vêm com status (sync CisPay).
-                    {pagHist.pctSem != null && pagPorAno.anoInicial
-                      ? <> O histórico desde {pagPorAno.anoInicial} tem {pagHist.pctSem.toFixed(1)}% sem status — legado batido a mão, <b style={{ color: C.muted }}>já corrigido e fora deste painel.</b></>
-                      : null}
                   </span>
                 </>
               )}
+              {/* Ano só por ano: se o filtro é um mês/ano que a fonte do donut
+                  não tem, o painel diz de onde veio em vez de fingir. */}
             </div>
+            {pagPorAno.foraDoFiltro && (
+              <div style={{ fontSize: 10, color: C.dim, marginTop: 6 }}>
+                sem base em {String(inicio).slice(0, 4)} — mostrando {pagPorAno.ano}
+              </div>
+            )}
           </Estado>
         </Bloco>
 
