@@ -8,7 +8,13 @@ A CADEIA COMPLETA:
   view (Supabase) -> este script -> campos + tag (CRM) -> workflow
   -> 4zapy -> aluno
 
-DUAS FILAS, DOIS TEXTOS:
+TRÊS FILAS:
+
+  turma           confirmação de participação e link do grupo.
+                  Enfileirada pela Elis no botão "Salvar turma" — ela
+                  decide o momento, o script só entrega. É a única
+                  fila que não é view calculada.
+                  Tags: 'pedagogico:confirmacao' e 'pedagogico:grupo'
 
   boas_vindas     no ato da compra. Acolhimento + prazo da vaga.
                   Tag: 'pedagogico boas-vindas'
@@ -68,9 +74,15 @@ CRM_API = "https://services.leadconnectorhq.com"
 CAMPO_CURSO = "aEypUKJotJp6CNa9qkjm"   # Pedagogico Curso
 CAMPO_PRAZO = "hgKOTXvRxnNxFiULiRFi"   # Pedagogico Prazo
 CAMPO_PROXIMA = "oGv3CqcWa4lUekDI9Wap" # Pedagogico Proxima Turma
+CAMPO_DATAS = "qjFuniXeOdO812RlO3k4"   # Pedagogico Datas
+CAMPO_HORARIOS = "NO62an9Rmr7izspnABUG" # Pedagogico Horarios
+CAMPO_CREDENC = "Xjza3zFQ0KqopHqFVoJv" # Pedagogico Credenciamento
+CAMPO_LINK = "fXr7R9YN5Jz7Hv14RoHm"    # Pedagogico Link Grupo
 
 TAG_BOAS_VINDAS = "pedagogico boas-vindas"
 TAG_PRAZO = "pedagogico prazo"
+TAG_CONFIRMACAO = "pedagogico:confirmacao"
+TAG_GRUPO = "pedagogico:grupo"
 
 
 def log(m):
@@ -99,7 +111,8 @@ def data_br(iso):
     return f"{d}/{m}/{a}"
 
 
-def upsert_contato(nome, telefone, email, curso, prazo, proxima=None):
+def upsert_contato(nome, telefone, email, curso, prazo=None, proxima=None,
+                   datas=None, horarios=None, credenciamento=None, link_grupo=None):
     """Cria ou atualiza o contato com os campos que o template usa.
 
     Devolve o contactId. O upsert deduplica por telefone/e-mail, então
@@ -114,6 +127,12 @@ def upsert_contato(nome, telefone, email, curso, prazo, proxima=None):
         campos.append({"id": CAMPO_PRAZO, "field_value": data_br(prazo)})
     if proxima:
         campos.append({"id": CAMPO_PROXIMA, "field_value": data_br(proxima)})
+    for cid_campo, valor in ((CAMPO_DATAS, datas),
+                             (CAMPO_HORARIOS, horarios),
+                             (CAMPO_CREDENC, credenciamento),
+                             (CAMPO_LINK, link_grupo)):
+        if valor:
+            campos.append({"id": cid_campo, "field_value": valor})
 
     corpo = {"locationId": CRM_LOCATION, "customFields": campos}
     if nome:
@@ -166,6 +185,32 @@ def registrar(funcao, item):
     return r.json()
 
 
+def periodo(de, ate):
+    """'2026-08-26' + '2026-08-29' -> '26 a 29/08/2026'.
+
+    Uma data só quando for o mesmo dia. O template escreve
+    'nos dias {{...}}', então isso precisa encaixar na frase.
+    """
+    if not de:
+        return ""
+    if not ate or ate[:10] == de[:10]:
+        return data_br(de)
+    a1, m1, d1 = de[:10].split("-")
+    a2, m2, d2 = ate[:10].split("-")
+    if (a1, m1) == (a2, m2):
+        return f"{d1} a {d2}/{m1}/{a1}"
+    return f"{data_br(de)} a {data_br(ate)}"
+
+
+def horario_faixa(ini, fim):
+    """'9h' + '22h' -> 'das 9h às 22h'. Só o início se não houver fim."""
+    ini = (ini or "").strip()
+    fim = (fim or "").strip()
+    if not ini:
+        return ""
+    return f"das {ini} às {fim}" if fim else f"a partir das {ini}"
+
+
 def processar(view, tag, funcao_registro, monta_campos, exige=()):
     """`exige` lista campos que não podem vir vazios.
 
@@ -196,7 +241,8 @@ def processar(view, tag, funcao_registro, monta_campos, exige=()):
             cid = upsert_contato(**campos)
             if not cid:
                 raise RuntimeError("upsert não devolveu contactId")
-            aplicar_tags(cid, [tag, tag_turma(linha.get("turma_id"))])
+            tag_da_linha = tag(linha) if callable(tag) else tag
+            aplicar_tags(cid, [tag_da_linha, tag_turma(linha.get("turma_id"))])
 
         except Exception as e:
             falhas += 1
@@ -206,11 +252,14 @@ def processar(view, tag, funcao_registro, monta_campos, exige=()):
         # A tag já saiu. O registro TEM que acontecer, senão a pessoa
         # recebe de novo amanhã. Falha aqui é grave e vai destacada.
         try:
-            registrar(funcao_registro, {
+            item = {
                 "aluno_id": linha["aluno_id"],
                 "turma_id": linha["turma_id"],
                 "canal": linha.get("canal") or "whatsapp",
-            })
+            }
+            if linha.get("tipo"):
+                item["tipo"] = linha["tipo"]      # fila de turma: confirmacao/grupo
+            registrar(funcao_registro, item)
             ok += 1
             log(f"  ok    {rotulo}")
 
@@ -240,6 +289,26 @@ def main():
             "email": l.get("email"),
             "curso": l.get("curso"),
             "prazo": l.get("data_limite"),
+        },
+    )
+
+    # Fila de turma: confirmação e link do grupo. Diferente das outras
+    # duas, que são views calculadas, esta é enfileirada pela Elis no
+    # botão "Salvar turma" — ela decide o momento, o script só entrega.
+    # Por isso a tag varia por linha: a mesma view traz os dois tipos.
+    processar(
+        "vw_turma_fila_envio",
+        lambda l: TAG_CONFIRMACAO if l["tipo"] == "confirmacao" else TAG_GRUPO,
+        "registrar_envio_turma",
+        lambda l: {
+            "nome": l.get("nome"),
+            "telefone": l.get("whatsapp"),
+            "email": l.get("email"),
+            "curso": l.get("curso"),
+            "datas": periodo(l.get("data_inicio"), l.get("data_fim")),
+            "horarios": horario_faixa(l.get("horario_inicio"), l.get("horario_fim")),
+            "credenciamento": l.get("horario_credenciamento"),
+            "link_grupo": l.get("link_grupo"),
         },
     )
 
