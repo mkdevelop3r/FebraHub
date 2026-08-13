@@ -2504,8 +2504,11 @@ function HubFinanceiro() {
         <ChipKpi hero Icone={Wallet} label="Receita reconhecida" valor={moeda(categorias.total)} nota={rotulo} />
         {/* Qualidade do dado do PERÍODO selecionado — trocar o ano troca o
             número (2026: 0% · 2024: 8,8% · 2023: 13,3%). Sem média histórica:
-            somar tudo escondia que o buraco é passivo antigo, já corrigido. */}
-        <ChipKpi Icone={Clock} label="Sem status" valor={semStatus.pct != null ? semStatus.pct.toFixed(1) : "—"} unidade="%"
+            somar tudo escondia que o buraco é passivo antigo, já corrigido.
+            "Vendas", não "pagamentos": a view deduplica por original_id_venda
+            antes de contar, então a unidade é a venda, não a linha de
+            pagamento (uma venda parcelada é uma só aqui). */}
+        <ChipKpi Icone={Clock} label="Vendas sem status" valor={semStatus.pct != null ? semStatus.pct.toFixed(1) : "—"} unidade="%"
           nota={rotulo}
           sub={semStatus.sub} />
         <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%"
