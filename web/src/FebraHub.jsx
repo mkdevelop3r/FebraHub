@@ -2362,24 +2362,46 @@ function HubFinanceiro() {
     return { reais, orfas, total, vendasTot, semVinc, cobertura: total ? ((total - semVinc) / total) * 100 : null };
   }, [recCat.data, inicio, fim]);
 
-  // Agrego pagos/pendentes/perdidos/sem_status somando todas as origens.
-  // O donut usa o total INCLUINDO sem_status — assim "Sem status" aparece
-  // como fatia honesta, não sumido do denominador.
-  const pagTot = useMemo(() => {
-    let pagos = 0, pend = 0, perd = 0, sem = 0, matr = 0;
-    for (const r of pag.data ?? []) {
-      pagos += Number(r.pagos ?? 0); pend += Number(r.pendentes ?? 0);
-      perd += Number(r.perdidos ?? 0); sem += Number(r.sem_status ?? 0);
-      matr += Number(r.matriculas ?? 0);
-    }
-    const tot = pagos + pend + perd + sem;
+  /* Status de pagamento, somando as origens. A view vem por ANO, e isso
+     importa: "sem status" é PASSIVO ANTIGO. Era 44% em 2021 e 31% em 2023;
+     caiu pra 4,5% em 2025 e 0% em 2026, quando o sync do CisPay passou a
+     trazer o status automático. Somar tudo dava 15,3% e alarmava sobre um
+     problema já resolvido — dava a entender que a inadimplência recente é
+     duvidosa, e ela não é.
+
+     Então o painel mede o ANO CORRENTE (ou o último ano com matrícula, pra
+     não zerar em 1º de janeiro) e mantém o histórico como contexto explícito,
+     em vez de escondê-lo. O donut usa o total INCLUINDO sem_status — assim
+     "Sem status" segue como fatia honesta, não sumido do denominador. */
+  const pagPorAno = useMemo(() => {
+    const somar = (linhas) => {
+      let pagos = 0, pend = 0, perd = 0, sem = 0, matr = 0;
+      for (const r of linhas) {
+        pagos += Number(r.pagos ?? 0); pend += Number(r.pendentes ?? 0);
+        perd += Number(r.perdidos ?? 0); sem += Number(r.sem_status ?? 0);
+        matr += Number(r.matriculas ?? 0);
+      }
+      const tot = pagos + pend + perd + sem;
+      return {
+        pagos, pend, perd, sem, matr, tot,
+        pctPago: tot ? (pagos / tot) * 100 : null,
+        pctEmAberto: tot ? (pend / tot) * 100 : null,
+        pctSem: matr ? (sem / matr) * 100 : (tot ? (sem / tot) * 100 : null),
+      };
+    };
+    const linhas = (pag.data ?? []).filter((r) => r.ano != null && Number(r.matriculas ?? 0) > 0);
+    const anos = [...new Set(linhas.map((r) => Number(r.ano)))].sort((a, b) => b - a);
+    const corrente = new Date().getFullYear();
+    const ano = anos.includes(corrente) ? corrente : (anos[0] ?? null);
     return {
-      pagos, pend, perd, sem, matr, tot,
-      pctPago: tot ? (pagos / tot) * 100 : null,
-      pctEmAberto: tot ? (pend / tot) * 100 : null,
-      pctSem: matr ? (sem / matr) * 100 : (tot ? (sem / tot) * 100 : null),
+      ano,
+      recente: somar(ano != null ? linhas.filter((r) => Number(r.ano) === ano) : []),
+      historico: somar(pag.data ?? []),
+      anoInicial: anos.length ? anos[anos.length - 1] : null,
     };
   }, [pag.data]);
+  const pagTot = pagPorAno.recente;   // o que o painel mostra
+  const pagHist = pagPorAno.historico; // contexto do legado
 
   const aReceber = useMemo(
     () => (caixaHor.data ?? []).reduce((s, r) => s + Number(r.a_receber ?? 0), 0),
@@ -2449,8 +2471,16 @@ function HubFinanceiro() {
       {/* Faixa de KPIs compactos — âncora dourada + 4 métricas do mês */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
         <ChipKpi hero Icone={Wallet} label="Receita reconhecida" valor={moeda(categorias.total)} nota={rotulo} />
-        <ChipKpi Icone={Clock} label="Sem status" valor={pagTot.pctSem != null ? pagTot.pctSem.toFixed(1) : "—"} unidade="%" nota="posição atual" />
-        <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%" nota="posição atual" />
+        {/* Qualidade do dado RECENTE, não a média que carrega o legado. O
+            número antigo continua à vista, na segunda linha, com o rótulo que
+            diz o que ele é. */}
+        <ChipKpi Icone={Clock} label="Sem status" valor={pagTot.pctSem != null ? pagTot.pctSem.toFixed(1) : "—"} unidade="%"
+          nota={pagPorAno.ano ? `${pagPorAno.ano} · sync CisPay` : "—"}
+          sub={pagHist.pctSem != null && pagPorAno.anoInicial
+            ? `histórico ${pagPorAno.anoInicial}+: ${pagHist.pctSem.toFixed(1)}% · legado já corrigido`
+            : null} />
+        <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%"
+          nota={pagPorAno.ano ? `${pagPorAno.ano} · posição atual` : "posição atual"} />
         <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
         <ChipKpi Icone={Hourglass} label="A receber" valor={moeda(aReceber)} nota="CisPay · posição atual" />
         <ChipKpi Icone={Receipt} label={recebido ? `Recebido em ${dataCurta(recebido.mes)}` : "Recebido"}
@@ -2472,14 +2502,31 @@ function HubFinanceiro() {
           </Estado>
         </Bloco>
 
-        <Bloco titulo="Status de pagamento" canto={pagTot.tot ? `${pctPagoCentro}% pago` : null} altura={ALTURA_PAINEL}>
+        <Bloco titulo="Status de pagamento" canto={pagTot.tot ? `${pagPorAno.ano ?? ""} · ${pctPagoCentro}% pago` : null} altura={ALTURA_PAINEL}>
           <Estado carregando={pag.isLoading} erro={pag.error} vazio={!pagTot.tot}>
             <Donut segmentos={statusSeg} centroValor={`${pctPagoCentro}%`} centroLabel="pago" centroCor={C.up} />
+            {/* O rodapé só alarma se ainda houver buraco no ano corrente.
+                Resolvido, ele vira o contrário: registra que o legado ficou
+                pra trás, pra ninguém desconfiar da inadimplência recente. */}
             <div style={{ display: "flex", gap: 8, marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.hair}` }}>
-              <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
-              <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
-                {pagTot.pctSem != null ? `${pagTot.pctSem.toFixed(1)}% sem status` : "Parte sem status"} — migração CisPay em andamento (Stone/legado batido a mão). <b style={{ color: C.muted }}>Não é inadimplência.</b>
-              </span>
+              {pagTot.sem > 0 ? (
+                <>
+                  <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+                  <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+                    {pagTot.pctSem != null ? `${pagTot.pctSem.toFixed(1)}% sem status` : "Parte sem status"} em {pagPorAno.ano} — Stone/legado batido a mão. <b style={{ color: C.muted }}>Não é inadimplência.</b>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck size={12} style={{ color: C.up, marginTop: 2, flexShrink: 0 }} />
+                  <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+                    Todas as matrículas de {pagPorAno.ano} vêm com status (sync CisPay).
+                    {pagHist.pctSem != null && pagPorAno.anoInicial
+                      ? <> O histórico desde {pagPorAno.anoInicial} tem {pagHist.pctSem.toFixed(1)}% sem status — legado batido a mão, <b style={{ color: C.muted }}>já corrigido e fora deste painel.</b></>
+                      : null}
+                  </span>
+                </>
+              )}
             </div>
           </Estado>
         </Bloco>
