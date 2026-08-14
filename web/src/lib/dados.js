@@ -812,6 +812,20 @@ export async function dispararRepresados() {
    represado/ausência aparecer — sem ele, o dado velho passa por atual. */
 export const usePresencaSaude = () => useView("vw_presenca_saude", { staleTime: 60 * 1000, retry: 2 });
 
+/* PRESENÇA POR TURMA.
+   `vw_turmas_mensuraveis` é o subconjunto onde ausência SIGNIFICA alguma
+   coisa: turma que já aconteceu, com registro de verdade (cobertura >= 40%)
+   e volume mínimo (>= 10 matriculados). Fora dali, falta de registro se
+   confunde com falta de aluno.
+   `vw_presenca_cobertura` é tudo — inclusive as 267 turmas sem nenhum
+   registro. Serve para conferir quem não tem cobertura, não para medir
+   ausência. A coluna `fonte` diz de onde veio: 'credenciamento' é a fonte
+   morta (parou em 2025), 'presenca' é a viva. */
+export const useTurmasMensuraveis = () =>
+  useView("vw_turmas_mensuraveis", { ordem: ["data_inicio", "turma"], staleTime: 60 * 1000, retry: 2 });
+export const usePresencaCobertura = () =>
+  useView("vw_presenca_cobertura", { ordem: ["turma"], staleTime: 60 * 1000, retry: 2 });
+
 export const useEventosDesempenho = () => useView("vw_eventos_desempenho");
 export const useDiretoriaConsol   = () => useView("vw_diretoria_consolidado");
 

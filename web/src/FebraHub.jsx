@@ -39,7 +39,7 @@ import {
   useExecutivoReativacao, useExecutivoComercial30d,
   useTurmaDim, useTurmaSugestao, useFilaTurma, useEnviosTurma,
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
-  useRepresadoLista, dispararRepresados, usePresencaSaude,
+  useRepresadoLista, dispararRepresados, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
@@ -5864,7 +5864,8 @@ function CentralPedagogica() {
 
       {aba === "turmas" && <CentralTurmas notificar={notificar} />}
       {aba === "represados" && <CentralRepresados notificar={notificar} />}
-      {aba !== "turmas" && aba !== "represados" && (
+      {aba === "presenca" && <CentralPresenca />}
+      {aba !== "turmas" && aba !== "represados" && aba !== "presenca" && (
         <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "26px 22px" }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, color: C.bright, marginBottom: 5 }}>
             {ABAS_CENTRAL.find((a) => a.key === aba)?.label} chega na próxima etapa
@@ -6227,6 +6228,195 @@ function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
         </Estado>
       </div>
     </DrawerLado>
+  );
+}
+
+/* ---- Presença ----
+   Regra da tela inteira: ausência nunca aparece sozinha. 51% de ausência numa
+   turma com 49% de cobertura pode ser evasão real ou pode ser metade da turma
+   que ninguém bipou — e as duas leituras pedem ações opostas. */
+function CentralPresenca() {
+  const saude = usePresencaSaude();
+  const mensuraveis = useTurmasMensuraveis();
+  const cobertura = usePresencaCobertura();
+  const [visao, setVisao] = useState("mensuraveis");
+  const [busca, setBusca] = useState("");
+
+  const todas = cobertura.data ?? [];
+  const semRegistro = useMemo(() => todas.filter((r) => !Number(r.compareceram ?? 0)), [todas]);
+  const comRegistro = useMemo(() => todas.filter((r) => Number(r.compareceram ?? 0) > 0), [todas]);
+
+  const fonte = visao === "mensuraveis" ? (mensuraveis.data ?? [])
+    : visao === "registro" ? comRegistro : semRegistro;
+
+  const linhas = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    const base = visao === "mensuraveis"
+      ? [...fonte].sort((a, b) => String(b.data_inicio ?? "").localeCompare(String(a.data_inicio ?? "")))
+      : [...fonte].sort((a, b) => Number(a.cobertura_pct ?? 0) - Number(b.cobertura_pct ?? 0));
+    if (!q) return base;
+    return base.filter((r) => `${r.turma ?? ""} ${r.curso ?? ""}`.toLowerCase().includes(q));
+  }, [fonte, busca, visao]);
+
+  return (
+    <>
+      <SaudeDaCarga estado={saude} />
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", margin: "12px 0 8px" }}>
+        <Segmentado label="Turmas"
+          opcoes={[
+            { key: "mensuraveis", label: `Mensuráveis (${numero((mensuraveis.data ?? []).length)})` },
+            { key: "registro", label: `Com registro (${numero(comRegistro.length)})` },
+            { key: "sem", label: `Sem registro (${numero(semRegistro.length)})` },
+          ]}
+          valor={visao} onChange={setVisao} />
+        <div style={{ position: "relative", minWidth: 240, flex: "0 1 300px" }}>
+          <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.dim }} />
+          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar turma ou curso" style={{ ...inputAv, paddingLeft: 30 }} />
+        </div>
+      </div>
+
+      {/* Cada visão responde a uma pergunta diferente. Dizer qual evita ler
+          "58% de ausência" como evasão quando é buraco de registro. */}
+      <div style={{ fontSize: 11, color: C.faint, lineHeight: 1.5, marginBottom: 8 }}>
+        {visao === "mensuraveis"
+          ? "Turmas onde a ausência significa alguma coisa: já aconteceram, têm registro de verdade (cobertura de 40% pra cima) e pelo menos 10 matriculados. É aqui que faz sentido ligar para quem faltou."
+          : visao === "registro"
+            ? "Todas as turmas com algum registro de presença, das piores coberturas para as melhores. Cobertura baixa aqui é problema de registro, não de aluno — a ausência não é confiável."
+            : "Turmas sem nenhum registro de presença. Não dá para dizer quem faltou: ninguém foi bipado. Aparecem para que o buraco não passe por 100% de ausência."}
+      </div>
+
+      <Estado
+        carregando={visao === "mensuraveis" ? mensuraveis.isLoading : cobertura.isLoading}
+        erro={visao === "mensuraveis" ? mensuraveis.error : cobertura.error}
+        vazio={!linhas.length}
+        vazioTitulo="Nenhuma turma neste recorte"
+      >
+        <TabelaPresenca linhas={linhas} comCurso={visao === "mensuraveis"} />
+      </Estado>
+    </>
+  );
+}
+
+/* A carga é manual e a fonte anterior morreu ao longo de um ano sem ninguém
+   perceber. Este bloco fica sempre visível, e vira vermelho passando de 30
+   dias — detectar não resolve, mas pelo menos ninguém decide com dado velho
+   achando que é de hoje. */
+function SaudeDaCarga({ estado }) {
+  const s = estado.data?.[0];
+  if (estado.isLoading) return <div style={{ fontSize: 12, color: C.faint }}>Carregando a saúde da carga…</div>;
+  if (estado.error || !s) {
+    return (
+      <div style={{ display: "flex", gap: 9, alignItems: "center", background: `${C.warn}12`, border: `1px solid ${C.warn}3A`, borderRadius: 12, padding: "11px 14px" }}>
+        <AlertTriangle size={15} style={{ color: C.warn, flexShrink: 0 }} />
+        <span style={{ fontSize: 12, color: C.muted }}>Não foi possível ler quando a presença foi carregada. Os números abaixo podem estar velhos — confira a carga antes de decidir.</span>
+      </div>
+    );
+  }
+  const dias = Number(s.dias_desde_a_carga ?? 0);
+  const velha = dias > 30;
+  const cor = velha ? C.down : C.up;
+  return (
+    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: `${cor}10`, border: `1px solid ${cor}3A`, borderRadius: 12, padding: "11px 14px" }}>
+      {velha ? <AlertTriangle size={15} style={{ color: cor, flexShrink: 0, marginTop: 1 }} />
+        : <ShieldCheck size={15} style={{ color: cor, flexShrink: 0, marginTop: 1 }} />}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: velha ? cor : C.bright }}>
+          {velha
+            ? `A presença não é carregada há ${numero(dias)} dias`
+            : `Presença carregada ${dias === 0 ? "hoje" : dias === 1 ? "ontem" : `há ${numero(dias)} dias`}`}
+        </div>
+        <div style={{ fontSize: 11, color: C.faint, marginTop: 2 }}>
+          {dataBR(s.ultima_carga)} · {numero(s.linhas)} registros em {numero(s.turmas)} turmas · presença mais recente em {dataBR(s.registro_mais_recente)}
+        </div>
+        {velha && (
+          <div style={{ fontSize: 11, color: cor, marginTop: 3 }}>
+            A carga é manual. Enquanto ela não roda, turma nova aparece como se ninguém tivesse ido.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TabelaPresenca({ linhas, comCurso }) {
+  const cab = (rotulo, extra = {}) => (
+    <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, ...extra }}>{rotulo}</span>
+  );
+  return (
+    <>
+      <style>{`
+        .tpGrade { display: grid; grid-template-columns: minmax(0,1.6fr) 92px 84px 86px 116px 128px; align-items: center; gap: 10px; }
+        @media (max-width: 1000px) { .tpGrade { grid-template-columns: minmax(0,1.6fr) 84px 86px 116px 128px; } .tpData { display: none; } }
+        .tpLinha:hover { background: rgba(255,255,255,.02); }
+      `}</style>
+      <div className="rolagem" style={{ maxHeight: 460, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
+        <div className="tpGrade" style={{ position: "sticky", top: 0, zIndex: 2, background: "#17171c", padding: "8px 12px", borderBottom: `1px solid ${C.cardLine}` }}>
+          {cab("Turma")}
+          <span className="tpData">{cab("Início")}</span>
+          {cab("Matric.", { textAlign: "right" })}
+          {cab("Presentes", { textAlign: "right" })}
+          {cab("Ausentes", { textAlign: "right" })}
+          {cab("Cobertura", { textAlign: "right" })}
+        </div>
+        {linhas.map((r, i) => <LinhaTurmaPresenca key={`${r.turma}-${i}`} r={r} ultima={i === linhas.length - 1} comCurso={comCurso} />)}
+      </div>
+    </>
+  );
+}
+
+function LinhaTurmaPresenca({ r, ultima, comCurso }) {
+  const matric = Number(r.matriculados ?? 0);
+  const presentes = Number(r.compareceram ?? 0);
+  const ausentes = Math.max(0, matric - presentes);
+  const cob = Number(r.cobertura_pct ?? 0);
+  const pctAus = matric ? Math.round((ausentes / matric) * 100) : null;
+
+  /* O número de ausentes só vale o que a cobertura permite. Abaixo de 60% a
+     tela diz isso na própria linha, em vez de deixar o número grande falar
+     sozinho. Sem registro nenhum, não existe ausência a mostrar. */
+  const semRegistro = presentes === 0 && cob === 0;
+  const corCob = semRegistro ? C.dim : cob >= 70 ? C.up : cob >= 40 ? C.warn : C.down;
+
+  return (
+    <div className="tpGrade tpLinha" style={{ minHeight: 44, padding: "0 12px", borderBottom: ultima ? "none" : `1px solid ${C.hair}` }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.turma}</div>
+        {comCurso && r.curso && (
+          <div style={{ fontSize: 10, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {r.curso}{r.cidade ? ` · ${r.cidade}` : ""}
+          </div>
+        )}
+        {!comCurso && r.fonte && (
+          <div style={{ fontSize: 10, color: C.dim }}>
+            fonte: {r.fonte}{r.fonte === "credenciamento" ? " · parou em 2025" : ""}
+          </div>
+        )}
+      </div>
+
+      <span className="tpData" style={{ fontSize: 11, color: C.faint }}>{r.data_inicio ? dataBR(r.data_inicio) : "—"}</span>
+      <span style={{ textAlign: "right", fontSize: 12.5, color: C.muted, fontFamily: GROTESK }}>{numero(matric)}</span>
+      <span style={{ textAlign: "right", fontSize: 12.5, color: C.muted, fontFamily: GROTESK }}>{numero(presentes)}</span>
+
+      {/* Ausentes e cobertura vivem lado a lado, sempre. */}
+      <span style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+        {semRegistro ? (
+          <span style={{ fontSize: 11, color: C.dim }} title="ninguém foi bipado nesta turma">não medível</span>
+        ) : (
+          <>
+            <b style={{ fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, color: C.text }}>{numero(ausentes)}</b>
+            <span style={{ fontSize: 10.5, color: C.faint }}> · {pctAus}%</span>
+          </>
+        )}
+      </span>
+
+      <span style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+        <b style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: corCob }}>{semRegistro ? "0" : Math.round(cob)}%</b>
+        {!semRegistro && cob < 60 && (
+          <div style={{ fontSize: 9.5, color: C.warn, lineHeight: 1.2 }}>parte pode ser falta de registro</div>
+        )}
+      </span>
+    </div>
   );
 }
 
