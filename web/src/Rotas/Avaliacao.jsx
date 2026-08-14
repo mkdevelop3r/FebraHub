@@ -351,7 +351,6 @@ function Moldura({ children, larga }) {
   return (
     <div style={S.fundo}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500;600&display=swap');
         * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
         button { font-family: inherit; cursor: pointer; }
         button:focus-visible, textarea:focus-visible {
