@@ -728,14 +728,15 @@ export function useEnviosTurma(turmaId) {
    banco — nenhum insert ou update direto daqui. Nunca filtrar por
    setor: `pode_ver('pedagogico')` já filtra nas views. */
 
-/* Turmas do cadastro. Trago todas (234) e a tela ordena futuras
-   primeiro — o passado serve para conferir o que já saiu. */
-export const useTurmasCadastro = () =>
-  useView("dim_turmas", {
-    ordem: ["data_inicio", "turma_id"],
-    seletor: "turma_id,curso,data_inicio,data_fim,cidade,local,capacidade,nome_comercial,link_grupo,horario_credenciamento,horario_inicio,horario_fim",
-    staleTime: 60 * 1000,
-  });
+/* Turmas que a Central opera (migration 115): só as de curso da grade
+   pedagógica. Lia dim_turmas direto e trazia LLPASS, Team Coaching,
+   Planejador Financeiro e afins — 89 das 234 turmas do cadastro, nenhuma
+   delas com confirmação de presença pra fazer. O corte usa norm_curso(),
+   função do banco: reimplementar a normalização aqui divergiria na
+   primeira acentuação diferente. `futura` também vem de lá — comparar
+   data no cliente depende do relógio de quem abriu a tela. */
+export const useTurmasCentral = () =>
+  useView("vw_turmas_central", { ordem: ["data_inicio", "turma_id"], staleTime: 60 * 1000 });
 
 /* Resumo por turma E por tipo de mensagem (confirmacao | grupo).
    Vem de vw_turma_inscritos_resumo (migration 113), que parte dos

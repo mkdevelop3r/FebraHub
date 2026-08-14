@@ -130,3 +130,5 @@ Ordem de aplicação e o que cada uma faz. Gerado a partir do cabeçalho de cada
 | 111 | `111_represado_lista_e_disparo.sql` | FebraHub · Migration 111 — Represados: a lista e o disparo (reconstruída do banco) |
 | 112 | `112_respostas_so_com_contato.sql` | FebraHub · Migration 112 — Fila de respostas: só quem dá para consultar |
 | 113 | `113_turma_inscritos.sql` | FebraHub · Migration 113 — Inscritos da turma, incluindo quem não foi enfileirado |
+| 114 | `114_contatos.sql` | FebraHub · Migration 114 — Contato vindo de fato_contatos (relatório dedicado do Salesforce) |
+| 115 | `115_turmas_central.sql` | FebraHub · Migration 115 — Turmas da Central: só as da grade pedagógica (NÃO APLICADA) |

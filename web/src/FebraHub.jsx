@@ -38,7 +38,7 @@ import {
   useMarketingInvestimento, useLojaMetaRealizado,
   useExecutivoReativacao, useExecutivoComercial30d,
   useTurmaDim, useTurmaSugestao, useFilaTurma, useEnviosTurma,
-  useTurmasCadastro, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
+  useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
@@ -5882,11 +5882,11 @@ function CentralPedagogica() {
 /* ---- Turmas: a lista ----
    Substitui a planilha onde a Elis anotava à mão quem confirmou. */
 function CentralTurmas({ notificar }) {
-  const turmas = useTurmasCadastro();
+  const turmas = useTurmasCentral();
   const resumo = useTurmaInscritosResumo();
   const [sel, setSel] = useState(null);
   const [quando, setQuando] = useState("futuras");
-  const hoje = isoDia(new Date());
+  const [verVazias, setVerVazias] = useState(false);
 
   // Resumo indexado por turma e tipo de mensagem. A view entrega uma linha
   // por (turma, tipo); a lista mostra o fluxo de confirmação, que é o que
@@ -5901,16 +5901,29 @@ function CentralTurmas({ notificar }) {
     return m;
   }, [resumo.data]);
 
-  const lista = useMemo(() => {
-    const rows = (turmas.data ?? []).map((t) => ({ ...t, futura: String(t.data_inicio ?? "") >= hoje }));
+  /* Padrão: só o que ainda vai acontecer — é onde há o que fazer. As
+     passadas ficam atrás do alternador, para consulta de histórico.
+     `futura` vem da view (migration 115), não de comparar data aqui: o
+     relógio da máquina de quem abriu não decide o que é futuro.
+
+     Turma sem ninguém inscrito desce para um grupo recolhido no fim. Ela
+     existe no cadastro, mas ocupar a mesma altura de uma turma com 421
+     pessoas empurra o trabalho real para fora da tela. */
+  const { comInscritos, vazias, passadas } = useMemo(() => {
+    const rows = turmas.data ?? [];
     const alvo = quando === "futuras" ? rows.filter((t) => t.futura) : rows;
-    // Futuras primeiro, da mais próxima à mais distante; passadas depois, da
-    // mais recente à mais antiga — em ambos os casos o que interessa vem no topo.
-    return [...alvo].sort((a, b) =>
+    const ordenar = (ls) => [...ls].sort((a, b) =>
       a.futura !== b.futura ? (a.futura ? -1 : 1)
         : a.futura ? String(a.data_inicio).localeCompare(String(b.data_inicio))
           : String(b.data_inicio).localeCompare(String(a.data_inicio)));
-  }, [turmas.data, quando, hoje]);
+    const temGente = (t) => Number(porTurma.get(t.turma_id)?.confirmacao?.matriculados ?? 0) > 0;
+    return {
+      comInscritos: ordenar(alvo.filter(temGente)),
+      vazias: ordenar(alvo.filter((t) => !temGente(t))),
+      passadas: rows.length - rows.filter((t) => t.futura).length,
+    };
+  }, [turmas.data, quando, porTurma]);
+  const lista = comInscritos;
 
   return (
     <>
@@ -5918,22 +5931,44 @@ function CentralTurmas({ notificar }) {
         <span style={{ fontSize: 11.5, color: C.faint }}>
           Clique numa turma para abrir o cadastro, disparar as mensagens e ver quem respondeu.
         </span>
-        <Segmentado opcoes={[{ key: "futuras", label: "Futuras" }, { key: "todas", label: "Todas" }]}
+        <Segmentado label="Turmas"
+          opcoes={[{ key: "futuras", label: "Só as futuras" }, { key: "todas", label: `Com as passadas (${numero(passadas)})` }]}
           valor={quando} onChange={setQuando} />
       </div>
 
       <Estado
         carregando={turmas.isLoading || resumo.isLoading}
         erro={turmas.error ?? resumo.error}
-        vazio={!lista.length}
+        vazio={!lista.length && !vazias.length}
         vazioTitulo={quando === "futuras" ? "Nenhuma turma marcada daqui pra frente" : "Nenhuma turma no cadastro"}
-        vazioDica={quando === "futuras" ? "Assim que uma turma entrar no cadastro com data de início, ela aparece aqui. Troque para Todas para ver as que já aconteceram." : undefined}
+        vazioDica={quando === "futuras" ? "Assim que uma turma da grade entrar no cadastro com data de início, ela aparece aqui. Troque o filtro para ver as que já aconteceram." : undefined}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {lista.map((t) => (
             <LinhaTurmaCentral key={t.turma_id} turma={t} resumo={porTurma.get(t.turma_id)} onAbrir={() => setSel(t)} />
           ))}
         </div>
+
+        {vazias.length > 0 && (
+          <div style={{ marginTop: lista.length ? 12 : 0 }}>
+            <button onClick={() => setVerVazias(!verVazias)} style={{
+              display: "flex", alignItems: "center", gap: 6, width: "100%",
+              background: "none", border: "none", padding: "6px 2px", cursor: "pointer",
+              fontFamily: SANS, fontSize: 11.5, fontWeight: 700, color: C.faint, textAlign: "left",
+            }}>
+              {verVazias ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              {numero(vazias.length)} {vazias.length === 1 ? "turma sem inscritos" : "turmas sem inscritos"}
+              <span style={{ fontWeight: 600, color: C.dim }}>· nada a disparar por enquanto</span>
+            </button>
+            {verVazias && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                {vazias.map((t) => (
+                  <LinhaTurmaCentral key={t.turma_id} turma={t} resumo={porTurma.get(t.turma_id)} onAbrir={() => setSel(t)} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </Estado>
 
       {sel && (
@@ -5959,7 +5994,7 @@ function LinhaTurmaCentral({ turma, resumo, onAbrir }) {
     <button onClick={onAbrir} style={{
       display: "block", width: "100%", textAlign: "left", cursor: "pointer",
       background: C.card, border: `1px solid ${turma.futura ? C.cardLine : C.hair}`,
-      borderRadius: 12, padding: "12px 14px", fontFamily: SANS,
+      borderRadius: 12, padding: total ? "12px 14px" : "9px 14px", fontFamily: SANS,
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div style={{ minWidth: 0 }}>
@@ -5975,8 +6010,10 @@ function LinhaTurmaCentral({ turma, resumo, onAbrir }) {
         <ArrowUpRight size={15} style={{ color: C.faint, flexShrink: 0 }} />
       </div>
 
-      {!conf ? (
-        <div style={{ fontSize: 11, color: C.dim, marginTop: 9 }}>Nenhuma matrícula aprovada nesta turma ainda.</div>
+      {!total ? (
+        // Sem ninguém inscrito não há contador a mostrar — e a linha fica
+        // baixa de propósito: ela só precisa saber que a turma existe.
+        <div style={{ fontSize: 10.5, color: C.dim, marginTop: 6 }}>Nenhuma matrícula aprovada até agora.</div>
       ) : (
         <div style={{ display: "flex", gap: 14, marginTop: 9, flexWrap: "wrap" }}>
           <ContaTurma rotulo="confirmaram" valor={Number(conf.confirmados ?? 0)} total={total} cor={C.up} />
