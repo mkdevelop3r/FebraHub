@@ -23,15 +23,35 @@
 --   2026 - CIS-GL253          6               2          3x
 --   ... e mais 35 turmas de CIS Global
 --
--- O QUE ESTA CORREÇÃO **NÃO** RESOLVE
+-- SEGUNDA CAUSA: A MATRÍCULA REPETIDA
 --
--- Depois de aplicar sobram 40 turmas (de 136 na grade) com mais linhas
--- que pessoas: 97 linhas a mais no total, pior caso 20. Isso é outro
--- problema — a MESMA pessoa com duas matrículas aprovadas na MESMA
--- turma, em fato_base_alunos. `exists` mata o leque do join, não a
--- matrícula repetida. Se incomodar, o conserto é a montante (na carga)
--- ou um distinct aqui — mas aí é preciso decidir qual das duas
--- matrículas manda, e isso é decisão de operação.
+-- `exists` mata o leque do join, não a matrícula repetida. Em
+-- fato_base_alunos há 1.990 pares (aluno, turma) com mais de uma
+-- matrícula aprovada, em 232 turmas — um deles com 100 linhas para a
+-- mesma pessoa na mesma turma.
+--
+-- A maior parte não chega aqui: 1.788 dessas linhas são COMPRADOR DE
+-- VAGAS e 79 são BÔNUS - COMPRADOR DE VAGAS, e o WHERE já exclui os
+-- dois. Quem compra 40 vagas gera 40 linhas, e nenhuma delas é aluno.
+--
+-- O que sobra depois do filtro é real e é aluno: 1.630 CONSUMIDOR DE
+-- VAGAS, 395 Matrícula, 224 Bônus.
+--
+-- E aí a leitura certa é UMA pessoa, não duas. Esta view alimenta a tela
+-- de confirmação: a mensagem é uma só, então não importa qual das duas
+-- matrículas "manda". A prova está no comportamento que já existe —
+-- disparar_turma() usa `select distinct m.aluno_id` desde sempre, e
+-- ninguém recebeu mensagem repetida. A view é que estava contando
+-- diferente da função que dispara.
+--
+-- Seria decisão de operação se as duas matrículas significassem duas
+-- vagas de verdade. Não significam.
+--
+-- `distinct on (aluno_id, turma, tipo)` ordenado pela matrícula mais
+-- recente. De quebra, cobre a única linha duplicada de dim_alunos por
+-- doc_norm — conferido: fato_contatos não tem CPF repetido e
+-- pedagogico_envios não tem (aluno, turma, tipo) repetido, então essas
+-- duas junções não multiplicam.
 --
 -- O QUE ISSO ESTÁ FAZENDO NA TELA HOJE
 --
@@ -44,6 +64,24 @@
 -- `select distinct`, não passa por aqui. Ninguém recebeu mensagem em
 -- triplicata.
 --
+-- VARREDURA NAS IRMÃS (15/08/2026)
+--
+-- O padrão apareceu em duas views, então procurei em todas. Cinco usam
+-- norm_curso() numa junção:
+--
+--   vw_turmas_central     dim_cursos   JÁ corrigida (exists)
+--   vw_turma_inscritos    dim_cursos   é esta aqui
+--   vw_boas_vindas_fila   fato_presenca  norm_curso só dentro de NOT
+--                                      EXISTS — não multiplica
+--   vw_matricula_presenca fato_credenciamento  LATERAL com group by —
+--                                      devolve 1 linha
+--   vw_pedagogico_prazo   cursos_com_registro / dim_turmas  o join é
+--                                      seguido de group by, e
+--                                      proxima_turma agrega por
+--                                      norm_curso — absorve
+--
+-- Só as duas de dim_cursos multiplicavam. As outras três estão limpas.
+--
 -- A CORREÇÃO
 --
 -- `exists` responde a pergunta certa — "este curso está na grade?" — sem
@@ -51,18 +89,19 @@
 -- intenção. As duas views que dependem daqui se corrigem junto, sem
 -- precisar recriar nenhuma.
 --
--- Depois de aplicar, conferir que o fator 3x sumiu:
+-- Depois de aplicar, uma linha por pessoa em TODA turma:
 --   select turma_id, count(*) linhas, count(distinct aluno_id) pessoas
 --     from vw_turma_inscritos where tipo = 'confirmacao'
---    group by 1 having count(*) >= 2 * count(distinct aluno_id);
+--    group by 1 having count(*) <> count(distinct aluno_id);
 --   -- tem que voltar vazio.
 --
--- (A consulta com `<>` no lugar do `>= 2 *` volta as 40 turmas da
---  matrícula repetida, que não é o que esta migration trata.)
+-- E os contadores da vw_turmas_central passam a bater com a realidade
+-- sozinhos: ela conta sobre esta view.
 -- ============================================================
 
 create or replace view public.vw_turma_inscritos as
-select t.turma_id,
+select distinct on (m.aluno_id, m.turma, tipos.tipo)
+       t.turma_id,
        t.curso,
        t.data_inicio,
        m.aluno_id,
@@ -104,12 +143,20 @@ select t.turma_id,
       where norm_curso(dc.nome_curso) = norm_curso(t.curso)
         and dc.grade_pedagogico
    )
-   and public.pode_ver('pedagogico');
+   and public.pode_ver('pedagogico')
+ -- O ORDER BY é obrigatório para o DISTINCT ON e precisa começar pelas
+ -- mesmas expressões. `data_matricula desc` escolhe a matrícula mais
+ -- recente; `nulls last` evita que uma linha sem data ganhe a disputa.
+ order by m.aluno_id, m.turma, tipos.tipo, m.data_matricula desc nulls last;
 
 comment on view public.vw_turma_inscritos is
-  'Uma linha por (aluno, tipo de mensagem) das turmas da grade pedagógica.
-   O corte de grade usa `exists`, nunca `join`: dim_cursos repete o mesmo
-   curso normalizado e o join multiplicava cada inscrito — CIS-GL252
-   chegou a mostrar 18 pessoas onde havia 6.';
+  'UMA linha por (aluno, turma, tipo de mensagem) das turmas da grade
+   pedagógica. Duas defesas contra contar a mesma pessoa duas vezes:
+   (1) o corte de grade usa `exists`, nunca `join` — dim_cursos repete o
+   mesmo curso normalizado e o join triplicava os inscritos das 39 turmas
+   de MÉTODO CIS GLOBAL; (2) `distinct on` resolve a matrícula repetida
+   na mesma turma (1.630 CONSUMIDOR DE VAGAS, 395 Matrícula, 224 Bônus),
+   que é uma pessoa só para quem vai receber a mensagem — mesma leitura
+   que disparar_turma() já fazia com `select distinct`.';
 
 notify pgrst, 'reload schema';
