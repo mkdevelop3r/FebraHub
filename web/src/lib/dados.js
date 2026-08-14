@@ -685,40 +685,12 @@ export function useTurmaSugestao(sigla, dataInicio, turmaId) {
   });
 }
 
-// Fila de confirmação da turma (pendentes, com PII). Sem coluna de status — são
-// os que ainda não receberam. `aluno_id` é o CPF.
-export function useFilaTurma(turmaId) {
-  return useQuery({
-    queryKey: ["fila_turma", turmaId],
-    enabled: turmaId != null,
-    staleTime: 60 * 1000,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("vw_pedagogico_fila")
-        .select("aluno_id,nome,canal,telefone_bruto,telefone_invalido")
-        .eq("turma_id", turmaId);
-      if (error) throw error;
-      return data ?? [];
-    },
-  });
-}
-
-// Envios já disparados da turma (com status e erro_msg). Sem nome — só CPF.
-export function useEnviosTurma(turmaId) {
-  return useQuery({
-    queryKey: ["envios_turma", turmaId],
-    enabled: turmaId != null,
-    staleTime: 60 * 1000,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("pedagogico_envios")
-        .select("aluno_id,canal,status,erro_msg,enviado_em,tipo")
-        .eq("turma_id", turmaId);
-      if (error) throw error;
-      return data ?? [];
-    },
-  });
-}
+/* `useFilaTurma` (vw_pedagogico_fila) e `useEnviosTurma` (pedagogico_envios)
+   saíram junto com a Automação de confirmações do Hub. A Central responde a
+   mesma pergunta por `vw_turma_inscritos`, que parte dos MATRICULADOS: quem
+   nunca foi enfileirado aparece, em vez de só quem já tem linha na fila.
+   As duas fontes continuam vivas no banco — `vw_pedagogico_fila` é o que o
+   script de disparo lê. O que saiu foi a leitura pelo navegador. */
 
 /* ============================================================
    CENTRAL PEDAGÓGICA — a tela de operação da Elis e da Gisele

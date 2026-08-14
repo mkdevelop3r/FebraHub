@@ -37,7 +37,7 @@ import {
   useVendaFaturamentoDesde, useFinanceiroRecebidoMensal,
   useMarketingInvestimento, useLojaMetaRealizado,
   useExecutivoReativacao, useExecutivoComercial30d,
-  useTurmaDim, useTurmaSugestao, useFilaTurma, useEnviosTurma,
+  useTurmaDim, useTurmaSugestao,
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
   useRepresadoLista, dispararRepresados, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
@@ -3939,50 +3939,6 @@ function FaixaPendencias({ pendencias, onAbrir }) {
   );
 }
 
-// Tabela das turmas do painel. Clique na linha (ou em "colar link") abre o
-// drawer da turma (bloco 2).
-function TabelaConfirmacoes({ turmas, onAbrir }) {
-  const th = (txt, alin) => <th style={{ textAlign: alin, padding: "8px 12px", fontSize: 9.5, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, whiteSpace: "nowrap" }}>{txt}</th>;
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: SANS }}>
-        <thead>
-          <tr style={{ borderBottom: `1px solid ${C.hair}` }}>
-            {th("Turma", "left")}{th("Início", "left")}{th("Matr.", "right")}{th("Enviadas", "right")}{th("Confirmaram", "right")}{th("Grupo", "left")}{th("Pendência", "left")}
-          </tr>
-        </thead>
-        <tbody>
-          {turmas.map((t) => {
-            const cd = corDias(t.dias_para_inicio);
-            return (
-              <tr key={t.turma_id} onClick={() => onAbrir(t)} style={{ borderBottom: `1px solid ${C.hair}`, cursor: "pointer" }}>
-                <td style={{ padding: "9px 12px" }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 240 }} title={t.curso}>{t.curso}</div>
-                </td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>
-                  <span style={{ fontSize: 12, color: C.muted }}>{dataDDMM(t.data_inicio)}</span>
-                  <span style={{ marginLeft: 7, fontSize: 10, fontWeight: 800, padding: "1px 7px", borderRadius: 999, color: cd, background: `${cd}1A`, border: `1px solid ${cd}44` }}>{emNDias(t.dias_para_inicio)}</span>
-                </td>
-                <td style={{ padding: "9px 12px", textAlign: "right", fontFamily: GROTESK, fontSize: 12.5, color: C.text }}>{numero(t.matriculados)}</td>
-                <td style={{ padding: "9px 12px", textAlign: "right", fontFamily: GROTESK, fontSize: 12.5, color: C.text }}>{numero(t.confirmacao_enviada)}</td>
-                <td style={{ padding: "9px 12px", textAlign: "right", fontFamily: GROTESK, fontSize: 12.5, color: C.up }}>{numero(t.confirmaram)}</td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>
-                  {t.grupo_criado
-                    ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: C.up, fontWeight: 700 }}><Check size={13} /> criado</span>
-                    : <span onClick={(e) => { e.stopPropagation(); onAbrir(t, "link"); }} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: C.gold, cursor: "pointer", padding: "3px 9px", borderRadius: 8, border: `1px solid ${C.gold}55`, background: `${C.gold}14` }}><Link2 size={12} /> colar link</span>}
-                </td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>
-                  {t.pendencia ? <span style={{ fontSize: 11, fontWeight: 700, color: corPendencia(t.pendencia) }}>{t.pendencia}</span> : <span style={{ color: C.faint }}>—</span>}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 /* ---- Bloco 2 da automação: o DRAWER da turma ---- */
 
 // CPF mascarado ***.456.789-** — esconde os 3 primeiros e os 2 últimos dígitos.
@@ -3992,39 +3948,10 @@ const mascaraCpf = (cpf) => {
   return `***.${d.slice(3, 6)}.${d.slice(6, 9)}-**`;
 };
 
-// Une a fila (pendentes, com nome) e os envios (só CPF, com status real) de uma
-// turma numa lista por aluno. O envio manda no status; a fila completa o nome e
-// os dados de contato, e marca quem ainda está "pendente".
-const montaAlunos = (fila, envios) => {
-  const porAluno = new Map();
-  for (const e of envios ?? []) {
-    porAluno.set(String(e.aluno_id), { aluno_id: e.aluno_id, nome: null, canal: e.canal, status: e.status, erro_msg: e.erro_msg, telefone_invalido: false, telefone_bruto: null });
-  }
-  for (const f of fila ?? []) {
-    const k = String(f.aluno_id);
-    const ja = porAluno.get(k);
-    if (ja) { if (!ja.nome) ja.nome = f.nome; if (ja.canal == null) ja.canal = f.canal; ja.telefone_invalido = f.telefone_invalido === true; ja.telefone_bruto = f.telefone_bruto; }
-    else porAluno.set(k, { aluno_id: f.aluno_id, nome: f.nome ?? null, canal: f.canal, status: "pendente", erro_msg: null, telefone_invalido: f.telefone_invalido === true, telefone_bruto: f.telefone_bruto });
-  }
-  return [...porAluno.values()];
-};
-
-// Exceções que travam o envio (sub-bloco com contagem): sem canal de contato,
-// telefone inválido, erro no disparo.
-const exceptionsAlunos = (alunos) => {
-  const semContato = (alunos ?? []).filter((a) => String(a.canal ?? "").trim().toLowerCase() === "sem_contato");
-  const telInvalido = (alunos ?? []).filter((a) => a.telefone_invalido === true);
-  const erros = (alunos ?? []).filter((a) => String(a.status ?? "").trim().toLowerCase() === "erro");
-  return { semContato, telInvalido, erros, total: semContato.length + telInvalido.length + erros.length };
-};
-
 const LINK_GRUPO_PREFIXO = "https://chat.whatsapp.com/";
 const linkGrupoValido = (v) => { const s = String(v ?? "").trim(); return s === "" || s.startsWith(LINK_GRUPO_PREFIXO); };
 // 403 / RLS: NÃO contornar — mensagem clara e para por aqui.
 const semPermissao = (e) => e?.code === "42501" || e?.status === 403 || e?.status === 401 || /permission denied|row-level security|not authorized|violates row-level/i.test(String(e?.message ?? ""));
-
-const CHIP_STATUS = { pendente: C.warn, erro: C.down, enviado: C.up, confirmado: C.up, ok: C.up, sucesso: C.up, sem_contato: C.faint };
-const corChipStatus = (s) => CHIP_STATUS[String(s ?? "").trim().toLowerCase()] ?? C.muted;
 
 // Toast de feedback de escrita (sucesso · info · erro). Auto-some; some no X.
 function Toast({ toast, onFechar }) {
@@ -4159,122 +4086,6 @@ function FormTurma({ dim, sug, aguardando, foco, onSalvo, notificar }) {
   );
 }
 
-// Lista de alunos da turma (fila + envios) + sub-bloco de exceções.
-function ListaAlunosTurma({ alunos, exc, estado }) {
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>Alunos</span>
-        {!estado.carregando && !estado.erro && <span style={{ fontSize: 11, color: C.faint }}>{numero(alunos.length)} no total</span>}
-      </div>
-      {estado.carregando ? <div style={{ fontSize: 12, color: C.faint, padding: "8px 0" }}>Carregando…</div>
-        : estado.erro ? <div style={{ fontSize: 12, color: C.down, padding: "8px 0" }}>{semPermissao(estado.erro) ? "Sem permissão para ver a lista de alunos." : "Não foi possível carregar a lista."}</div>
-          : !alunos.length ? <div style={{ fontSize: 12, color: C.faint, padding: "8px 0" }}>Nenhum aluno na fila ou enviado ainda.</div>
-            : (
-              <>
-                {exc.total > 0 && (
-                  <div style={{ background: `${C.warn}0E`, border: `1px solid ${C.warn}3A`, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
-                      <AlertTriangle size={13} style={{ color: C.warn }} />
-                      <span style={{ fontSize: 11.5, fontWeight: 800, color: C.warn }}>Exceções · {numero(exc.total)}</span>
-                    </div>
-                    {exc.semContato.length > 0 && <div style={{ fontSize: 11, color: C.muted }}><b style={{ color: C.text }}>{numero(exc.semContato.length)}</b> sem canal de contato</div>}
-                    {exc.telInvalido.length > 0 && (
-                      <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>
-                        <b style={{ color: C.text }}>{numero(exc.telInvalido.length)}</b> com telefone inválido
-                        {exc.telInvalido.some((a) => a.telefone_bruto) ? <span style={{ color: C.faint }}>: {exc.telInvalido.map((a) => a.telefone_bruto).filter(Boolean).slice(0, 6).join(", ")}</span> : null}
-                      </div>
-                    )}
-                    {exc.erros.length > 0 && (
-                      <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>
-                        <b style={{ color: C.down }}>{numero(exc.erros.length)}</b> com erro no envio
-                        {exc.erros.slice(0, 5).map((a, i) => (
-                          <div key={i} style={{ fontSize: 10.5, color: C.faint, marginLeft: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>· {a.nome || mascaraCpf(a.aluno_id)}: {a.erro_msg || "erro"}</div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div className="rolagem" style={{ maxHeight: 280, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
-                  {alunos.map((a, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 11px", borderBottom: i < alunos.length - 1 ? `1px solid ${C.hair}` : "none" }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 12, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.nome || mascaraCpf(a.aluno_id)}</div>
-                        <div style={{ fontSize: 10, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.canal || "—"}{a.erro_msg ? ` · ${a.erro_msg}` : ""}</div>
-                      </div>
-                      <span style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 8px", borderRadius: 999, color: corChipStatus(a.status), background: `${corChipStatus(a.status)}1A`, border: `1px solid ${corChipStatus(a.status)}44`, whiteSpace: "nowrap", flexShrink: 0 }}>{a.status || "—"}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-    </div>
-  );
-}
-
-/* Orquestra o drawer: carrega a dim_turmas da turma, a sugestão (última de
-   mesma sigla) e as listas (fila + envios). O form só monta quando a sugestão
-   resolve, pra pré-preencher os campos vazios de uma vez. */
-function DrawerTurma({ turma, aguardando, onFechar, onSalvo, notificar }) {
-  const dim = useTurmaDim(turma.turma_id);
-  const sug = useTurmaSugestao(dim.data?.sigla, dim.data?.data_inicio, turma.turma_id);
-  const fila = useFilaTurma(turma.turma_id);
-  const envios = useEnviosTurma(turma.turma_id);
-  const alunos = useMemo(() => montaAlunos(fila.data, envios.data), [fila.data, envios.data]);
-  const exc = useMemo(() => exceptionsAlunos(alunos), [alunos]);
-  const d = dim.data;
-  const prontoForm = !!d && !sug.isLoading;
-  const sub = d ? [d.data_inicio ? `início ${dataDDMM(d.data_inicio)}` : null, d.cidade].filter(Boolean).join(" · ") : "carregando…";
-  return (
-    <DrawerLado titulo={turma.curso || d?.curso || "Turma"} sub={sub} onFechar={onFechar}>
-      {dim.isLoading ? <div style={{ fontSize: 12, color: C.faint, display: "flex", alignItems: "center", gap: 7 }}><Loader2 size={14} className="girar" /> Carregando turma…</div>
-        : dim.error ? <div style={{ fontSize: 12.5, color: C.down }}>{semPermissao(dim.error) ? "Você não tem permissão para ver esta turma." : "Não foi possível carregar a turma."}</div>
-          : !d ? <div style={{ fontSize: 12.5, color: C.faint }}>Turma não encontrada em dim_turmas.</div>
-            : (
-              <>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <CampoLeitura label="Curso" valor={d.curso} />
-                  <CampoLeitura label="Cidade" valor={d.cidade} />
-                  <CampoLeitura label="Início" valor={dataDDMM(d.data_inicio)} />
-                  <CampoLeitura label="Fim" valor={dataDDMM(d.data_fim)} />
-                </div>
-                {prontoForm
-                  ? <FormTurma dim={d} sug={sug.data} aguardando={aguardando} foco={turma.foco} onSalvo={onSalvo} notificar={notificar} />
-                  : <div style={{ fontSize: 12, color: C.faint, marginTop: 16, display: "flex", alignItems: "center", gap: 7 }}><Loader2 size={13} className="girar" /> Buscando sugestões…</div>}
-                <ListaAlunosTurma alunos={alunos} exc={exc} estado={{ carregando: fila.isLoading || envios.isLoading, erro: fila.error || envios.error }} />
-              </>
-            )}
-    </DrawerLado>
-  );
-}
-
-/* ============ AVALIAÇÃO DE EVENTOS — cadastro + link (QR) ============
-   Sistema por token: a Elis cadastra o evento e as PRÓPRIAS perguntas e recebe
-   /e/<token> pra virar QR na palestra; a plateia responde no celular, anônimo.
-   Escrita só pelas funções (criar_evento + salvar_perguntas). As 3 perguntas de
-   núcleo o banco insere sozinho — aqui aparecem só pra leitura. Token nunca
-   regenera: não existe ação de recriar o link (QR já impresso morreria). */
-const TIPOS_EVENTO = [
-  { k: "palestra", r: "Palestra" }, { k: "workshop", r: "Workshop" },
-  { k: "mentoria", r: "Mentoria" }, { k: "curso", r: "Curso" },
-];
-const TIPOS_PERGUNTA = [
-  { k: "escala_1_5", r: "Escala 1–5" }, { k: "escala_0_10", r: "Escala 0–10" },
-  { k: "sim_nao", r: "Sim / Não" }, { k: "escolha_unica", r: "Escolha única" },
-  { k: "texto_livre", r: "Texto livre" },
-];
-const PERGUNTAS_NUCLEO = [
-  "De 0 a 10, quanto você recomendaria esta palestra a um colega?",
-  "O que você mudaria nesta palestra?",
-  "Qual tema você gostaria de ver numa próxima palestra?",
-];
-const LIMITE_PERGUNTAS = 7; // acima disso, avisa (não bloqueia)
-const dataBR = (iso) => { const p = String(iso ?? "").slice(0, 10).split("-"); return p[2] ? `${p[2]}/${p[1]}/${p[0]}` : "—"; };
-
-/* Editor das perguntas da Elis — compartilhado pelo cadastro (novo evento) e
-   pelo resultado (editar evento existente). `travado` (evento já respondeu):
-   fica desabilitado com o motivo na tela — a pessoa vê o porquê, não digita pra
-   descobrir o erro só ao salvar. O núcleo aparece só pra leitura. */
 function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTravado = null, rotulo = "Perguntas" }) {
   const total = perguntas.length + PERGUNTAS_NUCLEO.length;
   const setP = (i, campo, val) => setPerguntas((ps) => ps.map((p, j) => (j === i ? { ...p, [campo]: val } : p)));
@@ -4839,9 +4650,7 @@ function HubPedagogico() {
   const retencaoCasos = usePedagogicoRetencaoCasos();
   const retencao = usePedagogicoRetencao();
   const retencaoMotivos = usePedagogicoRetencaoMotivos();
-  const painel = usePedagogicoPainel();
   const qc = useQueryClient();
-  const [turmaSel, setTurmaSel] = useState(null); // turma aberta no drawer (bloco 2)
   const [toast, setToast] = useState(null);       // feedback de escrita (some sozinho)
   const [retEdit, setRetEdit] = useState(null);         // caso de retenção ('novo' | caso | null)
 
@@ -4896,18 +4705,6 @@ function HubPedagogico() {
     [retencaoMotivos.data]);
   const ret = retencao.data?.[0] ?? {};
 
-  // Automação de confirmações: derivações do painel (1 linha por turma).
-  const turmasPainel = painel.data ?? [];
-  const pendencias = useMemo(() => turmasPainel.filter((t) => t.pendencia != null), [turmasPainel]);
-  const confKpi = useMemo(() => {
-    const fila = turmasPainel.reduce((s, t) => s + Math.max(0, Number(t.matriculados ?? 0) - Number(t.confirmacao_enviada ?? 0)), 0);
-    const aguardando = turmasPainel.reduce((s, t) => s + Number(t.aguardando_link_grupo ?? 0), 0);
-    const conf = turmasPainel.reduce((s, t) => s + Number(t.confirmaram ?? 0), 0);
-    const env = turmasPainel.reduce((s, t) => s + Number(t.confirmacao_enviada ?? 0), 0);
-    return { fila, aguardando, taxa: env > 0 ? (conf / env) * 100 : null };
-  }, [turmasPainel]);
-  // Clique na linha abre o drawer; "colar link" abre com foco no link.
-  const abrirTurma = (t, foco = null) => setTurmaSel({ ...t, foco });
   const notificar = (msg, tipo = "ok") => setToast({ msg, tipo });
   // Toast some sozinho (erro fica um pouco mais).
   useEffect(() => {
@@ -4925,9 +4722,6 @@ function HubPedagogico() {
         @media (min-width: 720px)  { .pedKpis { grid-template-columns: repeat(4, 1fr); } .pedConfKpis { grid-template-columns: repeat(3, 1fr); } }
         @media (min-width: 1000px) { .pedBot { grid-template-columns: 1fr 1fr; } }  /* fideliza · falta */
       `}</style>
-
-      {/* ---- Faixa de pendências da automação (topo; só se houver) ---- */}
-      <FaixaPendencias pendencias={pendencias} onAbrir={abrirTurma} />
 
       {/* ---- KPIs de saúde ---- */}
       <div className="pedKpis" style={{ marginBottom: 12 }}>
@@ -5000,34 +4794,16 @@ function HubPedagogico() {
         </Bloco>
       </div>
 
-      {/* ---- Automação de confirmações (KPIs + tabela; drawer no bloco 2) ---- */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, marginTop: 4 }}>
-        <Send size={15} style={{ color: C.gold, flexShrink: 0 }} />
-        <span style={{ fontSize: 13.5, fontWeight: 800, color: C.bright }}>Automação de confirmações</span>
-        <span style={{ fontSize: 11, color: C.faint }}>fila de presença · grupos de WhatsApp</span>
-      </div>
-      <div className="pedConfKpis" style={{ marginBottom: 12 }}>
-        <ChipKpi compacto hero Icone={Send} label="Fila de confirmação" valor={numero(confKpi.fila)} nota="aguardando 1ª mensagem" />
-        <ChipKpi compacto Icone={Link2} label="Aguardando link do grupo" valor={numero(confKpi.aguardando)} nota="confirmaram, sem grupo" />
-        <ChipKpi compacto Icone={UserCheck} label="Taxa de confirmação" valor={fmtPct(confKpi.taxa)} nota="responderam SIM" />
-      </div>
-      <Bloco titulo="Turmas" canto="clique para abrir · cadastro e links" sem altura={320}>
-        <Estado carregando={painel.isLoading} erro={painel.error} vazio={!turmasPainel.length}
-          vazioTitulo="Nenhuma turma futura" vazioDica="As turmas aparecem aqui conforme entram no Salesforce.">
-          <TabelaConfirmacoes turmas={turmasPainel} onAbrir={abrirTurma} />
-        </Estado>
-      </Bloco>
-
-      {/* ---- Avaliação de eventos (cadastro + link/QR) ---- */}
-      <div style={{ marginTop: 22 }}>
-        <SecaoAvaliacaoEventos notificar={notificar} />
-      </div>
-
       {/* ---- Transparência ---- */}
       <div style={{ fontSize: 11, color: C.faint, lineHeight: 1.6, marginTop: 22 }}>
+        {/* O texto dizia que NPS não era medido. Passou a ser, pelo módulo de
+            avaliação de eventos — mas só para EVENTO. Conclusão e nota de
+            curso seguem sem medição, e juntar as três numa frase só faria o
+            aviso mentir do outro lado. */}
         <b style={{ color: C.muted }}>Transparência.</b> A presença cobre {pk.turmas_cobertas ? numero(pk.turmas_cobertas) : "—"} turmas
-        com credenciamento confiável; as demais ficam de fora do comparecimento. Conclusão, notas e NPS
-        não são medidos — não estão no Salesforce.
+        com credenciamento confiável; as demais ficam de fora do comparecimento. O NPS de <b style={{ color: C.muted }}>evento</b> é
+        medido pela avaliação por QR code — o resultado fica na Central Pedagógica. Conclusão de curso e nota do aluno
+        continuam sem medição: não estão no Salesforce.
       </div>
 
       <RodapeIntegracoes fontes={["salesforce"]} />
@@ -5039,15 +4815,6 @@ function HubPedagogico() {
         </ModalCentro>
       )}
 
-      {/* ---- Bloco 2: drawer da turma (cadastro + link + alunos) ---- */}
-      {turmaSel && (
-        <DrawerTurma
-          turma={turmaSel}
-          aguardando={turmaSel.aguardando_link_grupo}
-          onFechar={() => setTurmaSel(null)}
-          onSalvo={() => { qc.invalidateQueries(); setTurmaSel(null); }}
-          notificar={notificar} />
-      )}
       <Toast toast={toast} onFechar={() => setToast(null)} />
     </>
   );
@@ -5721,6 +5488,7 @@ const ABAS_CENTRAL = [
   { key: "turmas",     label: "Turmas" },
   { key: "represados", label: "Represados" },
   { key: "presenca",   label: "Presença" },
+  { key: "avaliacoes", label: "Avaliações" },
   { key: "maestros",   label: "Maestros" },
 ];
 
@@ -5797,8 +5565,9 @@ function CentralPedagogica() {
       {aba === "turmas" && <CentralTurmas notificar={notificar} />}
       {aba === "represados" && <CentralRepresados notificar={notificar} />}
       {aba === "presenca" && <CentralPresenca />}
+      {aba === "avaliacoes" && <SecaoAvaliacaoEventos notificar={notificar} />}
       {aba === "maestros" && <CentralMaestros notificar={notificar} />}
-      {!["turmas", "represados", "presenca", "maestros"].includes(aba) && (
+      {!["turmas", "represados", "presenca", "avaliacoes", "maestros"].includes(aba) && (
         <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "26px 22px" }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, color: C.bright, marginBottom: 5 }}>
             {ABAS_CENTRAL.find((a) => a.key === aba)?.label} chega na próxima etapa
@@ -5820,6 +5589,7 @@ function CentralPedagogica() {
 function CentralTurmas({ notificar }) {
   const turmas = useTurmasCentral();
   const resumo = useTurmaInscritosResumo();
+  const painel = usePedagogicoPainel();
   const [sel, setSel] = useState(null);
   const [quando, setQuando] = useState("futuras");
   const [verVazias, setVerVazias] = useState(false);
@@ -5861,8 +5631,19 @@ function CentralTurmas({ notificar }) {
   }, [turmas.data, quando, porTurma]);
   const lista = comInscritos;
 
+  /* A faixa de pendências veio do Hub. Lá ela era um aviso sem destino: o
+     clique abria um drawer que aquela tela não tem mais. É lista de trabalho —
+     "estas turmas têm campo faltando" — e lista de trabalho mora aqui, onde o
+     clique abre a turma certa. `foco: "link"` leva direto ao campo do link. */
+  const pendencias = useMemo(
+    () => (painel.data ?? []).filter((t) => t.pendencia != null),
+    [painel.data]
+  );
+
   return (
     <>
+      <FaixaPendencias pendencias={pendencias} onAbrir={(t, foco = null) => setSel({ ...t, foco })} />
+
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
         <span style={{ fontSize: 11.5, color: C.faint }}>
           Clique numa turma para abrir o cadastro, disparar as mensagens e ver quem respondeu.
@@ -6102,7 +5883,7 @@ function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
           dim={dim.data}
           sug={sug.data}
           aguardando={Number(resumo?.grupo?.nao_enfileirados ?? 0)}
-          foco={null}
+          foco={turma.foco ?? null}
           onSalvo={recarregar}
           notificar={notificar}
         />
