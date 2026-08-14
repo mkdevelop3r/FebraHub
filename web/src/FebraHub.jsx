@@ -4087,6 +4087,28 @@ function FormTurma({ dim, sug, aguardando, foco, onSalvo, notificar }) {
   );
 }
 
+/* ============ AVALIAÇÃO DE EVENTOS — cadastro + link (QR) ============
+   Sistema por token: a Elis cadastra o evento e as PRÓPRIAS perguntas e recebe
+   /e/<token> pra virar QR na palestra; a plateia responde no celular, anônimo.
+   Escrita só pelas funções (criar_evento + salvar_perguntas). As 3 perguntas de
+   núcleo o banco insere sozinho — aqui aparecem só pra leitura. Token nunca
+   regenera: não existe ação de recriar o link (QR já impresso morreria). */
+const TIPOS_EVENTO = [
+  { k: "palestra", r: "Palestra" }, { k: "workshop", r: "Workshop" },
+  { k: "mentoria", r: "Mentoria" }, { k: "curso", r: "Curso" },
+];
+const TIPOS_PERGUNTA = [
+  { k: "escala_1_5", r: "Escala 1–5" }, { k: "escala_0_10", r: "Escala 0–10" },
+  { k: "sim_nao", r: "Sim / Não" }, { k: "escolha_unica", r: "Escolha única" },
+  { k: "texto_livre", r: "Texto livre" },
+];
+const PERGUNTAS_NUCLEO = [
+  "De 0 a 10, quanto você recomendaria esta palestra a um colega?",
+  "O que você mudaria nesta palestra?",
+  "Qual tema você gostaria de ver numa próxima palestra?",
+];
+const LIMITE_PERGUNTAS = 7; // acima disso, avisa (não bloqueia)
+
 function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTravado = null, rotulo = "Perguntas" }) {
   const total = perguntas.length + PERGUNTAS_NUCLEO.length;
   const setP = (i, campo, val) => setPerguntas((ps) => ps.map((p, j) => (j === i ? { ...p, [campo]: val } : p)));
