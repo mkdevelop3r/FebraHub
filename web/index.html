@@ -5,6 +5,15 @@
     <link rel="icon" type="image/webp" href="/logo-febracis.webp" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FebraHub · Febracis Salvador</title>
+    <!-- Fontes por <link>, não por @import dentro de <style> de componente:
+         o @import bloqueia o render até baixar, só é descoberto depois que o
+         CSS do componente chega, e quando falha derruba a tipografia inteira
+         de uma vez. O preconnect abre a conexão com os dois domínios antes de
+         a folha ser pedida. Inter é da tela pública de avaliação (/e/:token). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" />
   </head>
   <body>
     <div id="root"></div>

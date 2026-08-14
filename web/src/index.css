@@ -1,5 +1,32 @@
 @import "tailwindcss";
 
+/* ============================================================
+   TIPOGRAFIA BASE
+
+   O preflight do Tailwind aplica a stack dele (`ui-sans-serif,
+   system-ui, …`) no `html`, e o `body` herda. A Manrope do app era
+   aplicada só por `fontFamily` inline no <div> raiz do Shell — então
+   tudo DENTRO dele saía certo, e o `body` ficava com a fonte do
+   Tailwind. Qualquer coisa fora daquele container (ou renderizada antes
+   dele montar) pegava a fonte errada.
+
+   Declarar aqui resolve por dois motivos: não depende de ordem de
+   montagem de componente, e CSS sem camada vence `@layer base` (onde o
+   preflight vive) independente de especificidade e de ordem.
+
+   `--fonte-app` existe para ter um lugar só a mudar. GROTESK
+   (Space Grotesk) continua sendo aplicada por elemento — é fonte de
+   número/título, não de corpo.
+   ============================================================ */
+:root {
+  --fonte-app: "Manrope", ui-sans-serif, system-ui, sans-serif;
+  --fonte-numero: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
+}
+
+html, body {
+  font-family: var(--fonte-app);
+}
+
 html, body, #root {
   margin: 0;
   min-height: 100%;

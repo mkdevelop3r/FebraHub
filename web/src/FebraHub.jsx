@@ -6849,7 +6849,6 @@ function Shell({ perfil }) {
       background: `radial-gradient(1200px 600px at 78% -10%, ${C.gold}12, transparent 60%), ${C.void}`,
     }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { background: ${C.void}; -webkit-font-smoothing: antialiased; }
         ::selection { background: ${C.gold}47; }
