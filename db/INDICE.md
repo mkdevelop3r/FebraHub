@@ -131,4 +131,7 @@ Ordem de aplicação e o que cada uma faz. Gerado a partir do cabeçalho de cada
 | 112 | `112_respostas_so_com_contato.sql` | FebraHub · Migration 112 — Fila de respostas: só quem dá para consultar |
 | 113 | `113_turma_inscritos.sql` | FebraHub · Migration 113 — Inscritos da turma, incluindo quem não foi enfileirado |
 | 114 | `114_contatos.sql` | FebraHub · Migration 114 — Contato vindo de fato_contatos (relatório dedicado do Salesforce) |
-| 115 | `115_turmas_central.sql` | FebraHub · Migration 115 — Turmas da Central: só as da grade pedagógica (NÃO APLICADA) |
+| 115 | `115_so_turma_de_verdade.sql` | FebraHub · Migration 115 — Só turma de verdade na Central (grade_pedagogico + vw_turma_inscritos) |
+| 116 | — | número livre: a tentativa de `vw_turmas_central` que ocupava o 116 nunca foi aplicada e foi absorvida pela 117 |
+| 117 | `117_central_estado_real.sql` | FebraHub · Migration 117 — vw_turmas_central: transcrição do que está aplicado (APLICADA) |
+| 118 | `118_inscritos_sem_triplicar.sql` | FebraHub · Migration 118 — vw_turma_inscritos: join → exists (CIS Global triplicava) |

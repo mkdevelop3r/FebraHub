@@ -1787,7 +1787,11 @@ function HubExecutivo({ onIr }) {
      NEGÓCIO: reativação pedagógica (dinheiro parado, sempre visível) e
      concentração comercial (risco — só aparece se a líder passar de 40%). */
   const alertas = [
-    ...(reativacao.temDados && reativacao.alunos > 0 ? [{ cor: C.warn, Icone: PhoneCall, titulo: "Reativação pedagógica", valor: moeda(reativacao.valor), sub: `${numero(reativacao.alunos)} compraram e não compareceram` }] : []),
+    /* "Reativação pedagógica" era ambíguo ao lado da fila de prazo: parecia o
+       mesmo assunto. São perguntas diferentes e continuam sendo — aqui é quem
+       NÃO APARECEU numa turma que já aconteceu; lá é quem está perdendo o
+       direito de fazer o curso. O rótulo agora diz qual das duas é. */
+    ...(reativacao.temDados && reativacao.alunos > 0 ? [{ cor: C.warn, Icone: PhoneCall, titulo: "Compraram e faltaram", valor: moeda(reativacao.valor), sub: `${numero(reativacao.alunos)} alunos · turmas já realizadas` }] : []),
     ...(inad.valor > 0 ? [{ cor: C.warn, Icone: AlertTriangle, titulo: "Inadimplência acumulada", valor: moeda(inad.valor), sub: `${numero(inad.parcelas)} parcelas vencidas` }] : []),
     ...(lojaAbaixo ? [{ cor: C.down, Icone: ShoppingBag, titulo: "Loja abaixo da meta", valor: fmtPct(lojaRow.pct_minima), sub: "da meta mínima" }] : []),
     ...(consultoras.concentracao != null && consultoras.concentracao > 40 ? [{ cor: C.down, Icone: AlertTriangle, titulo: "Concentração comercial", valor: `${Math.round(consultoras.concentracao)}%`, sub: `da receita de 30 dias em ${consultoras.lider ? primeiroNome(consultoras.lider) : "1 consultora"}` }] : []),
@@ -3909,7 +3913,6 @@ function ListaMotivos({ linhas }) {
    não mostra dado cru. */
 const dataDDMM = (d) => { if (!d) return "—"; const p = String(d).slice(0, 10).split("-"); return p[2] && p[1] ? `${p[2]}/${p[1]}` : "—"; };
 const emNDias = (n) => { if (n == null) return "—"; const v = Number(n); return v === 0 ? "hoje" : v < 0 ? `há ${-v} dias` : `em ${v} dias`; };
-const corDias = (n) => { if (n == null) return C.faint; const v = Number(n); return v <= 10 ? C.down : v <= 20 ? C.gold : C.faint; };
 // Pendência urgente (CRIAR GRUPO — URGENTE) em vermelho; as demais em dourado.
 const corPendencia = (p) => (/URGENTE/i.test(String(p ?? "")) ? C.down : C.gold);
 
@@ -3941,12 +3944,10 @@ function FaixaPendencias({ pendencias, onAbrir }) {
 
 /* ---- Bloco 2 da automação: o DRAWER da turma ---- */
 
-// CPF mascarado ***.456.789-** — esconde os 3 primeiros e os 2 últimos dígitos.
-const mascaraCpf = (cpf) => {
-  const d = String(cpf ?? "").replace(/\D/g, "");
-  if (d.length !== 11) return String(cpf ?? "").trim() || "—";
-  return `***.${d.slice(3, 6)}.${d.slice(6, 9)}-**`;
-};
+
+// dd/mm/aaaa. Vivia no meio do drawer antigo da automação e foi junto com ele
+// na remoção; 12 chamadas ficaram órfãs sem o build reclamar.
+const dataBR = (iso) => { const p = String(iso ?? "").slice(0, 10).split("-"); return p[2] ? `${p[2]}/${p[1]}/${p[0]}` : "—"; };
 
 const LINK_GRUPO_PREFIXO = "https://chat.whatsapp.com/";
 const linkGrupoValido = (v) => { const s = String(v ?? "").trim(); return s === "" || s.startsWith(LINK_GRUPO_PREFIXO); };
@@ -5511,7 +5512,7 @@ const daSituacao = (s) =>
 /* CPF por extenso. Cinco de seis inscritos não estão em dim_alunos e chegam
    aqui como CPF no lugar do nome — onze dígitos corridos fazem a tela parecer
    quebrada, e a Elis precisa conseguir ler para achar a pessoa. Diferente de
-   `mascaraCpf`, que esconde dígitos para telas de leitura. */
+   o CPF por extenso porque a Elis precisa identificar a pessoa. */
 const formataCpf = (v) => {
   const d = String(v ?? "").replace(/\D/g, "");
   if (d.length !== 11) return String(v ?? "").trim() || "—";
@@ -5588,24 +5589,16 @@ function CentralPedagogica() {
    Substitui a planilha onde a Elis anotava à mão quem confirmou. */
 function CentralTurmas({ notificar }) {
   const turmas = useTurmasCentral();
-  const resumo = useTurmaInscritosResumo();
   const painel = usePedagogicoPainel();
   const [sel, setSel] = useState(null);
   const [quando, setQuando] = useState("futuras");
   const [verVazias, setVerVazias] = useState(false);
 
-  // Resumo indexado por turma e tipo de mensagem. A view entrega uma linha
-  // por (turma, tipo); a lista mostra o fluxo de confirmação, que é o que
-  // acontece primeiro. O link do grupo aparece no detalhe.
-  const porTurma = useMemo(() => {
-    const m = new Map();
-    for (const r of resumo.data ?? []) {
-      const a = m.get(r.turma_id) ?? {};
-      a[r.tipo] = r;
-      m.set(r.turma_id, a);
-    }
-    return m;
-  }, [resumo.data]);
+  /* Os contadores vêm na própria linha da turma: a vw_turmas_central agrega
+     vw_turma_inscritos num LATERAL. Antes a lista pedia também a
+     vw_turma_inscritos_resumo — ida ao servidor para buscar o que já vinha
+     junto. O drawer segue usando a _resumo, que é por (turma, tipo) e sabe
+     separar confirmação de link do grupo. */
 
   /* Padrão: só o que ainda vai acontecer — é onde há o que fazer. As
      passadas ficam atrás do alternador, para consulta de histórico.
@@ -5622,13 +5615,13 @@ function CentralTurmas({ notificar }) {
       a.futura !== b.futura ? (a.futura ? -1 : 1)
         : a.futura ? String(a.data_inicio).localeCompare(String(b.data_inicio))
           : String(b.data_inicio).localeCompare(String(a.data_inicio)));
-    const temGente = (t) => Number(porTurma.get(t.turma_id)?.confirmacao?.matriculados ?? 0) > 0;
+    const temGente = (t) => Number(t.matriculados ?? 0) > 0;
     return {
       comInscritos: ordenar(alvo.filter(temGente)),
       vazias: ordenar(alvo.filter((t) => !temGente(t))),
       passadas: rows.length - rows.filter((t) => t.futura).length,
     };
-  }, [turmas.data, quando, porTurma]);
+  }, [turmas.data, quando]);
   const lista = comInscritos;
 
   /* A faixa de pendências veio do Hub. Lá ela era um aviso sem destino: o
@@ -5654,15 +5647,15 @@ function CentralTurmas({ notificar }) {
       </div>
 
       <Estado
-        carregando={turmas.isLoading || resumo.isLoading}
-        erro={turmas.error ?? resumo.error}
+        carregando={turmas.isLoading}
+        erro={turmas.error}
         vazio={!lista.length && !vazias.length}
         vazioTitulo={quando === "futuras" ? "Nenhuma turma marcada daqui pra frente" : "Nenhuma turma no cadastro"}
         vazioDica={quando === "futuras" ? "Assim que uma turma da grade entrar no cadastro com data de início, ela aparece aqui. Troque o filtro para ver as que já aconteceram." : undefined}
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {lista.map((t) => (
-            <LinhaTurmaCentral key={t.turma_id} turma={t} resumo={porTurma.get(t.turma_id)} onAbrir={() => setSel(t)} />
+            <LinhaTurmaCentral key={t.turma_id} turma={t} onAbrir={() => setSel(t)} />
           ))}
         </div>
 
@@ -5680,7 +5673,7 @@ function CentralTurmas({ notificar }) {
             {verVazias && (
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
                 {vazias.map((t) => (
-                  <LinhaTurmaCentral key={t.turma_id} turma={t} resumo={porTurma.get(t.turma_id)} onAbrir={() => setSel(t)} />
+                  <LinhaTurmaCentral key={t.turma_id} turma={t} onAbrir={() => setSel(t)} />
                 ))}
               </div>
             )}
@@ -5691,7 +5684,6 @@ function CentralTurmas({ notificar }) {
       {sel && (
         <DrawerTurmaCentral
           turma={sel}
-          resumo={porTurma.get(sel.turma_id)}
           onFechar={() => setSel(null)}
           notificar={notificar}
         />
@@ -5700,9 +5692,11 @@ function CentralTurmas({ notificar }) {
   );
 }
 
-function LinhaTurmaCentral({ turma, resumo, onAbrir }) {
-  const conf = resumo?.confirmacao;
-  const total = Number(conf?.matriculados ?? 0);
+function LinhaTurmaCentral({ turma, onAbrir }) {
+  // Os contadores já vêm na linha da turma (vw_turmas_central agrega
+  // vw_turma_inscritos num LATERAL) — sem segunda consulta.
+  const conf = turma;
+  const total = Number(turma.matriculados ?? 0);
   const dias = turma.futura
     ? Math.round((new Date(turma.data_inicio) - new Date(isoDia(new Date()))) / 86400000)
     : null;
@@ -5736,7 +5730,7 @@ function LinhaTurmaCentral({ turma, resumo, onAbrir }) {
           <ContaTurma rotulo="confirmaram" valor={Number(conf.confirmados ?? 0)} total={total} cor={C.up} />
           <ContaTurma rotulo="não vêm" valor={Number(conf.nao_vem ?? 0)} total={total} cor={C.down} />
           <ContaTurma rotulo="sem resposta" valor={Number(conf.sem_resposta ?? 0)} total={total} cor={C.warn} />
-          <ContaTurma rotulo="aguardando" valor={Number(conf.aguardando_resposta ?? 0) + Number(conf.aguardando_envio ?? 0)} total={total} cor={C.gold} />
+          <ContaTurma rotulo="aguardando" valor={Number(conf.aguardando_resposta ?? 0)} total={total} cor={C.gold} />
           {Number(conf.nao_enfileirados ?? 0) > 0 && (
             <ContaTurma rotulo="ainda não receberam" valor={Number(conf.nao_enfileirados ?? 0)} total={total} cor={C.dim} />
           )}
@@ -5749,9 +5743,18 @@ function LinhaTurmaCentral({ turma, resumo, onAbrir }) {
 /* ---- Turmas: o detalhe ----
    Cadastro (reaproveita o FormTurma da automação), os dois disparos e a lista
    de inscritos com a situação de cada um. */
-function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
+function DrawerTurmaCentral({ turma, onFechar, notificar }) {
   const qc = useQueryClient();
   const dim = useTurmaDim(turma.turma_id);
+  /* Aqui a _resumo faz falta: ela é por (turma, TIPO), e o drawer separa
+     confirmação de link do grupo. A linha da lista só mostra confirmação,
+     e para isso os contadores da própria turma bastam. */
+  const resumoTurma = useTurmaInscritosResumo();
+  const resumo = useMemo(() => {
+    const m = {};
+    for (const r of resumoTurma.data ?? []) if (r.turma_id === turma.turma_id) m[r.tipo] = r;
+    return m;
+  }, [resumoTurma.data, turma.turma_id]);
   const sug = useTurmaSugestao(dim.data?.sigla, dim.data?.data_inicio, turma.turma_id);
   const inscritos = useTurmaInscritos(turma.turma_id);
   const [tipo, setTipo] = useState("confirmacao");
