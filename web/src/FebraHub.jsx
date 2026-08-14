@@ -10,7 +10,7 @@ import {
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
   Users, Target, Construction, Percent, Filter, ChevronUp,
   Boxes, PackageX, Repeat, UserCheck, BookOpen, ShieldCheck,
-  Check, Pencil, Star, Plus, PhoneCall, Send, Link2, ClipboardList, Search,
+  Check, Pencil, Star, Plus, PhoneCall, Send, Link2, ClipboardList, Search, MoreHorizontal,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
@@ -6009,16 +6009,22 @@ function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
 
   const resumoTipo = resumo?.[tipo];
 
-  /* Ordem de trabalho: quem precisa de ação sobe. Erro no envio primeiro
-     (alguém tem que consertar), depois quem nunca foi enfileirado, sem
-     resposta, aguardando — e por último quem já está resolvido. Dentro da
-     mesma situação, por nome, pra a lista não dançar entre recargas. */
+  /* Ordem padrão é a de TRABALHO: quem precisa de ação sobe. Erro no envio
+     primeiro (alguém tem que consertar), depois quem nunca foi enfileirado,
+     sem resposta, aguardando — e por último quem já está resolvido. Dentro da
+     mesma situação, por nome, pra a lista não dançar entre recargas.
+     O cabeçalho troca para ordem por nome. */
+  const [ordem, setOrdem] = useState({ campo: "situacao", dir: 1 });
+  const ordenarPor = (campo) =>
+    setOrdem((o) => ({ campo, dir: o.campo === campo ? -o.dir : 1 }));
+
   const doTipo = useMemo(() => {
     const rows = (inscritos.data ?? []).filter((r) => r.tipo === tipo);
-    return [...rows].sort((a, b) =>
-      daSituacao(a.situacao).ordem - daSituacao(b.situacao).ordem
-      || String(a.nome ?? "").localeCompare(String(b.nome ?? ""), "pt-BR"));
-  }, [inscritos.data, tipo]);
+    const porNome = (a, b) => String(a.nome ?? "").localeCompare(String(b.nome ?? ""), "pt-BR");
+    return [...rows].sort((a, b) => ordem.campo === "nome"
+      ? ordem.dir * porNome(a, b)
+      : ordem.dir * (daSituacao(a.situacao).ordem - daSituacao(b.situacao).ordem) || porNome(a, b));
+  }, [inscritos.data, tipo, ordem]);
 
   /* Filtro do contador + busca. A busca casa nome, CPF (com ou sem
      pontuação — ela digita dos dois jeitos) e telefone. */
@@ -6078,7 +6084,7 @@ function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
       titulo={turma.nome_comercial || turma.curso || turma.turma_id}
       sub={`${turma.turma_id} · início ${dataBR(turma.data_inicio)}`}
       onFechar={onFechar}
-      largura={620}
+      largura={820}
     >
       {/* ---- Disparo ---- */}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -6170,18 +6176,14 @@ function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
               }}>Ver todos os {numero(doTipo.length)}</button>
             </div>
           ) : (
-            <div className="rolagem" style={{ maxHeight: 380, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
-              {visiveis.map((r, i) => (
-                <LinhaInscrito
-                  key={`${r.aluno_id}-${i}`}
-                  r={r}
-                  ultima={i === visiveis.length - 1}
-                  aberta={aberta === r.aluno_id}
-                  onAbrir={() => setAberta(aberta === r.aluno_id ? null : r.aluno_id)}
-                  onMarcar={marcar}
-                />
-              ))}
-            </div>
+            <TabelaInscritos
+              linhas={visiveis}
+              ordem={ordem}
+              onOrdenar={ordenarPor}
+              aberta={aberta}
+              onAbrir={(id) => setAberta(aberta === id ? null : id)}
+              onMarcar={marcar}
+            />
           )}
         </Estado>
       </div>
@@ -6248,16 +6250,74 @@ function FaixaContadores({ resumo, total, filtro, onFiltrar }) {
   );
 }
 
-/* Uma pessoa por linha. Nome domina; telefone abaixo, apagado e clicável — é
-   o que transforma a lista em ferramenta de ligação. O chip de status é o
-   único ponto de cor forte, e é ele que abre as três opções: marcar na mão é
-   exceção, não a regra, então os botões não ficam à mostra em toda linha. */
+/* A tabela. A referência é a planilha do pedagógico: colunas alinhadas, uma
+   linha por pessoa, status colorido numa coluna só — o olho corre a coluna e
+   compara. Cartão empilhado ocupa três vezes a altura e caberia um terço das
+   pessoas; numa turma de 421 (o TOUR PV tem exatamente isso) essa diferença
+   decide se a tela serve.
+
+   Rolagem dentro da tabela com o cabeçalho grudado no topo, e os contadores
+   sempre visíveis acima dela. Sem paginação: ela rola procurando um nome, não
+   clica em "página 3". Sem zebrado: listra disputa atenção com a cor do
+   status, que é a única informação colorida da linha. */
+function TabelaInscritos({ linhas, ordem, onOrdenar, aberta, onAbrir, onMarcar }) {
+  const seta = (campo) => ordem.campo !== campo ? null : (ordem.dir > 0 ? " ↑" : " ↓");
+  const cabecalho = (campo, rotulo, extra = {}) => (
+    <button onClick={() => onOrdenar(campo)} style={{
+      background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left",
+      fontFamily: SANS, fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase",
+      color: ordem.campo === campo ? C.gold : C.dim, ...extra,
+    }}>{rotulo}{seta(campo)}</button>
+  );
+
+  return (
+    <>
+      <style>{`
+        .tiGrade { display: grid; grid-template-columns: minmax(0,1.7fr) 128px minmax(0,1.4fr) 122px 30px; align-items: center; gap: 10px; }
+        @media (max-width: 900px) { .tiGrade { grid-template-columns: minmax(0,1.7fr) 128px 122px 30px; } .tiEmail { display: none; } }
+        .tiLinha:hover { background: rgba(255,255,255,.02); }
+      `}</style>
+      <div className="rolagem" style={{
+        maxHeight: 420, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10,
+      }}>
+        <div className="tiGrade" style={{
+          position: "sticky", top: 0, zIndex: 2, background: "#17171c",
+          padding: "8px 12px", borderBottom: `1px solid ${C.cardLine}`,
+        }}>
+          {cabecalho("nome", "Nome")}
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>Telefone</span>
+          <span className="tiEmail" style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>E-mail</span>
+          {cabecalho("situacao", "Status", { textAlign: "right" })}
+          <span />
+        </div>
+        {linhas.map((r, i) => (
+          <LinhaInscrito
+            key={`${r.aluno_id}-${i}`}
+            r={r}
+            ultima={i === linhas.length - 1}
+            aberta={aberta === r.aluno_id}
+            onAbrir={() => onAbrir(r.aluno_id)}
+            onMarcar={onMarcar}
+          />
+        ))}
+      </div>
+    </>
+  );
+}
+
+/* Uma linha de ~44px. Nome domina; telefone e e-mail apagados; o chip de
+   status é o único ponto de cor forte, e é ele que abre as três opções —
+   marcar na mão é exceção, não regra, então os botões não ficam à mostra em
+   toda linha. Nada de modal: ela marca várias em sequência. */
 function LinhaInscrito({ r, ultima, aberta, onAbrir, onMarcar }) {
   const s = daSituacao(r.situacao);
   const naFila = String(r.situacao ?? "") !== "nao enfileirado";
   const anonimo = semCadastro(r);
   const zap = r.sem_contato ? null : linkWhatsapp(r.telefone);
   const naMao = r.resposta_origem === "hub";
+
+  const [menu, setMenu] = useState(false);
+  const copiar = (v) => { navigator.clipboard?.writeText(String(v)); setMenu(false); };
 
   const opcao = (valor, rotulo, cor) => (
     <button
@@ -6269,57 +6329,86 @@ function LinhaInscrito({ r, ultima, aberta, onAbrir, onMarcar }) {
       }}
     >{rotulo}</button>
   );
+  const itemMenu = (rotulo, acao) => (
+    <button onClick={acao} style={{
+      display: "block", width: "100%", textAlign: "left", background: "none", border: "none",
+      padding: "6px 10px", cursor: "pointer", fontFamily: SANS, fontSize: 11.5, color: C.muted, whiteSpace: "nowrap",
+    }}>{rotulo}</button>
+  );
+
+  const apagado = { fontSize: 11.5, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
 
   return (
-    <div style={{ borderBottom: ultima ? "none" : `1px solid ${C.hair}` }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "10px 12px" }}>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
-            <span style={{
-              fontSize: 13, fontWeight: 700, color: C.text,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-              fontVariantNumeric: anonimo ? "tabular-nums" : "normal",
-            }}>
-              {anonimo ? formataCpf(r.aluno_id) : r.nome}
-            </span>
-            {anonimo && <span style={{ fontSize: 10, color: C.dim, flexShrink: 0 }}>sem cadastro</span>}
-            {naMao && <span title="resposta registrada na mão" style={{
-              width: 5, height: 5, borderRadius: 999, background: C.gold, flexShrink: 0,
-            }} />}
-          </div>
-          <div style={{ fontSize: 11, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {r.sem_contato ? (
-              <span style={{ color: C.warn }}>sem telefone nem e-mail</span>
-            ) : zap ? (
-              <a href={zap} target="_blank" rel="noreferrer" style={{ color: C.faint, textDecoration: "none" }}
-                 title="Abrir conversa no WhatsApp">
-                {formataTelefone(r.telefone)}
-              </a>
-            ) : (
-              <span style={{ color: C.faint }}>{r.telefone || r.email || "—"}</span>
-            )}
-          </div>
+    <div style={{ borderBottom: ultima ? "none" : `1px solid ${C.hair}`, position: "relative" }}>
+      <div className="tiGrade tiLinha" style={{ minHeight: 44, padding: "0 12px" }}>
+        {/* Nome */}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+          <span style={{
+            fontSize: 13, fontWeight: 700, color: C.text,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            fontVariantNumeric: anonimo ? "tabular-nums" : "normal",
+          }} title={anonimo ? "sem cadastro em dim_alunos" : r.nome}>
+            {anonimo ? formataCpf(r.aluno_id) : r.nome}
+          </span>
+          {anonimo && <span style={{ fontSize: 10, color: C.dim, flexShrink: 0 }}>sem cadastro</span>}
         </div>
 
-        {/* O chip é o botão. Sem preenchimento quando ninguém foi enfileirado
-            — estado de ausência não deve pesar tanto quanto um resultado. */}
-        <button
-          onClick={onAbrir}
-          disabled={!naFila}
-          aria-expanded={aberta}
-          title={naFila ? "Registrar a resposta que chegou por fora" : "Dispare a mensagem antes de registrar a resposta"}
-          style={{
-            fontFamily: SANS, fontSize: 10, fontWeight: 800, padding: "4px 10px", borderRadius: 999,
-            whiteSpace: "nowrap", flexShrink: 0, color: s.cor,
-            background: s.fundo ? `${s.cor}${s.fundo}` : "transparent",
-            border: `1px solid ${s.cor}${s.fundo ? "44" : "55"}`,
-            cursor: naFila ? "pointer" : "default",
-          }}
-        >{s.rotulo}</button>
+        {/* Telefone — o link é o que transforma a lista em ferramenta de ligação */}
+        <div style={apagado}>
+          {r.sem_contato ? <span style={{ color: C.warn }} title="sem telefone nem e-mail">sem contato</span>
+            : zap ? <a href={zap} target="_blank" rel="noreferrer" style={{ color: C.faint, textDecoration: "none" }}
+                       title="Abrir conversa no WhatsApp">{formataTelefone(r.telefone)}</a>
+              : <span>{formataTelefone(r.telefone) || "—"}</span>}
+        </div>
+
+        {/* E-mail — some abaixo de 900px */}
+        <div className="tiEmail" style={apagado} title={r.email || ""}>{r.email || "—"}</div>
+
+        {/* Status: o chip é o botão */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5 }}>
+          {naMao && <span title="resposta registrada na mão" style={{
+            width: 5, height: 5, borderRadius: 999, background: C.gold, flexShrink: 0,
+          }} />}
+          <button
+            onClick={onAbrir}
+            disabled={!naFila}
+            aria-expanded={aberta}
+            title={naFila ? "Registrar a resposta que chegou por fora" : "Dispare a mensagem antes de registrar a resposta"}
+            style={{
+              fontFamily: SANS, fontSize: 10, fontWeight: 800, padding: "3px 9px", borderRadius: 999,
+              whiteSpace: "nowrap", color: s.cor,
+              background: s.fundo ? `${s.cor}${s.fundo}` : "transparent",
+              border: `1px solid ${s.cor}${s.fundo ? "44" : "55"}`,
+              cursor: naFila ? "pointer" : "default",
+            }}
+          >{s.rotulo}</button>
+        </div>
+
+        {/* Ações locais: nada que escreva no banco, só o que ela copiaria à mão */}
+        <button onClick={() => setMenu(!menu)} aria-label="Ações" style={{
+          background: "none", border: "none", cursor: "pointer", color: menu ? C.gold : C.dim,
+          padding: 2, lineHeight: 0, justifySelf: "end",
+        }}><MoreHorizontal size={15} /></button>
       </div>
 
+      {menu && (
+        <>
+          <div onClick={() => setMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 3 }} />
+          <div style={{
+            position: "absolute", right: 10, top: 36, zIndex: 4, minWidth: 150, padding: "4px 0",
+            background: "#1c1c22", border: `1px solid ${C.cardLine}`, borderRadius: 9,
+            boxShadow: "0 10px 28px rgba(0,0,0,.5)",
+          }}>
+            {zap && itemMenu("Abrir no WhatsApp", () => { window.open(zap, "_blank", "noreferrer"); setMenu(false); })}
+            {r.telefone && itemMenu("Copiar telefone", () => copiar(r.telefone))}
+            {r.email && itemMenu("Copiar e-mail", () => copiar(r.email))}
+            {itemMenu("Copiar CPF", () => copiar(formataCpf(r.aluno_id)))}
+          </div>
+        </>
+      )}
+
       {aberta && (
-        <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "0 12px 10px", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "0 12px 9px 12px", flexWrap: "wrap" }}>
           <span style={{ fontSize: 10.5, color: C.dim }}>Ela respondeu:</span>
           {opcao("sim", "Sim, vem", C.up)}
           {opcao("nao", "Não vem", C.down)}
