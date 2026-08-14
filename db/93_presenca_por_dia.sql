@@ -1,7 +1,7 @@
 -- ============================================================
--- 03 — PRESENÇA POR DIA + CONSERTO DO CPF
+-- 93 — PRESENÇA POR DIA + CONSERTO DO CPF
 --
--- NÃO APLICADO AINDA. Ler as três decisões abaixo antes de rodar.
+-- APLICADO. Conferido no banco em 13/08/2026. Ler as três decisões abaixo antes de rodar.
 --
 -- Por que este arquivo existe:
 --

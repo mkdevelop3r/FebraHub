@@ -10,7 +10,7 @@ import {
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
   Users, Target, Construction, Percent, Filter, ChevronUp,
   Boxes, PackageX, Repeat, UserCheck, BookOpen, ShieldCheck,
-  Check, Pencil, Star, Plus, PhoneCall, Send, Link2,
+  Check, Pencil, Star, Plus, PhoneCall, Send, Link2, ClipboardList, Search, MoreHorizontal,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
@@ -37,7 +37,9 @@ import {
   useVendaFaturamentoDesde, useFinanceiroRecebidoMensal,
   useMarketingInvestimento, useLojaMetaRealizado,
   useExecutivoReativacao, useExecutivoComercial30d,
-  useTurmaDim, useTurmaSugestao, useFilaTurma, useEnviosTurma,
+  useTurmaDim, useTurmaSugestao,
+  useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
+  useRepresadoLista, dispararRepresados, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
@@ -83,6 +85,10 @@ const HUBS = [
   { key: "financeiro", nome: "Financeiro", Icone: Wallet,        desc: "Receita por curso e cobertura" },
   { key: "marketing",  nome: "Marketing",  Icone: Megaphone,     desc: "Origem de leads e campanhas" },
   { key: "pedagogico", nome: "Pedagógico", Icone: GraduationCap, desc: "Turmas, matrículas e conclusão" },
+  /* A Central é operação, não setor: quem enxerga é quem tem o setor
+     'pedagogico'. `setor` existe só por isso — nos outros, a chave já é o
+     próprio setor. */
+  { key: "central", setor: "pedagogico", nome: "Central Pedagógica", Icone: ClipboardList, desc: "Operação: turmas, represados e presença" },
   { key: "eventos",    nome: "Eventos",    Icone: CalendarDays,  desc: "Ingressos e receita líquida" },
   { key: "loja",       nome: "Loja",       Icone: ShoppingBag,   desc: "Vendas, formas de pagamento e recebimento" },
   { key: "estoque",    nome: "Estoque",    Icone: Package,       desc: "Sem fonte conectada" },
@@ -1781,7 +1787,11 @@ function HubExecutivo({ onIr }) {
      NEGÓCIO: reativação pedagógica (dinheiro parado, sempre visível) e
      concentração comercial (risco — só aparece se a líder passar de 40%). */
   const alertas = [
-    ...(reativacao.temDados && reativacao.alunos > 0 ? [{ cor: C.warn, Icone: PhoneCall, titulo: "Reativação pedagógica", valor: moeda(reativacao.valor), sub: `${numero(reativacao.alunos)} compraram e não compareceram` }] : []),
+    /* "Reativação pedagógica" era ambíguo ao lado da fila de prazo: parecia o
+       mesmo assunto. São perguntas diferentes e continuam sendo — aqui é quem
+       NÃO APARECEU numa turma que já aconteceu; lá é quem está perdendo o
+       direito de fazer o curso. O rótulo agora diz qual das duas é. */
+    ...(reativacao.temDados && reativacao.alunos > 0 ? [{ cor: C.warn, Icone: PhoneCall, titulo: "Compraram e faltaram", valor: moeda(reativacao.valor), sub: `${numero(reativacao.alunos)} alunos · turmas já realizadas` }] : []),
     ...(inad.valor > 0 ? [{ cor: C.warn, Icone: AlertTriangle, titulo: "Inadimplência acumulada", valor: moeda(inad.valor), sub: `${numero(inad.parcelas)} parcelas vencidas` }] : []),
     ...(lojaAbaixo ? [{ cor: C.down, Icone: ShoppingBag, titulo: "Loja abaixo da meta", valor: fmtPct(lojaRow.pct_minima), sub: "da meta mínima" }] : []),
     ...(consultoras.concentracao != null && consultoras.concentracao > 40 ? [{ cor: C.down, Icone: AlertTriangle, titulo: "Concentração comercial", valor: `${Math.round(consultoras.concentracao)}%`, sub: `da receita de 30 dias em ${consultoras.lider ? primeiroNome(consultoras.lider) : "1 consultora"}` }] : []),
@@ -2504,8 +2514,11 @@ function HubFinanceiro() {
         <ChipKpi hero Icone={Wallet} label="Receita reconhecida" valor={moeda(categorias.total)} nota={rotulo} />
         {/* Qualidade do dado do PERÍODO selecionado — trocar o ano troca o
             número (2026: 0% · 2024: 8,8% · 2023: 13,3%). Sem média histórica:
-            somar tudo escondia que o buraco é passivo antigo, já corrigido. */}
-        <ChipKpi Icone={Clock} label="Sem status" valor={semStatus.pct != null ? semStatus.pct.toFixed(1) : "—"} unidade="%"
+            somar tudo escondia que o buraco é passivo antigo, já corrigido.
+            "Vendas", não "pagamentos": a view deduplica por original_id_venda
+            antes de contar, então a unidade é a venda, não a linha de
+            pagamento (uma venda parcelada é uma só aqui). */}
+        <ChipKpi Icone={Clock} label="Vendas sem status" valor={semStatus.pct != null ? semStatus.pct.toFixed(1) : "—"} unidade="%"
           nota={rotulo}
           sub={semStatus.sub} />
         <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%"
@@ -3900,7 +3913,6 @@ function ListaMotivos({ linhas }) {
    não mostra dado cru. */
 const dataDDMM = (d) => { if (!d) return "—"; const p = String(d).slice(0, 10).split("-"); return p[2] && p[1] ? `${p[2]}/${p[1]}` : "—"; };
 const emNDias = (n) => { if (n == null) return "—"; const v = Number(n); return v === 0 ? "hoje" : v < 0 ? `há ${-v} dias` : `em ${v} dias`; };
-const corDias = (n) => { if (n == null) return C.faint; const v = Number(n); return v <= 10 ? C.down : v <= 20 ? C.gold : C.faint; };
 // Pendência urgente (CRIAR GRUPO — URGENTE) em vermelho; as demais em dourado.
 const corPendencia = (p) => (/URGENTE/i.test(String(p ?? "")) ? C.down : C.gold);
 
@@ -3930,92 +3942,17 @@ function FaixaPendencias({ pendencias, onAbrir }) {
   );
 }
 
-// Tabela das turmas do painel. Clique na linha (ou em "colar link") abre o
-// drawer da turma (bloco 2).
-function TabelaConfirmacoes({ turmas, onAbrir }) {
-  const th = (txt, alin) => <th style={{ textAlign: alin, padding: "8px 12px", fontSize: 9.5, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, whiteSpace: "nowrap" }}>{txt}</th>;
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: SANS }}>
-        <thead>
-          <tr style={{ borderBottom: `1px solid ${C.hair}` }}>
-            {th("Turma", "left")}{th("Início", "left")}{th("Matr.", "right")}{th("Enviadas", "right")}{th("Confirmaram", "right")}{th("Grupo", "left")}{th("Pendência", "left")}
-          </tr>
-        </thead>
-        <tbody>
-          {turmas.map((t) => {
-            const cd = corDias(t.dias_para_inicio);
-            return (
-              <tr key={t.turma_id} onClick={() => onAbrir(t)} style={{ borderBottom: `1px solid ${C.hair}`, cursor: "pointer" }}>
-                <td style={{ padding: "9px 12px" }}>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 240 }} title={t.curso}>{t.curso}</div>
-                </td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>
-                  <span style={{ fontSize: 12, color: C.muted }}>{dataDDMM(t.data_inicio)}</span>
-                  <span style={{ marginLeft: 7, fontSize: 10, fontWeight: 800, padding: "1px 7px", borderRadius: 999, color: cd, background: `${cd}1A`, border: `1px solid ${cd}44` }}>{emNDias(t.dias_para_inicio)}</span>
-                </td>
-                <td style={{ padding: "9px 12px", textAlign: "right", fontFamily: GROTESK, fontSize: 12.5, color: C.text }}>{numero(t.matriculados)}</td>
-                <td style={{ padding: "9px 12px", textAlign: "right", fontFamily: GROTESK, fontSize: 12.5, color: C.text }}>{numero(t.confirmacao_enviada)}</td>
-                <td style={{ padding: "9px 12px", textAlign: "right", fontFamily: GROTESK, fontSize: 12.5, color: C.up }}>{numero(t.confirmaram)}</td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>
-                  {t.grupo_criado
-                    ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12, color: C.up, fontWeight: 700 }}><Check size={13} /> criado</span>
-                    : <span onClick={(e) => { e.stopPropagation(); onAbrir(t, "link"); }} style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 11.5, fontWeight: 700, color: C.gold, cursor: "pointer", padding: "3px 9px", borderRadius: 8, border: `1px solid ${C.gold}55`, background: `${C.gold}14` }}><Link2 size={12} /> colar link</span>}
-                </td>
-                <td style={{ padding: "9px 12px", whiteSpace: "nowrap" }}>
-                  {t.pendencia ? <span style={{ fontSize: 11, fontWeight: 700, color: corPendencia(t.pendencia) }}>{t.pendencia}</span> : <span style={{ color: C.faint }}>—</span>}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 /* ---- Bloco 2 da automação: o DRAWER da turma ---- */
 
-// CPF mascarado ***.456.789-** — esconde os 3 primeiros e os 2 últimos dígitos.
-const mascaraCpf = (cpf) => {
-  const d = String(cpf ?? "").replace(/\D/g, "");
-  if (d.length !== 11) return String(cpf ?? "").trim() || "—";
-  return `***.${d.slice(3, 6)}.${d.slice(6, 9)}-**`;
-};
 
-// Une a fila (pendentes, com nome) e os envios (só CPF, com status real) de uma
-// turma numa lista por aluno. O envio manda no status; a fila completa o nome e
-// os dados de contato, e marca quem ainda está "pendente".
-const montaAlunos = (fila, envios) => {
-  const porAluno = new Map();
-  for (const e of envios ?? []) {
-    porAluno.set(String(e.aluno_id), { aluno_id: e.aluno_id, nome: null, canal: e.canal, status: e.status, erro_msg: e.erro_msg, telefone_invalido: false, telefone_bruto: null });
-  }
-  for (const f of fila ?? []) {
-    const k = String(f.aluno_id);
-    const ja = porAluno.get(k);
-    if (ja) { if (!ja.nome) ja.nome = f.nome; if (ja.canal == null) ja.canal = f.canal; ja.telefone_invalido = f.telefone_invalido === true; ja.telefone_bruto = f.telefone_bruto; }
-    else porAluno.set(k, { aluno_id: f.aluno_id, nome: f.nome ?? null, canal: f.canal, status: "pendente", erro_msg: null, telefone_invalido: f.telefone_invalido === true, telefone_bruto: f.telefone_bruto });
-  }
-  return [...porAluno.values()];
-};
-
-// Exceções que travam o envio (sub-bloco com contagem): sem canal de contato,
-// telefone inválido, erro no disparo.
-const exceptionsAlunos = (alunos) => {
-  const semContato = (alunos ?? []).filter((a) => String(a.canal ?? "").trim().toLowerCase() === "sem_contato");
-  const telInvalido = (alunos ?? []).filter((a) => a.telefone_invalido === true);
-  const erros = (alunos ?? []).filter((a) => String(a.status ?? "").trim().toLowerCase() === "erro");
-  return { semContato, telInvalido, erros, total: semContato.length + telInvalido.length + erros.length };
-};
+// dd/mm/aaaa. Vivia no meio do drawer antigo da automação e foi junto com ele
+// na remoção; 12 chamadas ficaram órfãs sem o build reclamar.
+const dataBR = (iso) => { const p = String(iso ?? "").slice(0, 10).split("-"); return p[2] ? `${p[2]}/${p[1]}/${p[0]}` : "—"; };
 
 const LINK_GRUPO_PREFIXO = "https://chat.whatsapp.com/";
 const linkGrupoValido = (v) => { const s = String(v ?? "").trim(); return s === "" || s.startsWith(LINK_GRUPO_PREFIXO); };
 // 403 / RLS: NÃO contornar — mensagem clara e para por aqui.
 const semPermissao = (e) => e?.code === "42501" || e?.status === 403 || e?.status === 401 || /permission denied|row-level security|not authorized|violates row-level/i.test(String(e?.message ?? ""));
-
-const CHIP_STATUS = { pendente: C.warn, erro: C.down, enviado: C.up, confirmado: C.up, ok: C.up, sucesso: C.up, sem_contato: C.faint };
-const corChipStatus = (s) => CHIP_STATUS[String(s ?? "").trim().toLowerCase()] ?? C.muted;
 
 // Toast de feedback de escrita (sucesso · info · erro). Auto-some; some no X.
 function Toast({ toast, onFechar }) {
@@ -4150,95 +4087,6 @@ function FormTurma({ dim, sug, aguardando, foco, onSalvo, notificar }) {
   );
 }
 
-// Lista de alunos da turma (fila + envios) + sub-bloco de exceções.
-function ListaAlunosTurma({ alunos, exc, estado }) {
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
-        <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>Alunos</span>
-        {!estado.carregando && !estado.erro && <span style={{ fontSize: 11, color: C.faint }}>{numero(alunos.length)} no total</span>}
-      </div>
-      {estado.carregando ? <div style={{ fontSize: 12, color: C.faint, padding: "8px 0" }}>Carregando…</div>
-        : estado.erro ? <div style={{ fontSize: 12, color: C.down, padding: "8px 0" }}>{semPermissao(estado.erro) ? "Sem permissão para ver a lista de alunos." : "Não foi possível carregar a lista."}</div>
-          : !alunos.length ? <div style={{ fontSize: 12, color: C.faint, padding: "8px 0" }}>Nenhum aluno na fila ou enviado ainda.</div>
-            : (
-              <>
-                {exc.total > 0 && (
-                  <div style={{ background: `${C.warn}0E`, border: `1px solid ${C.warn}3A`, borderRadius: 10, padding: "10px 12px", marginBottom: 10 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
-                      <AlertTriangle size={13} style={{ color: C.warn }} />
-                      <span style={{ fontSize: 11.5, fontWeight: 800, color: C.warn }}>Exceções · {numero(exc.total)}</span>
-                    </div>
-                    {exc.semContato.length > 0 && <div style={{ fontSize: 11, color: C.muted }}><b style={{ color: C.text }}>{numero(exc.semContato.length)}</b> sem canal de contato</div>}
-                    {exc.telInvalido.length > 0 && (
-                      <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>
-                        <b style={{ color: C.text }}>{numero(exc.telInvalido.length)}</b> com telefone inválido
-                        {exc.telInvalido.some((a) => a.telefone_bruto) ? <span style={{ color: C.faint }}>: {exc.telInvalido.map((a) => a.telefone_bruto).filter(Boolean).slice(0, 6).join(", ")}</span> : null}
-                      </div>
-                    )}
-                    {exc.erros.length > 0 && (
-                      <div style={{ fontSize: 11, color: C.muted, marginTop: 3 }}>
-                        <b style={{ color: C.down }}>{numero(exc.erros.length)}</b> com erro no envio
-                        {exc.erros.slice(0, 5).map((a, i) => (
-                          <div key={i} style={{ fontSize: 10.5, color: C.faint, marginLeft: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>· {a.nome || mascaraCpf(a.aluno_id)}: {a.erro_msg || "erro"}</div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div className="rolagem" style={{ maxHeight: 280, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
-                  {alunos.map((a, i) => (
-                    <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "8px 11px", borderBottom: i < alunos.length - 1 ? `1px solid ${C.hair}` : "none" }}>
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ fontSize: 12, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.nome || mascaraCpf(a.aluno_id)}</div>
-                        <div style={{ fontSize: 10, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.canal || "—"}{a.erro_msg ? ` · ${a.erro_msg}` : ""}</div>
-                      </div>
-                      <span style={{ fontSize: 9.5, fontWeight: 800, padding: "2px 8px", borderRadius: 999, color: corChipStatus(a.status), background: `${corChipStatus(a.status)}1A`, border: `1px solid ${corChipStatus(a.status)}44`, whiteSpace: "nowrap", flexShrink: 0 }}>{a.status || "—"}</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-    </div>
-  );
-}
-
-/* Orquestra o drawer: carrega a dim_turmas da turma, a sugestão (última de
-   mesma sigla) e as listas (fila + envios). O form só monta quando a sugestão
-   resolve, pra pré-preencher os campos vazios de uma vez. */
-function DrawerTurma({ turma, aguardando, onFechar, onSalvo, notificar }) {
-  const dim = useTurmaDim(turma.turma_id);
-  const sug = useTurmaSugestao(dim.data?.sigla, dim.data?.data_inicio, turma.turma_id);
-  const fila = useFilaTurma(turma.turma_id);
-  const envios = useEnviosTurma(turma.turma_id);
-  const alunos = useMemo(() => montaAlunos(fila.data, envios.data), [fila.data, envios.data]);
-  const exc = useMemo(() => exceptionsAlunos(alunos), [alunos]);
-  const d = dim.data;
-  const prontoForm = !!d && !sug.isLoading;
-  const sub = d ? [d.data_inicio ? `início ${dataDDMM(d.data_inicio)}` : null, d.cidade].filter(Boolean).join(" · ") : "carregando…";
-  return (
-    <DrawerLado titulo={turma.curso || d?.curso || "Turma"} sub={sub} onFechar={onFechar}>
-      {dim.isLoading ? <div style={{ fontSize: 12, color: C.faint, display: "flex", alignItems: "center", gap: 7 }}><Loader2 size={14} className="girar" /> Carregando turma…</div>
-        : dim.error ? <div style={{ fontSize: 12.5, color: C.down }}>{semPermissao(dim.error) ? "Você não tem permissão para ver esta turma." : "Não foi possível carregar a turma."}</div>
-          : !d ? <div style={{ fontSize: 12.5, color: C.faint }}>Turma não encontrada em dim_turmas.</div>
-            : (
-              <>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-                  <CampoLeitura label="Curso" valor={d.curso} />
-                  <CampoLeitura label="Cidade" valor={d.cidade} />
-                  <CampoLeitura label="Início" valor={dataDDMM(d.data_inicio)} />
-                  <CampoLeitura label="Fim" valor={dataDDMM(d.data_fim)} />
-                </div>
-                {prontoForm
-                  ? <FormTurma dim={d} sug={sug.data} aguardando={aguardando} foco={turma.foco} onSalvo={onSalvo} notificar={notificar} />
-                  : <div style={{ fontSize: 12, color: C.faint, marginTop: 16, display: "flex", alignItems: "center", gap: 7 }}><Loader2 size={13} className="girar" /> Buscando sugestões…</div>}
-                <ListaAlunosTurma alunos={alunos} exc={exc} estado={{ carregando: fila.isLoading || envios.isLoading, erro: fila.error || envios.error }} />
-              </>
-            )}
-    </DrawerLado>
-  );
-}
-
 /* ============ AVALIAÇÃO DE EVENTOS — cadastro + link (QR) ============
    Sistema por token: a Elis cadastra o evento e as PRÓPRIAS perguntas e recebe
    /e/<token> pra virar QR na palestra; a plateia responde no celular, anônimo.
@@ -4260,12 +4108,7 @@ const PERGUNTAS_NUCLEO = [
   "Qual tema você gostaria de ver numa próxima palestra?",
 ];
 const LIMITE_PERGUNTAS = 7; // acima disso, avisa (não bloqueia)
-const dataBR = (iso) => { const p = String(iso ?? "").slice(0, 10).split("-"); return p[2] ? `${p[2]}/${p[1]}/${p[0]}` : "—"; };
 
-/* Editor das perguntas da Elis — compartilhado pelo cadastro (novo evento) e
-   pelo resultado (editar evento existente). `travado` (evento já respondeu):
-   fica desabilitado com o motivo na tela — a pessoa vê o porquê, não digita pra
-   descobrir o erro só ao salvar. O núcleo aparece só pra leitura. */
 function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTravado = null, rotulo = "Perguntas" }) {
   const total = perguntas.length + PERGUNTAS_NUCLEO.length;
   const setP = (i, campo, val) => setPerguntas((ps) => ps.map((p, j) => (j === i ? { ...p, [campo]: val } : p)));
@@ -4827,28 +4670,15 @@ function HubPedagogico() {
   const presTempo = usePedagogicoPresencaTempo();
   const recompraCurso = usePedagogicoRecompraCurso();
   const presCurso = usePedagogicoPresencaCurso();
-  const maestros = usePedagogicoMaestrosCompleto();
-  const maestrosKpis = usePedagogicoMaestrosKpis();
-  const anotacoes = usePedagogicoMaestroAnotacoes();
   const retencaoCasos = usePedagogicoRetencaoCasos();
   const retencao = usePedagogicoRetencao();
   const retencaoMotivos = usePedagogicoRetencaoMotivos();
-  const painel = usePedagogicoPainel();
   const qc = useQueryClient();
-  const [turmaSel, setTurmaSel] = useState(null); // turma aberta no drawer (bloco 2)
   const [toast, setToast] = useState(null);       // feedback de escrita (some sozinho)
-  const [statusMaestro, setStatusMaestro] = useState("todos");
-  const [maestroEdit, setMaestroEdit] = useState(null); // maestro sendo editado
   const [retEdit, setRetEdit] = useState(null);         // caso de retenção ('novo' | caso | null)
 
   // Após gravar: recarrega as views afetadas e fecha o modal.
-  const aposSalvar = () => { qc.invalidateQueries(); setMaestroEdit(null); setRetEdit(null); };
-  // cargo não vem na view _completo — pré-preenche do maestro_anotacao cru.
-  const cargoPorCpf = useMemo(() => {
-    const m = new Map();
-    for (const a of anotacoes.data ?? []) if (a.aluno_id != null) m.set(String(a.aluno_id), a.cargo ?? "");
-    return m;
-  }, [anotacoes.data]);
+  const aposSalvar = () => { qc.invalidateQueries(); setRetEdit(null); };
 
   const k = kpis.data?.[0] ?? {};
   const pk = presKpis.data?.[0] ?? {};
@@ -4888,25 +4718,6 @@ function HubPedagogico() {
       .slice(0, 6),
     [presCurso.data]);
 
-  // Maestros (VIP): lista por investido (desc), com filtro por status de
-  // validade. Ativos/inativos/média saem da agregação do detalhe (a view de
-  // kpis não os traz); os contadores de VALIDADE (válidos/perto/vencidos) vêm
-  // da vw_pedagogico_maestros_kpis, mesma fonte do selo por linha.
-  const listaMaestros = useMemo(() => {
-    const arr = [...(maestros.data ?? [])].sort((a, b) => Number(b.total_investido ?? 0) - Number(a.total_investido ?? 0));
-    if (statusMaestro === "todos") return arr;
-    return arr.filter((m) => String(m.status_maestria ?? "").trim().toLowerCase() === statusMaestro);
-  }, [maestros.data, statusMaestro]);
-  const maestrosKpi = useMemo(() => {
-    const arr = maestros.data ?? [];
-    const ativos = arr.filter((m) => m.ativo).length;
-    const invest = arr.reduce((s, m) => s + Number(m.total_investido ?? 0), 0);
-    const fatGrupo = arr.reduce((s, m) => s + Number(m.faturamento ?? 0), 0);
-    return { total: arr.length, ativos, inativos: arr.length - ativos, media: arr.length ? invest / arr.length : 0, fatGrupo };
-  }, [maestros.data]);
-  const mk = maestrosKpis.data?.[0] ?? {};
-  const temMaestros = (maestros.data?.length ?? 0) > 0;
-
   // Retenção: casos recentes primeiro; motivos por frequência (retidos+cancel).
   const casos = useMemo(() =>
     [...(retencaoCasos.data ?? [])].sort((a, b) => String(b.data_ligacao ?? "").localeCompare(String(a.data_ligacao ?? ""))),
@@ -4917,18 +4728,6 @@ function HubPedagogico() {
     [retencaoMotivos.data]);
   const ret = retencao.data?.[0] ?? {};
 
-  // Automação de confirmações: derivações do painel (1 linha por turma).
-  const turmasPainel = painel.data ?? [];
-  const pendencias = useMemo(() => turmasPainel.filter((t) => t.pendencia != null), [turmasPainel]);
-  const confKpi = useMemo(() => {
-    const fila = turmasPainel.reduce((s, t) => s + Math.max(0, Number(t.matriculados ?? 0) - Number(t.confirmacao_enviada ?? 0)), 0);
-    const aguardando = turmasPainel.reduce((s, t) => s + Number(t.aguardando_link_grupo ?? 0), 0);
-    const conf = turmasPainel.reduce((s, t) => s + Number(t.confirmaram ?? 0), 0);
-    const env = turmasPainel.reduce((s, t) => s + Number(t.confirmacao_enviada ?? 0), 0);
-    return { fila, aguardando, taxa: env > 0 ? (conf / env) * 100 : null };
-  }, [turmasPainel]);
-  // Clique na linha abre o drawer; "colar link" abre com foco no link.
-  const abrirTurma = (t, foco = null) => setTurmaSel({ ...t, foco });
   const notificar = (msg, tipo = "ok") => setToast({ msg, tipo });
   // Toast some sozinho (erro fica um pouco mais).
   useEffect(() => {
@@ -4940,15 +4739,12 @@ function HubPedagogico() {
   return (
     <>
       <style>{`
-        .pedKpis, .pedMaestrosKpi { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+        .pedKpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
         .pedConfKpis { display: grid; grid-template-columns: 1fr; gap: 9px; }
         .pedBot { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
-        @media (min-width: 720px)  { .pedKpis, .pedMaestrosKpi { grid-template-columns: repeat(4, 1fr); } .pedConfKpis { grid-template-columns: repeat(3, 1fr); } }
+        @media (min-width: 720px)  { .pedKpis { grid-template-columns: repeat(4, 1fr); } .pedConfKpis { grid-template-columns: repeat(3, 1fr); } }
         @media (min-width: 1000px) { .pedBot { grid-template-columns: 1fr 1fr; } }  /* fideliza · falta */
       `}</style>
-
-      {/* ---- Faixa de pendências da automação (topo; só se houver) ---- */}
-      <FaixaPendencias pendencias={pendencias} onAbrir={abrirTurma} />
 
       {/* ---- KPIs de saúde ---- */}
       <div className="pedKpis" style={{ marginBottom: 12 }}>
@@ -4971,39 +4767,6 @@ function HubPedagogico() {
             </div>
           )}
         </Estado>
-      </Bloco>
-
-      {/* ---- Maestros (clientes VIP · compraram MAESTRIA) ---- */}
-      <Bloco titulo="Maestros" canto="clientes VIP · MAESTRIA" sem>
-        <div style={{ padding: "12px 20px", borderBottom: `1px solid ${C.hair}` }}>
-          <div className="pedMaestrosKpi">
-            <ChipKpi compacto hero Icone={Crown} label="Maestros" valor={temMaestros ? numero(maestrosKpi.total) : "—"} nota="clientes VIP" />
-            <ChipKpi compacto Icone={UserCheck} label="Ativos" valor={temMaestros ? numero(maestrosKpi.ativos) : "—"} nota="compra < 12 meses" />
-            <ChipKpi compacto Icone={AlertTriangle} label="Inativos" valor={temMaestros ? numero(maestrosKpi.inativos) : "—"} nota="+ de 12 meses parado" />
-            <ChipKpi compacto Icone={Wallet} label="Média investida" valor={temMaestros ? moeda(maestrosKpi.media) : "—"} nota="por maestro" />
-            <ChipKpi compacto Icone={TrendingUp} label="Faturamento do grupo" valor={maestrosKpi.fatGrupo ? moeda(maestrosKpi.fatGrupo) : "—"} nota="anotado · empresas" />
-            {/* Validade da Maestria (12 meses desde a compra) — números coloridos. */}
-            <TileValidade Icone={ShieldCheck} label="Válidos" valor={temMaestros ? numero(mk.validos) : "—"} cor={C.up} nota="vigente" />
-            <TileValidade Icone={Clock} label="Perto de vencer" valor={temMaestros ? numero(mk.perto_vencer) : "—"} cor={C.warn} nota="agir" />
-            <TileValidade Icone={ShieldAlert} label="Vencidos" valor={temMaestros ? numero(mk.vencidos) : "—"} cor={C.down} nota="renovar" />
-          </div>
-        </div>
-        {/* Filtro por status de validade — ajuda a gestora a agir nos que vão vencer. */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", padding: "10px 20px", borderBottom: `1px solid ${C.hair}` }}>
-          <Segmentado label="Validade" valor={statusMaestro} onChange={setStatusMaestro}
-            opcoes={[{ key: "todos", label: "Todos" }, { key: "perto de vencer", label: "Perto de vencer" }, { key: "vencido", label: "Vencidos" }, { key: "válido", label: "Válidos" }]} />
-          <span style={{ fontSize: 10.5, color: C.faint }}>{numero(listaMaestros.length)} {listaMaestros.length === 1 ? "maestro" : "maestros"}</span>
-        </div>
-        <div className="rolagem" style={{ maxHeight: 250, overflowY: "auto" }}>
-          <Estado carregando={maestros.isLoading} erro={maestros.error} vazio={!listaMaestros.length}
-            vazioTitulo={temMaestros ? "Nenhum maestro nesse status" : "Sem maestros no acesso"}
-            vazioDica={temMaestros ? "Troque o filtro de validade acima." : "Painel restrito ao setor pedagógico — aparece com o setor conectado."}>
-            {listaMaestros.map((m, i) => <LinhaMaestro key={i} m={m} onEditar={setMaestroEdit} />)}
-          </Estado>
-        </div>
-        <div style={{ padding: "8px 20px", fontSize: 10, color: C.dim, borderTop: `1px solid ${C.hair}` }}>
-          Contém dados pessoais (nome, e-mail, telefone) — exceção justificada, restrita ao setor pedagógico.
-        </div>
       </Bloco>
 
       {/* ---- Cursos: fidelizam · faltam ---- */}
@@ -5054,59 +4817,27 @@ function HubPedagogico() {
         </Bloco>
       </div>
 
-      {/* ---- Automação de confirmações (KPIs + tabela; drawer no bloco 2) ---- */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, marginTop: 4 }}>
-        <Send size={15} style={{ color: C.gold, flexShrink: 0 }} />
-        <span style={{ fontSize: 13.5, fontWeight: 800, color: C.bright }}>Automação de confirmações</span>
-        <span style={{ fontSize: 11, color: C.faint }}>fila de presença · grupos de WhatsApp</span>
-      </div>
-      <div className="pedConfKpis" style={{ marginBottom: 12 }}>
-        <ChipKpi compacto hero Icone={Send} label="Fila de confirmação" valor={numero(confKpi.fila)} nota="aguardando 1ª mensagem" />
-        <ChipKpi compacto Icone={Link2} label="Aguardando link do grupo" valor={numero(confKpi.aguardando)} nota="confirmaram, sem grupo" />
-        <ChipKpi compacto Icone={UserCheck} label="Taxa de confirmação" valor={fmtPct(confKpi.taxa)} nota="responderam SIM" />
-      </div>
-      <Bloco titulo="Turmas" canto="clique para abrir · cadastro e links" sem altura={320}>
-        <Estado carregando={painel.isLoading} erro={painel.error} vazio={!turmasPainel.length}
-          vazioTitulo="Nenhuma turma futura" vazioDica="As turmas aparecem aqui conforme entram no Salesforce.">
-          <TabelaConfirmacoes turmas={turmasPainel} onAbrir={abrirTurma} />
-        </Estado>
-      </Bloco>
-
-      {/* ---- Avaliação de eventos (cadastro + link/QR) ---- */}
-      <div style={{ marginTop: 22 }}>
-        <SecaoAvaliacaoEventos notificar={notificar} />
-      </div>
-
       {/* ---- Transparência ---- */}
       <div style={{ fontSize: 11, color: C.faint, lineHeight: 1.6, marginTop: 22 }}>
+        {/* O texto dizia que NPS não era medido. Passou a ser, pelo módulo de
+            avaliação de eventos — mas só para EVENTO. Conclusão e nota de
+            curso seguem sem medição, e juntar as três numa frase só faria o
+            aviso mentir do outro lado. */}
         <b style={{ color: C.muted }}>Transparência.</b> A presença cobre {pk.turmas_cobertas ? numero(pk.turmas_cobertas) : "—"} turmas
-        com credenciamento confiável; as demais ficam de fora do comparecimento. Conclusão, notas e NPS
-        não são medidos — não estão no Salesforce.
+        com credenciamento confiável; as demais ficam de fora do comparecimento. O NPS de <b style={{ color: C.muted }}>evento</b> é
+        medido pela avaliação por QR code — o resultado fica na Central Pedagógica. Conclusão de curso e nota do aluno
+        continuam sem medição: não estão no Salesforce.
       </div>
 
       <RodapeIntegracoes fontes={["salesforce"]} />
 
       {/* ---- Modais de entrada (gravam nas tabelas; RLS gate pedagógico) ---- */}
-      {maestroEdit && (
-        <ModalCentro titulo="Editar maestro" onFechar={() => setMaestroEdit(null)}>
-          <FormMaestro maestro={maestroEdit} cargoInicial={cargoPorCpf.get(String(maestroEdit.cpf)) ?? ""} onSalvo={aposSalvar} />
-        </ModalCentro>
-      )}
       {retEdit && (
         <ModalCentro titulo={retEdit === "novo" ? "Registrar caso de retenção" : "Editar caso de retenção"} onFechar={() => setRetEdit(null)}>
           <FormRetencao caso={retEdit === "novo" ? null : retEdit} onSalvo={aposSalvar} />
         </ModalCentro>
       )}
 
-      {/* ---- Bloco 2: drawer da turma (cadastro + link + alunos) ---- */}
-      {turmaSel && (
-        <DrawerTurma
-          turma={turmaSel}
-          aguardando={turmaSel.aguardando_link_grupo}
-          onFechar={() => setTurmaSel(null)}
-          onSalvo={() => { qc.invalidateQueries(); setTurmaSel(null); }}
-          notificar={notificar} />
-      )}
       <Toast toast={toast} onFechar={() => setToast(null)} />
     </>
   );
@@ -5767,6 +5498,1249 @@ function Login() {
 
 /* ============ SHELL ============ */
 
+/* ============ CENTRAL PEDAGÓGICA ============
+   O Hub Pedagógico é painel: gráfico, KPI, tendência — quem abre está
+   avaliando. Aqui é onde se trabalha: lista, status, botão — quem abre está
+   executando. Nada de gráfico nesta tela.
+
+   Toda escrita passa por função do banco (disparar_turma, marcar_resposta).
+   Nenhum insert ou update direto, nenhuma regra de negócio no front: a
+   `situacao` de cada inscrito já vem pronta da view. */
+
+const ABAS_CENTRAL = [
+  { key: "turmas",     label: "Turmas" },
+  { key: "represados", label: "Represados" },
+  { key: "presenca",   label: "Presença" },
+  { key: "avaliacoes", label: "Avaliações" },
+  { key: "maestros",   label: "Maestros" },
+];
+
+/* A situação vem pronta da view (migration 113); aqui só o tom e o rótulo.
+   Cada situação tem um tom próprio: duas situações com a mesma cor obrigam a
+   ler o texto de cada linha, que é o oposto de uma lista escaneável.
+   `ordem` é a prioridade de trabalho — quem precisa de ação sobe. */
+const SITUACOES = {
+  "erro no envio":       { rotulo: "erro no envio",    cor: C.down,  fundo: "1F", ordem: 0 },
+  "nao enfileirado":     { rotulo: "não enfileirado",  cor: C.faint, fundo: null, ordem: 1 },
+  "sem resposta":        { rotulo: "sem resposta",     cor: C.warn,  fundo: "1A", ordem: 2 },
+  "aguardando envio":    { rotulo: "aguardando envio", cor: C.dim,   fundo: "12", ordem: 3 },
+  "aguardando resposta": { rotulo: "aguardando",       cor: C.muted, fundo: "14", ordem: 4 },
+  "confirmado":          { rotulo: "confirmado",       cor: C.up,    fundo: "1A", ordem: 5 },
+  "nao vem":             { rotulo: "não vem",          cor: C.down,  fundo: "10", ordem: 6 },
+};
+const daSituacao = (s) =>
+  SITUACOES[String(s ?? "").trim().toLowerCase()] ?? { rotulo: s || "—", cor: C.muted, fundo: "14", ordem: 9 };
+
+/* CPF por extenso. Cinco de seis inscritos não estão em dim_alunos e chegam
+   aqui como CPF no lugar do nome — onze dígitos corridos fazem a tela parecer
+   quebrada, e a Elis precisa conseguir ler para achar a pessoa. Diferente de
+   o CPF por extenso porque a Elis precisa identificar a pessoa. */
+const formataCpf = (v) => {
+  const d = String(v ?? "").replace(/\D/g, "");
+  if (d.length !== 11) return String(v ?? "").trim() || "—";
+  return `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+};
+// A view faz coalesce(nome, aluno_id): sem cadastro, o "nome" é o próprio CPF.
+const semCadastro = (r) => !r.nome || String(r.nome).replace(/\D/g, "") === String(r.aluno_id ?? "").replace(/\D/g, "");
+
+/* Link do WhatsApp. Só formatação — o número vem do banco. Sem DDI, assume
+   Brasil; com 55 na frente, respeita o que veio. Fora desses tamanhos não
+   inventa link: telefone torto vira texto simples. */
+const linkWhatsapp = (tel) => {
+  const d = String(tel ?? "").replace(/\D/g, "");
+  if (d.length === 10 || d.length === 11) return `https://wa.me/55${d}`;
+  if ((d.length === 12 || d.length === 13) && d.startsWith("55")) return `https://wa.me/${d}`;
+  return null;
+};
+const formataTelefone = (tel) => {
+  const d = String(tel ?? "").replace(/\D/g, "").replace(/^55/, "");
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return String(tel ?? "").trim();
+};
+
+/* Contador com denominador. Número solto ("12 confirmados") não diz se é
+   muito ou pouco — 12 de 14 e 12 de 400 pedem decisões opostas. */
+function ContaTurma({ rotulo, valor, total, cor }) {
+  return (
+    <span style={{ display: "inline-flex", alignItems: "baseline", gap: 4, fontSize: 11, color: C.faint }}>
+      <b style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: valor > 0 ? cor : C.dim }}>{numero(valor)}</b>
+      <span>de {numero(total)} {rotulo}</span>
+    </span>
+  );
+}
+
+function CentralPedagogica() {
+  const [aba, setAba] = useState("turmas");
+  const [toast, setToast] = useState(null);
+  const notificar = (msg, tipo = "ok") => setToast({ msg, tipo });
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: C.bright }}>Central Pedagógica</h2>
+        <span style={{ fontSize: 11.5, color: C.faint }}>o dia a dia · o painel com os gráficos fica no Hub Pedagógico</span>
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        <Segmentado opcoes={ABAS_CENTRAL} valor={aba} onChange={setAba} />
+      </div>
+
+      {aba === "turmas" && <CentralTurmas notificar={notificar} />}
+      {aba === "represados" && <CentralRepresados notificar={notificar} />}
+      {aba === "presenca" && <CentralPresenca />}
+      {aba === "avaliacoes" && <SecaoAvaliacaoEventos notificar={notificar} />}
+      {aba === "maestros" && <CentralMaestros notificar={notificar} />}
+      {!["turmas", "represados", "presenca", "avaliacoes", "maestros"].includes(aba) && (
+        <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "26px 22px" }}>
+          <div style={{ fontSize: 13.5, fontWeight: 800, color: C.bright, marginBottom: 5 }}>
+            {ABAS_CENTRAL.find((a) => a.key === aba)?.label} chega na próxima etapa
+          </div>
+          <div style={{ fontSize: 12, color: C.faint, lineHeight: 1.55, maxWidth: 520 }}>
+            Esta parte da Central ainda não foi construída. Nada aqui está quebrado — só não existe ainda.
+            Enquanto isso, use a aba Turmas.
+          </div>
+        </div>
+      )}
+
+      <Toast toast={toast} onFechar={() => setToast(null)} />
+    </>
+  );
+}
+
+/* ---- Turmas: a lista ----
+   Substitui a planilha onde a Elis anotava à mão quem confirmou. */
+function CentralTurmas({ notificar }) {
+  const turmas = useTurmasCentral();
+  const painel = usePedagogicoPainel();
+  const [sel, setSel] = useState(null);
+  const [quando, setQuando] = useState("futuras");
+  const [verVazias, setVerVazias] = useState(false);
+
+  /* Os contadores vêm na própria linha da turma: a vw_turmas_central agrega
+     vw_turma_inscritos num LATERAL. Antes a lista pedia também a
+     vw_turma_inscritos_resumo — ida ao servidor para buscar o que já vinha
+     junto. O drawer segue usando a _resumo, que é por (turma, tipo) e sabe
+     separar confirmação de link do grupo. */
+
+  /* Padrão: só o que ainda vai acontecer — é onde há o que fazer. As
+     passadas ficam atrás do alternador, para consulta de histórico.
+     `futura` vem da view (migration 115), não de comparar data aqui: o
+     relógio da máquina de quem abriu não decide o que é futuro.
+
+     Turma sem ninguém inscrito desce para um grupo recolhido no fim. Ela
+     existe no cadastro, mas ocupar a mesma altura de uma turma com 421
+     pessoas empurra o trabalho real para fora da tela. */
+  const { comInscritos, vazias, passadas } = useMemo(() => {
+    const rows = turmas.data ?? [];
+    const alvo = quando === "futuras" ? rows.filter((t) => t.futura) : rows;
+    const ordenar = (ls) => [...ls].sort((a, b) =>
+      a.futura !== b.futura ? (a.futura ? -1 : 1)
+        : a.futura ? String(a.data_inicio).localeCompare(String(b.data_inicio))
+          : String(b.data_inicio).localeCompare(String(a.data_inicio)));
+    const temGente = (t) => Number(t.matriculados ?? 0) > 0;
+    return {
+      comInscritos: ordenar(alvo.filter(temGente)),
+      vazias: ordenar(alvo.filter((t) => !temGente(t))),
+      passadas: rows.length - rows.filter((t) => t.futura).length,
+    };
+  }, [turmas.data, quando]);
+  const lista = comInscritos;
+
+  /* A faixa de pendências veio do Hub. Lá ela era um aviso sem destino: o
+     clique abria um drawer que aquela tela não tem mais. É lista de trabalho —
+     "estas turmas têm campo faltando" — e lista de trabalho mora aqui, onde o
+     clique abre a turma certa. `foco: "link"` leva direto ao campo do link. */
+  const pendencias = useMemo(
+    () => (painel.data ?? []).filter((t) => t.pendencia != null),
+    [painel.data]
+  );
+
+  return (
+    <>
+      <FaixaPendencias pendencias={pendencias} onAbrir={(t, foco = null) => setSel({ ...t, foco })} />
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11.5, color: C.faint }}>
+          Clique numa turma para abrir o cadastro, disparar as mensagens e ver quem respondeu.
+        </span>
+        <Segmentado label="Turmas"
+          opcoes={[{ key: "futuras", label: "Só as futuras" }, { key: "todas", label: `Com as passadas (${numero(passadas)})` }]}
+          valor={quando} onChange={setQuando} />
+      </div>
+
+      <Estado
+        carregando={turmas.isLoading}
+        erro={turmas.error}
+        vazio={!lista.length && !vazias.length}
+        vazioTitulo={quando === "futuras" ? "Nenhuma turma marcada daqui pra frente" : "Nenhuma turma no cadastro"}
+        vazioDica={quando === "futuras" ? "Assim que uma turma da grade entrar no cadastro com data de início, ela aparece aqui. Troque o filtro para ver as que já aconteceram." : undefined}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {lista.map((t) => (
+            <LinhaTurmaCentral key={t.turma_id} turma={t} onAbrir={() => setSel(t)} />
+          ))}
+        </div>
+
+        {vazias.length > 0 && (
+          <div style={{ marginTop: lista.length ? 12 : 0 }}>
+            <button onClick={() => setVerVazias(!verVazias)} style={{
+              display: "flex", alignItems: "center", gap: 6, width: "100%",
+              background: "none", border: "none", padding: "6px 2px", cursor: "pointer",
+              fontFamily: SANS, fontSize: 11.5, fontWeight: 700, color: C.faint, textAlign: "left",
+            }}>
+              {verVazias ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              {numero(vazias.length)} {vazias.length === 1 ? "turma sem inscritos" : "turmas sem inscritos"}
+              <span style={{ fontWeight: 600, color: C.dim }}>· nada a disparar por enquanto</span>
+            </button>
+            {verVazias && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+                {vazias.map((t) => (
+                  <LinhaTurmaCentral key={t.turma_id} turma={t} onAbrir={() => setSel(t)} />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </Estado>
+
+      {sel && (
+        <DrawerTurmaCentral
+          turma={sel}
+          onFechar={() => setSel(null)}
+          notificar={notificar}
+        />
+      )}
+    </>
+  );
+}
+
+function LinhaTurmaCentral({ turma, onAbrir }) {
+  // Os contadores já vêm na linha da turma (vw_turmas_central agrega
+  // vw_turma_inscritos num LATERAL) — sem segunda consulta.
+  const conf = turma;
+  const total = Number(turma.matriculados ?? 0);
+  const dias = turma.futura
+    ? Math.round((new Date(turma.data_inicio) - new Date(isoDia(new Date()))) / 86400000)
+    : null;
+
+  return (
+    <button onClick={onAbrir} style={{
+      display: "block", width: "100%", textAlign: "left", cursor: "pointer",
+      background: C.card, border: `1px solid ${turma.futura ? C.cardLine : C.hair}`,
+      borderRadius: 12, padding: total ? "12px 14px" : "9px 14px", fontFamily: SANS,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {turma.nome_comercial || turma.curso || turma.turma_id}
+          </div>
+          <div style={{ fontSize: 10.5, color: C.faint, marginTop: 2 }}>
+            {turma.turma_id} · {dataBR(turma.data_inicio)}
+            {dias != null && <> · {dias === 0 ? "começa hoje" : dias === 1 ? "em 1 dia" : `em ${numero(dias)} dias`}</>}
+            {turma.cidade ? ` · ${turma.cidade}` : ""}
+          </div>
+        </div>
+        <ArrowUpRight size={15} style={{ color: C.faint, flexShrink: 0 }} />
+      </div>
+
+      {!total ? (
+        // Sem ninguém inscrito não há contador a mostrar — e a linha fica
+        // baixa de propósito: ela só precisa saber que a turma existe.
+        <div style={{ fontSize: 10.5, color: C.dim, marginTop: 6 }}>Nenhuma matrícula aprovada até agora.</div>
+      ) : (
+        <div style={{ display: "flex", gap: 14, marginTop: 9, flexWrap: "wrap" }}>
+          <ContaTurma rotulo="confirmaram" valor={Number(conf.confirmados ?? 0)} total={total} cor={C.up} />
+          <ContaTurma rotulo="não vêm" valor={Number(conf.nao_vem ?? 0)} total={total} cor={C.down} />
+          <ContaTurma rotulo="sem resposta" valor={Number(conf.sem_resposta ?? 0)} total={total} cor={C.warn} />
+          <ContaTurma rotulo="aguardando" valor={Number(conf.aguardando_resposta ?? 0)} total={total} cor={C.gold} />
+          {Number(conf.nao_enfileirados ?? 0) > 0 && (
+            <ContaTurma rotulo="ainda não receberam" valor={Number(conf.nao_enfileirados ?? 0)} total={total} cor={C.dim} />
+          )}
+        </div>
+      )}
+    </button>
+  );
+}
+
+/* ---- Turmas: o detalhe ----
+   Cadastro (reaproveita o FormTurma da automação), os dois disparos e a lista
+   de inscritos com a situação de cada um. */
+function DrawerTurmaCentral({ turma, onFechar, notificar }) {
+  const qc = useQueryClient();
+  const dim = useTurmaDim(turma.turma_id);
+  /* Aqui a _resumo faz falta: ela é por (turma, TIPO), e o drawer separa
+     confirmação de link do grupo. A linha da lista só mostra confirmação,
+     e para isso os contadores da própria turma bastam. */
+  const resumoTurma = useTurmaInscritosResumo();
+  const resumo = useMemo(() => {
+    const m = {};
+    for (const r of resumoTurma.data ?? []) if (r.turma_id === turma.turma_id) m[r.tipo] = r;
+    return m;
+  }, [resumoTurma.data, turma.turma_id]);
+  const sug = useTurmaSugestao(dim.data?.sigla, dim.data?.data_inicio, turma.turma_id);
+  const inscritos = useTurmaInscritos(turma.turma_id);
+  const [tipo, setTipo] = useState("confirmacao");
+  const [disparando, setDisparando] = useState(null);
+  const [retorno, setRetorno] = useState(null); // o que a função devolveu
+  const [filtro, setFiltro] = useState("todos"); // contador clicado no topo
+  const [busca, setBusca] = useState("");
+  const [aberta, setAberta] = useState(null);    // linha com as opções abertas
+
+  const resumoTipo = resumo?.[tipo];
+
+  /* Ordem padrão é a de TRABALHO: quem precisa de ação sobe. Erro no envio
+     primeiro (alguém tem que consertar), depois quem nunca foi enfileirado,
+     sem resposta, aguardando — e por último quem já está resolvido. Dentro da
+     mesma situação, por nome, pra a lista não dançar entre recargas.
+     O cabeçalho troca para ordem por nome. */
+  const [ordem, setOrdem] = useState({ campo: "situacao", dir: 1 });
+  const ordenarPor = (campo) =>
+    setOrdem((o) => ({ campo, dir: o.campo === campo ? -o.dir : 1 }));
+
+  const doTipo = useMemo(() => {
+    const rows = (inscritos.data ?? []).filter((r) => r.tipo === tipo);
+    const porNome = (a, b) => String(a.nome ?? "").localeCompare(String(b.nome ?? ""), "pt-BR");
+    return [...rows].sort((a, b) => ordem.campo === "nome"
+      ? ordem.dir * porNome(a, b)
+      : ordem.dir * (daSituacao(a.situacao).ordem - daSituacao(b.situacao).ordem) || porNome(a, b));
+  }, [inscritos.data, tipo, ordem]);
+
+  /* Filtro do contador + busca. A busca casa nome, CPF (com ou sem
+     pontuação — ela digita dos dois jeitos) e telefone. */
+  const visiveis = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    const qNum = q.replace(/\D/g, "");
+    return doTipo.filter((r) => {
+      if (filtro === "sem_contato" ? !r.sem_contato : filtro !== "todos" && r.situacao !== filtro) return false;
+      if (!q) return true;
+      const doc = String(r.aluno_id ?? "").replace(/\D/g, "");
+      const tel = String(r.telefone ?? "").replace(/\D/g, "");
+      return String(r.nome ?? "").toLowerCase().includes(q)
+        || (qNum.length >= 3 && (doc.includes(qNum) || tel.includes(qNum)));
+    });
+  }, [doTipo, filtro, busca]);
+
+  const recarregar = () => {
+    qc.invalidateQueries({ queryKey: ["turma_inscritos", turma.turma_id] });
+    qc.invalidateQueries({ queryKey: ["vw_turma_inscritos_resumo"] });
+    qc.invalidateQueries({ queryKey: ["turma_dim", turma.turma_id] });
+  };
+
+  /* A função valida o cadastro e devolve ok:false com o que falta. A tela
+     mostra `mensagem` como veio — reescrever aqui é como mensagem truncada
+     chega no cliente. */
+  const disparar = async (qual) => {
+    setDisparando(qual); setRetorno(null);
+    try {
+      const r = await dispararTurma(turma.turma_id, qual);
+      setRetorno({ ...r, tipo: qual });
+      notificar(r?.mensagem ?? "Pronto.", r?.ok === false ? "erro" : "ok");
+      if (r?.ok !== false) recarregar();
+    } catch (e) {
+      const msg = semPermissao(e) ? "Você não tem permissão para disparar mensagens." : (e.message || "Não foi possível enfileirar.");
+      setRetorno({ ok: false, mensagem: msg, tipo: qual });
+      notificar(msg, "erro");
+    } finally {
+      setDisparando(null);
+    }
+  };
+
+  const marcar = async (alunoId, resposta) => {
+    try {
+      await marcarResposta(alunoId, turma.turma_id, tipo, resposta);
+      notificar("Resposta registrada.", "ok");
+      recarregar();
+    } catch (e) {
+      const msg = semPermissao(e) ? "Você não tem permissão para registrar respostas."
+        : /não encontrado/i.test(String(e.message)) ? "Esta pessoa ainda não entrou em nenhuma rodada de envio. Dispare a mensagem antes de registrar a resposta."
+          : (e.message || "Não foi possível registrar.");
+      notificar(msg, "erro");
+    }
+  };
+
+  return (
+    <DrawerLado
+      titulo={turma.nome_comercial || turma.curso || turma.turma_id}
+      sub={`${turma.turma_id} · início ${dataBR(turma.data_inicio)}`}
+      onFechar={onFechar}
+      largura={820}
+    >
+      {/* ---- Disparo ---- */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>Mensagens</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <BotaoSalvar onClick={() => disparar("confirmacao")} salvando={disparando === "confirmacao"} disabled={!!disparando}>
+            Enviar confirmação
+          </BotaoSalvar>
+          <BotaoSalvar onClick={() => disparar("grupo")} salvando={disparando === "grupo"} disabled={!!disparando}>
+            Enviar link do grupo
+          </BotaoSalvar>
+        </div>
+        <div style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+          O botão coloca as pessoas na fila. Quem envia é o script, na rodada seguinte — em até 5 horas.
+        </div>
+        {retorno && (
+          <div style={{
+            fontSize: 11.5, lineHeight: 1.5, borderRadius: 10, padding: "9px 11px",
+            color: retorno.ok === false ? C.warn : C.up,
+            background: `${retorno.ok === false ? C.warn : C.up}12`,
+            border: `1px solid ${retorno.ok === false ? C.warn : C.up}3A`,
+          }}>
+            {retorno.mensagem}
+            {retorno.ok !== false && Number(retorno.sem_contato ?? 0) > 0 && (
+              <div style={{ color: C.faint, marginTop: 3 }}>
+                {numero(retorno.sem_contato)} sem telefone nem e-mail — essas não têm como receber.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ---- Cadastro (é o que a validação do disparo exige) ---- */}
+      {dim.isLoading ? (
+        <div style={{ fontSize: 12, color: C.faint, marginTop: 16 }}>Carregando o cadastro…</div>
+      ) : dim.error ? (
+        <div style={{ fontSize: 12, color: C.down, marginTop: 16 }}>
+          {semPermissao(dim.error) ? "Você não tem permissão para ver o cadastro desta turma." : "Não foi possível carregar o cadastro."}
+        </div>
+      ) : dim.data ? (
+        <FormTurma
+          dim={dim.data}
+          sug={sug.data}
+          aguardando={Number(resumo?.grupo?.nao_enfileirados ?? 0)}
+          foco={turma.foco ?? null}
+          onSalvo={recarregar}
+          notificar={notificar}
+        />
+      ) : null}
+
+      {/* ---- Inscritos ---- */}
+      <div style={{ marginTop: 22 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>Inscritos</span>
+          {/* Confirmação e grupo são estados independentes: dá pra ter
+              confirmado e ainda não ter recebido o link. Cada aba tem os
+              próprios contadores. */}
+          <Segmentado
+            opcoes={[{ key: "confirmacao", label: "Confirmação" }, { key: "grupo", label: "Link do grupo" }]}
+            valor={tipo} onChange={(v) => { setTipo(v); setFiltro("todos"); }}
+          />
+        </div>
+
+        <Estado
+          carregando={inscritos.isLoading}
+          erro={inscritos.error}
+          vazio={!doTipo.length}
+          vazioTitulo="Nenhuma matrícula aprovada nesta turma"
+          vazioDica="A lista sai das matrículas aprovadas. Compradores de vaga ficam de fora — eles não são alunos."
+        >
+          <FaixaContadores resumo={resumoTipo} total={doTipo.length} filtro={filtro} onFiltrar={setFiltro} />
+
+          <div style={{ position: "relative", margin: "10px 0 8px" }}>
+            <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.dim }} />
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="Buscar por nome, CPF ou telefone"
+              style={{ ...inputAv, paddingLeft: 30 }}
+            />
+          </div>
+
+          {!visiveis.length ? (
+            <div style={{ fontSize: 12, color: C.faint, padding: "14px 2px", lineHeight: 1.5 }}>
+              Ninguém nesse recorte.{" "}
+              <button onClick={() => { setFiltro("todos"); setBusca(""); }} style={{
+                background: "none", border: "none", padding: 0, cursor: "pointer",
+                color: C.gold, fontFamily: SANS, fontSize: 12, fontWeight: 700, textDecoration: "underline",
+              }}>Ver todos os {numero(doTipo.length)}</button>
+            </div>
+          ) : (
+            <TabelaInscritos
+              linhas={visiveis}
+              ordem={ordem}
+              onOrdenar={ordenarPor}
+              aberta={aberta}
+              onAbrir={(id) => setAberta(aberta === id ? null : id)}
+              onMarcar={marcar}
+            />
+          )}
+        </Estado>
+      </div>
+    </DrawerLado>
+  );
+}
+
+/* ---- Maestros ----
+   Veio do Hub Pedagógico sem mudança de lógica: mesmas views, mesmos
+   cálculos, mesmo filtro de validade, mesmo modal de edição. Mudou só o
+   endereço — tem botão de ação (editar anotação), então é operação, e
+   operação vive aqui. */
+function CentralMaestros({ notificar }) {
+  const maestros = usePedagogicoMaestrosCompleto();
+  const maestrosKpis = usePedagogicoMaestrosKpis();
+  const anotacoes = usePedagogicoMaestroAnotacoes();
+  const qc = useQueryClient();
+  const [statusMaestro, setStatusMaestro] = useState("todos");
+  const [maestroEdit, setMaestroEdit] = useState(null);
+
+  const aposSalvar = () => {
+    qc.invalidateQueries();
+    setMaestroEdit(null);
+    notificar?.("Anotação salva.", "ok");
+  };
+
+  // cargo não vem na view _completo — pré-preenche do maestro_anotacao cru.
+  const cargoPorCpf = useMemo(() => {
+    const m = new Map();
+    for (const a of anotacoes.data ?? []) if (a.aluno_id != null) m.set(String(a.aluno_id), a.cargo ?? "");
+    return m;
+  }, [anotacoes.data]);
+
+  // Lista por investido (desc), com filtro por status de validade.
+  // Ativos/inativos/média saem da agregação do detalhe (a view de kpis não os
+  // traz); os contadores de VALIDADE vêm da vw_pedagogico_maestros_kpis,
+  // mesma fonte do selo por linha.
+  const listaMaestros = useMemo(() => {
+    const arr = [...(maestros.data ?? [])].sort((a, b) => Number(b.total_investido ?? 0) - Number(a.total_investido ?? 0));
+    if (statusMaestro === "todos") return arr;
+    return arr.filter((m) => String(m.status_maestria ?? "").trim().toLowerCase() === statusMaestro);
+  }, [maestros.data, statusMaestro]);
+  const maestrosKpi = useMemo(() => {
+    const arr = maestros.data ?? [];
+    const ativos = arr.filter((m) => m.ativo).length;
+    const invest = arr.reduce((s, m) => s + Number(m.total_investido ?? 0), 0);
+    const fatGrupo = arr.reduce((s, m) => s + Number(m.faturamento ?? 0), 0);
+    return { total: arr.length, ativos, inativos: arr.length - ativos, media: arr.length ? invest / arr.length : 0, fatGrupo };
+  }, [maestros.data]);
+  const mk = maestrosKpis.data?.[0] ?? {};
+  const temMaestros = (maestros.data?.length ?? 0) > 0;
+
+  return (
+    <>
+      <style>{`
+        .cenMaestrosKpi { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+        @media (min-width: 520px) { .cenMaestrosKpi { grid-template-columns: repeat(4, 1fr); } }
+        @media (min-width: 980px) { .cenMaestrosKpi { grid-template-columns: repeat(8, 1fr); } }
+      `}</style>
+
+      <div className="cenMaestrosKpi" style={{ marginBottom: 12 }}>
+        <ChipKpi compacto hero Icone={Crown} label="Maestros" valor={temMaestros ? numero(maestrosKpi.total) : "—"} nota="clientes VIP" />
+        <ChipKpi compacto Icone={UserCheck} label="Ativos" valor={temMaestros ? numero(maestrosKpi.ativos) : "—"} nota="compra < 12 meses" />
+        <ChipKpi compacto Icone={AlertTriangle} label="Inativos" valor={temMaestros ? numero(maestrosKpi.inativos) : "—"} nota="+ de 12 meses parado" />
+        <ChipKpi compacto Icone={Wallet} label="Média investida" valor={temMaestros ? moeda(maestrosKpi.media) : "—"} nota="por maestro" />
+        <ChipKpi compacto Icone={TrendingUp} label="Faturamento do grupo" valor={maestrosKpi.fatGrupo ? moeda(maestrosKpi.fatGrupo) : "—"} nota="anotado · empresas" />
+        {/* Validade da Maestria (12 meses desde a compra) — números coloridos. */}
+        <TileValidade Icone={ShieldCheck} label="Válidos" valor={temMaestros ? numero(mk.validos) : "—"} cor={C.up} nota="vigente" />
+        <TileValidade Icone={Clock} label="Perto de vencer" valor={temMaestros ? numero(mk.perto_vencer) : "—"} cor={C.warn} nota="agir" />
+        <TileValidade Icone={ShieldAlert} label="Vencidos" valor={temMaestros ? numero(mk.vencidos) : "—"} cor={C.down} nota="renovar" />
+      </div>
+
+      {/* Filtro por status de validade — ajuda a gestora a agir nos que vão vencer. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+        <Segmentado label="Validade" valor={statusMaestro} onChange={setStatusMaestro}
+          opcoes={[{ key: "todos", label: "Todos" }, { key: "perto de vencer", label: "Perto de vencer" }, { key: "vencido", label: "Vencidos" }, { key: "válido", label: "Válidos" }]} />
+        <span style={{ fontSize: 10.5, color: C.faint }}>{numero(listaMaestros.length)} {listaMaestros.length === 1 ? "maestro" : "maestros"}</span>
+      </div>
+
+      <div className="rolagem" style={{ maxHeight: 460, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
+        <Estado carregando={maestros.isLoading} erro={maestros.error} vazio={!listaMaestros.length}
+          vazioTitulo={temMaestros ? "Nenhum maestro nesse status" : "Sem maestros no acesso"}
+          vazioDica={temMaestros ? "Troque o filtro de validade acima." : "Painel restrito ao setor pedagógico — aparece com o setor conectado."}>
+          {listaMaestros.map((m, i) => <LinhaMaestro key={i} m={m} onEditar={setMaestroEdit} />)}
+        </Estado>
+      </div>
+
+      <div style={{ padding: "8px 2px", fontSize: 10, color: C.dim }}>
+        Contém dados pessoais (nome, e-mail, telefone) — exceção justificada, restrita ao setor pedagógico.
+      </div>
+
+      {maestroEdit && (
+        <ModalCentro titulo="Editar maestro" onFechar={() => setMaestroEdit(null)}>
+          <FormMaestro maestro={maestroEdit} cargoInicial={cargoPorCpf.get(String(maestroEdit.cpf)) ?? ""} onSalvo={aposSalvar} />
+        </ModalCentro>
+      )}
+    </>
+  );
+}
+
+/* ---- Presença ----
+   Regra da tela inteira: ausência nunca aparece sozinha. 51% de ausência numa
+   turma com 49% de cobertura pode ser evasão real ou pode ser metade da turma
+   que ninguém bipou — e as duas leituras pedem ações opostas. */
+function CentralPresenca() {
+  const saude = usePresencaSaude();
+  const mensuraveis = useTurmasMensuraveis();
+  const cobertura = usePresencaCobertura();
+  const [visao, setVisao] = useState("mensuraveis");
+  const [busca, setBusca] = useState("");
+
+  const todas = cobertura.data ?? [];
+  const semRegistro = useMemo(() => todas.filter((r) => !Number(r.compareceram ?? 0)), [todas]);
+  const comRegistro = useMemo(() => todas.filter((r) => Number(r.compareceram ?? 0) > 0), [todas]);
+
+  const fonte = visao === "mensuraveis" ? (mensuraveis.data ?? [])
+    : visao === "registro" ? comRegistro : semRegistro;
+
+  const linhas = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    const base = visao === "mensuraveis"
+      ? [...fonte].sort((a, b) => String(b.data_inicio ?? "").localeCompare(String(a.data_inicio ?? "")))
+      : [...fonte].sort((a, b) => Number(a.cobertura_pct ?? 0) - Number(b.cobertura_pct ?? 0));
+    if (!q) return base;
+    return base.filter((r) => `${r.turma ?? ""} ${r.curso ?? ""}`.toLowerCase().includes(q));
+  }, [fonte, busca, visao]);
+
+  return (
+    <>
+      <SaudeDaCarga estado={saude} />
+
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", margin: "12px 0 8px" }}>
+        <Segmentado label="Turmas"
+          opcoes={[
+            { key: "mensuraveis", label: `Mensuráveis (${numero((mensuraveis.data ?? []).length)})` },
+            { key: "registro", label: `Com registro (${numero(comRegistro.length)})` },
+            { key: "sem", label: `Sem registro (${numero(semRegistro.length)})` },
+          ]}
+          valor={visao} onChange={setVisao} />
+        <div style={{ position: "relative", minWidth: 240, flex: "0 1 300px" }}>
+          <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.dim }} />
+          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar turma ou curso" style={{ ...inputAv, paddingLeft: 30 }} />
+        </div>
+      </div>
+
+      {/* Cada visão responde a uma pergunta diferente. Dizer qual evita ler
+          "58% de ausência" como evasão quando é buraco de registro. */}
+      <div style={{ fontSize: 11, color: C.faint, lineHeight: 1.5, marginBottom: 8 }}>
+        {visao === "mensuraveis"
+          ? "Turmas onde a ausência significa alguma coisa: já aconteceram, têm registro de verdade (cobertura de 40% pra cima) e pelo menos 10 matriculados. É aqui que faz sentido ligar para quem faltou."
+          : visao === "registro"
+            ? "Todas as turmas com algum registro de presença, das piores coberturas para as melhores. Cobertura baixa aqui é problema de registro, não de aluno — a ausência não é confiável."
+            : "Turmas sem nenhum registro de presença. Não dá para dizer quem faltou: ninguém foi bipado. Aparecem para que o buraco não passe por 100% de ausência."}
+      </div>
+
+      <Estado
+        carregando={visao === "mensuraveis" ? mensuraveis.isLoading : cobertura.isLoading}
+        erro={visao === "mensuraveis" ? mensuraveis.error : cobertura.error}
+        vazio={!linhas.length}
+        vazioTitulo="Nenhuma turma neste recorte"
+      >
+        <TabelaPresenca linhas={linhas} comCurso={visao === "mensuraveis"} />
+      </Estado>
+    </>
+  );
+}
+
+/* A carga é manual e a fonte anterior morreu ao longo de um ano sem ninguém
+   perceber. Este bloco fica sempre visível, e vira vermelho passando de 30
+   dias — detectar não resolve, mas pelo menos ninguém decide com dado velho
+   achando que é de hoje. */
+function SaudeDaCarga({ estado }) {
+  const s = estado.data?.[0];
+  if (estado.isLoading) return <div style={{ fontSize: 12, color: C.faint }}>Carregando a saúde da carga…</div>;
+  if (estado.error || !s) {
+    return (
+      <div style={{ display: "flex", gap: 9, alignItems: "center", background: `${C.warn}12`, border: `1px solid ${C.warn}3A`, borderRadius: 12, padding: "11px 14px" }}>
+        <AlertTriangle size={15} style={{ color: C.warn, flexShrink: 0 }} />
+        <span style={{ fontSize: 12, color: C.muted }}>Não foi possível ler quando a presença foi carregada. Os números abaixo podem estar velhos — confira a carga antes de decidir.</span>
+      </div>
+    );
+  }
+  const dias = Number(s.dias_desde_a_carga ?? 0);
+  const velha = dias > 30;
+  const cor = velha ? C.down : C.up;
+  return (
+    <div style={{ display: "flex", gap: 10, alignItems: "flex-start", background: `${cor}10`, border: `1px solid ${cor}3A`, borderRadius: 12, padding: "11px 14px" }}>
+      {velha ? <AlertTriangle size={15} style={{ color: cor, flexShrink: 0, marginTop: 1 }} />
+        : <ShieldCheck size={15} style={{ color: cor, flexShrink: 0, marginTop: 1 }} />}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: velha ? cor : C.bright }}>
+          {velha
+            ? `A presença não é carregada há ${numero(dias)} dias`
+            : `Presença carregada ${dias === 0 ? "hoje" : dias === 1 ? "ontem" : `há ${numero(dias)} dias`}`}
+        </div>
+        <div style={{ fontSize: 11, color: C.faint, marginTop: 2 }}>
+          {dataBR(s.ultima_carga)} · {numero(s.linhas)} registros em {numero(s.turmas)} turmas · presença mais recente em {dataBR(s.registro_mais_recente)}
+        </div>
+        {velha && (
+          <div style={{ fontSize: 11, color: cor, marginTop: 3 }}>
+            A carga é manual. Enquanto ela não roda, turma nova aparece como se ninguém tivesse ido.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TabelaPresenca({ linhas, comCurso }) {
+  const cab = (rotulo, extra = {}) => (
+    <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, ...extra }}>{rotulo}</span>
+  );
+  return (
+    <>
+      <style>{`
+        .tpGrade { display: grid; grid-template-columns: minmax(0,1.6fr) 92px 84px 86px 116px 128px; align-items: center; gap: 10px; }
+        @media (max-width: 1000px) { .tpGrade { grid-template-columns: minmax(0,1.6fr) 84px 86px 116px 128px; } .tpData { display: none; } }
+        .tpLinha:hover { background: rgba(255,255,255,.02); }
+      `}</style>
+      <div className="rolagem" style={{ maxHeight: 460, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
+        <div className="tpGrade" style={{ position: "sticky", top: 0, zIndex: 2, background: "#17171c", padding: "8px 12px", borderBottom: `1px solid ${C.cardLine}` }}>
+          {cab("Turma")}
+          <span className="tpData">{cab("Início")}</span>
+          {cab("Matric.", { textAlign: "right" })}
+          {cab("Presentes", { textAlign: "right" })}
+          {cab("Ausentes", { textAlign: "right" })}
+          {cab("Cobertura", { textAlign: "right" })}
+        </div>
+        {linhas.map((r, i) => <LinhaTurmaPresenca key={`${r.turma}-${i}`} r={r} ultima={i === linhas.length - 1} comCurso={comCurso} />)}
+      </div>
+    </>
+  );
+}
+
+function LinhaTurmaPresenca({ r, ultima, comCurso }) {
+  const matric = Number(r.matriculados ?? 0);
+  const presentes = Number(r.compareceram ?? 0);
+  const ausentes = Math.max(0, matric - presentes);
+  const cob = Number(r.cobertura_pct ?? 0);
+  const pctAus = matric ? Math.round((ausentes / matric) * 100) : null;
+
+  /* O número de ausentes só vale o que a cobertura permite. Abaixo de 60% a
+     tela diz isso na própria linha, em vez de deixar o número grande falar
+     sozinho. Sem registro nenhum, não existe ausência a mostrar. */
+  const semRegistro = presentes === 0 && cob === 0;
+  const corCob = semRegistro ? C.dim : cob >= 70 ? C.up : cob >= 40 ? C.warn : C.down;
+
+  return (
+    <div className="tpGrade tpLinha" style={{ minHeight: 44, padding: "0 12px", borderBottom: ultima ? "none" : `1px solid ${C.hair}` }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.turma}</div>
+        {comCurso && r.curso && (
+          <div style={{ fontSize: 10, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {r.curso}{r.cidade ? ` · ${r.cidade}` : ""}
+          </div>
+        )}
+        {!comCurso && r.fonte && (
+          <div style={{ fontSize: 10, color: C.dim }}>
+            fonte: {r.fonte}{r.fonte === "credenciamento" ? " · parou em 2025" : ""}
+          </div>
+        )}
+      </div>
+
+      <span className="tpData" style={{ fontSize: 11, color: C.faint }}>{r.data_inicio ? dataBR(r.data_inicio) : "—"}</span>
+      <span style={{ textAlign: "right", fontSize: 12.5, color: C.muted, fontFamily: GROTESK }}>{numero(matric)}</span>
+      <span style={{ textAlign: "right", fontSize: 12.5, color: C.muted, fontFamily: GROTESK }}>{numero(presentes)}</span>
+
+      {/* Ausentes e cobertura vivem lado a lado, sempre. */}
+      <span style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+        {semRegistro ? (
+          <span style={{ fontSize: 11, color: C.dim }} title="ninguém foi bipado nesta turma">não medível</span>
+        ) : (
+          <>
+            <b style={{ fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, color: C.text }}>{numero(ausentes)}</b>
+            <span style={{ fontSize: 10.5, color: C.faint }}> · {pctAus}%</span>
+          </>
+        )}
+      </span>
+
+      <span style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+        <b style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: corCob }}>{semRegistro ? "0" : Math.round(cob)}%</b>
+        {!semRegistro && cob < 60 && (
+          <div style={{ fontSize: 9.5, color: C.warn, lineHeight: 1.2 }}>parte pode ser falta de registro</div>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/* ---- Represados ----
+   Comprou, o prazo está correndo, e existe turma antes do vencimento. Dá pra
+   resolver: é só chamar. */
+function CentralRepresados({ notificar }) {
+  const lista = useRepresadoLista();
+  const saude = usePresencaSaude();
+  const [filtro, setFiltro] = useState("todos");
+  const [busca, setBusca] = useState("");
+  const [disparando, setDisparando] = useState(false);
+  const [retorno, setRetorno] = useState(null);
+  const qc = useQueryClient();
+
+  const linhas = lista.data ?? [];
+  const contas = useMemo(() => ({
+    todos: linhas.length,
+    elegivel: linhas.filter((r) => r.pode_disparar).length,
+    nunca: linhas.filter((r) => r.dias_desde_o_convite == null).length,
+    recente: linhas.filter((r) => r.dias_desde_o_convite != null && r.dias_desde_o_convite <= 30).length,
+    sem_telefone: linhas.filter((r) => !r.telefone).length,
+    urgente: linhas.filter((r) => Number(r.dias_restantes ?? 999) <= 30).length,
+  }), [linhas]);
+
+  const visiveis = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    const qNum = q.replace(/\D/g, "");
+    const passa = (r) =>
+      filtro === "todos" ? true
+        : filtro === "elegivel" ? !!r.pode_disparar
+          : filtro === "nunca" ? r.dias_desde_o_convite == null
+            : filtro === "recente" ? (r.dias_desde_o_convite != null && r.dias_desde_o_convite <= 30)
+              : filtro === "sem_telefone" ? !r.telefone
+                : filtro === "urgente" ? Number(r.dias_restantes ?? 999) <= 30
+                  : true;
+    return linhas.filter((r) => {
+      if (!passa(r)) return false;
+      if (!q) return true;
+      const doc = String(r.aluno_id ?? "").replace(/\D/g, "");
+      const tel = String(r.telefone ?? "").replace(/\D/g, "");
+      return String(r.nome ?? "").toLowerCase().includes(q)
+        || String(r.curso ?? "").toLowerCase().includes(q)
+        || (qNum.length >= 3 && (doc.includes(qNum) || tel.includes(qNum)));
+    });
+  }, [linhas, filtro, busca]);
+
+  const disparar = async () => {
+    setDisparando(true); setRetorno(null);
+    try {
+      const r = await dispararRepresados();
+      setRetorno(r);
+      notificar(r?.mensagem ?? "Pronto.", Number(r?.enfileirados ?? 0) > 0 ? "ok" : "info");
+      qc.invalidateQueries({ queryKey: ["vw_represado_lista"] });
+    } catch (e) {
+      const msg = semPermissao(e) ? "Você não tem permissão para disparar convites." : (e.message || "Não foi possível enfileirar.");
+      setRetorno({ enfileirados: 0, mensagem: msg, erro: true });
+      notificar(msg, "erro");
+    } finally { setDisparando(false); }
+  };
+
+  const s = saude.data?.[0];
+  const cargaVelha = Number(s?.dias_desde_a_carga ?? 0) > 30;
+
+  return (
+    <>
+      {/* Por que o disparo é manual. Uma linha, e ela explica a tela toda. */}
+      <div style={{
+        display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 12,
+        background: `${C.gold}0D`, border: `1px solid ${C.gold}2E`, borderRadius: 10, padding: "9px 12px",
+      }}>
+        <PhoneCall size={13} style={{ color: C.gold, marginTop: 2, flexShrink: 0 }} />
+        <span style={{ fontSize: 11.5, color: C.faint, lineHeight: 1.5 }}>
+          O disparo é manual porque o sistema não sabe quem a consultora já chamou pelo WhatsApp dela.
+          Confira <b style={{ color: C.muted }}>há quanto tempo cada um foi convidado</b> antes de mandar de novo.
+        </span>
+      </div>
+
+      <Estado
+        carregando={lista.isLoading}
+        erro={lista.error}
+        vazio={!linhas.length}
+        vazioTitulo="Ninguém represado agora"
+        vazioDica="Represado é quem comprou, está com o prazo correndo e tem turma disponível antes de vencer. Lista vazia quer dizer que todo mundo nessa situação já foi alocado."
+      >
+        {/* A data da carga fica junto do número: represado sem ela convida à
+            decisão errada — dado velho passa por atual. */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 10.5, color: cargaVelha ? C.down : C.dim }}>
+            {s
+              ? <>presença carregada em {dataBR(s.ultima_carga)} · {Number(s.dias_desde_a_carga) === 0 ? "hoje" : `há ${numero(s.dias_desde_a_carga)} dias`}{cargaVelha && " — o dado está envelhecendo"}</>
+              : "sem informação da última carga de presença"}
+          </span>
+          <BotaoSalvar onClick={disparar} salvando={disparando} disabled={disparando}>
+            Disparar para os elegíveis{contas.elegivel > 0 ? ` (${numero(contas.elegivel)})` : ""}
+          </BotaoSalvar>
+        </div>
+
+        {retorno && (
+          <div style={{
+            fontSize: 11.5, lineHeight: 1.5, borderRadius: 10, padding: "9px 11px", marginBottom: 8,
+            color: retorno.erro ? C.warn : Number(retorno.enfileirados ?? 0) > 0 ? C.up : C.muted,
+            background: `${retorno.erro ? C.warn : Number(retorno.enfileirados ?? 0) > 0 ? C.up : C.muted}12`,
+            border: `1px solid ${retorno.erro ? C.warn : Number(retorno.enfileirados ?? 0) > 0 ? C.up : C.muted}3A`,
+          }}>
+            {retorno.mensagem}
+            {!retorno.erro && Number(retorno.enfileirados ?? 0) > 0 && (
+              <div style={{ color: C.faint, marginTop: 3 }}>Quem envia é o script, na rodada seguinte — em até 5 horas.</div>
+            )}
+          </div>
+        )}
+
+        <FaixaRepresados contas={contas} filtro={filtro} onFiltrar={setFiltro} />
+
+        <div style={{ position: "relative", margin: "10px 0 8px" }}>
+          <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.dim }} />
+          <input value={busca} onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar por nome, curso, CPF ou telefone" style={{ ...inputAv, paddingLeft: 30 }} />
+        </div>
+
+        {!visiveis.length ? (
+          <div style={{ fontSize: 12, color: C.faint, padding: "14px 2px" }}>
+            Ninguém nesse recorte.{" "}
+            <button onClick={() => { setFiltro("todos"); setBusca(""); }} style={{
+              background: "none", border: "none", padding: 0, cursor: "pointer",
+              color: C.gold, fontFamily: SANS, fontSize: 12, fontWeight: 700, textDecoration: "underline",
+            }}>Ver todos os {numero(linhas.length)}</button>
+          </div>
+        ) : (
+          <TabelaRepresados linhas={visiveis} />
+        )}
+      </Estado>
+    </>
+  );
+}
+
+function FaixaRepresados({ contas, filtro, onFiltrar }) {
+  const itens = [
+    { key: "todos", rotulo: "represados", valor: contas.todos, cor: C.bright },
+    { key: "elegivel", rotulo: "elegíveis agora", valor: contas.elegivel, cor: C.up },
+    { key: "nunca", rotulo: "nunca convidados", valor: contas.nunca, cor: C.gold },
+    { key: "recente", rotulo: "convidados há ≤30 dias", valor: contas.recente, cor: C.muted },
+    { key: "urgente", rotulo: "vencem em ≤30 dias", valor: contas.urgente, cor: C.warn },
+    { key: "sem_telefone", rotulo: "sem telefone", valor: contas.sem_telefone, cor: C.down },
+  ];
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {itens.map((it) => {
+        const ativo = filtro === it.key;
+        const vazio = it.valor === 0 && it.key !== "todos";
+        return (
+          <button key={it.key} onClick={() => onFiltrar(ativo ? "todos" : it.key)} disabled={vazio} aria-pressed={ativo}
+            title={vazio ? "ninguém nesta situação" : ativo ? "Clique para ver todos" : `Filtrar: ${it.rotulo}`}
+            style={{
+              display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1,
+              padding: "6px 10px", borderRadius: 10, fontFamily: SANS, textAlign: "left",
+              cursor: vazio ? "default" : "pointer",
+              background: ativo ? `${it.cor}1C` : "rgba(255,255,255,.03)",
+              border: `1px solid ${ativo ? `${it.cor}66` : C.cardLine}`,
+              opacity: vazio ? 0.45 : 1,
+            }}>
+            <span style={{ fontFamily: GROTESK, fontSize: 15, fontWeight: 700, lineHeight: 1, color: vazio ? C.dim : it.cor }}>{numero(it.valor)}</span>
+            <span style={{ fontSize: 9.5, fontWeight: 700, color: ativo ? it.cor : C.faint, whiteSpace: "nowrap" }}>{it.rotulo}</span>
+          </button>
+        );
+      })}
+      {filtro !== "todos" && (
+        <button onClick={() => onFiltrar("todos")} style={{
+          alignSelf: "center", marginLeft: 2, background: "none", border: "none", padding: "4px 2px",
+          cursor: "pointer", color: C.gold, fontFamily: SANS, fontSize: 11, fontWeight: 700,
+        }}>× limpar filtro</button>
+      )}
+    </div>
+  );
+}
+
+/* Mesma tabela da lista de inscritos: linha de 44px, cabeçalho grudado,
+   sem zebrado. A coluna que decide é a do último convite. */
+function TabelaRepresados({ linhas }) {
+  const cab = (rotulo, extra = {}) => (
+    <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, ...extra }}>{rotulo}</span>
+  );
+  return (
+    <>
+      <style>{`
+        .trGrade { display: grid; grid-template-columns: minmax(0,1.5fr) 128px minmax(0,1.3fr) 74px minmax(0,1fr) 132px; align-items: center; gap: 10px; }
+        @media (max-width: 1100px) { .trGrade { grid-template-columns: minmax(0,1.5fr) 128px 74px minmax(0,1fr) 132px; } .trCurso { display: none; } }
+        @media (max-width: 860px)  { .trGrade { grid-template-columns: minmax(0,1.5fr) 128px 74px 132px; } .trTurma { display: none; } }
+        .trLinha:hover { background: rgba(255,255,255,.02); }
+      `}</style>
+      <div className="rolagem" style={{ maxHeight: 460, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
+        <div className="trGrade" style={{
+          position: "sticky", top: 0, zIndex: 2, background: "#17171c",
+          padding: "8px 12px", borderBottom: `1px solid ${C.cardLine}`,
+        }}>
+          {cab("Nome")}
+          {cab("Telefone")}
+          <span className="trCurso">{cab("Curso")}</span>
+          {cab("Prazo", { textAlign: "right" })}
+          <span className="trTurma">{cab("Próxima turma")}</span>
+          {cab("Último convite", { textAlign: "right" })}
+        </div>
+        {linhas.map((r, i) => <LinhaRepresado key={`${r.aluno_id}-${i}`} r={r} ultima={i === linhas.length - 1} />)}
+      </div>
+    </>
+  );
+}
+
+function LinhaRepresado({ r, ultima }) {
+  const anonimo = semCadastro(r);
+  const zap = linkWhatsapp(r.telefone);
+  const dias = Number(r.dias_restantes ?? 0);
+  const corPrazo = dias <= 30 ? C.down : dias <= 60 ? C.warn : C.muted;
+  const desde = r.dias_desde_o_convite;
+  const apagado = { fontSize: 11.5, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+
+  /* A coluna que decide se faz sentido cobrar de novo. Nunca convidado é
+     ação clara; convidado esta semana é o contrário — e a cor diz qual é
+     qual sem obrigar a ler o número. */
+  const convite = desde == null
+    ? { texto: "nunca", cor: C.gold, peso: 800 }
+    : desde <= 7 ? { texto: desde === 0 ? "hoje" : `há ${desde}d`, cor: C.dim, peso: 600 }
+      : desde <= 90 ? { texto: `há ${desde}d`, cor: C.muted, peso: 600 }
+        : { texto: `há ${Math.round(desde / 30)} meses`, cor: C.up, peso: 800 };
+
+  return (
+    <div className="trGrade trLinha" style={{
+      minHeight: 44, padding: "0 12px", borderBottom: ultima ? "none" : `1px solid ${C.hair}`,
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+        <span style={{
+          fontSize: 13, fontWeight: 700, color: C.text,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }} title={anonimo ? "sem cadastro" : r.nome}>
+          {anonimo ? formataCpf(r.aluno_id) : r.nome}
+        </span>
+        {r.ja_transferiu && <span title="já transferiu de turma antes" style={{ fontSize: 9.5, color: C.dim, flexShrink: 0 }}>já transferiu</span>}
+      </div>
+
+      <div style={apagado}>
+        {zap ? <a href={zap} target="_blank" rel="noreferrer" style={{ color: C.faint, textDecoration: "none" }} title="Abrir conversa no WhatsApp">{formataTelefone(r.telefone)}</a>
+          : <span style={{ color: C.warn }} title="sem telefone — não tem como convidar">sem telefone</span>}
+      </div>
+
+      <div className="trCurso" style={apagado} title={r.curso || ""}>{r.curso || "—"}</div>
+
+      <div style={{ textAlign: "right", fontSize: 12, fontWeight: 700, color: corPrazo, whiteSpace: "nowrap" }}
+           title={`vence em ${dataBR(r.vence_em)}`}>
+        {numero(dias)}d
+      </div>
+
+      <div className="trTurma" style={apagado} title={r.turma_id || ""}>
+        {r.turma_id || "—"}
+        {r.proxima_turma_em && <span style={{ color: C.dim }}> · {dataBR(r.proxima_turma_em)}</span>}
+      </div>
+
+      <div style={{ textAlign: "right", fontSize: 11.5, fontWeight: convite.peso, color: convite.cor, whiteSpace: "nowrap" }}
+           title={r.ultimo_convite_em ? `último convite em ${dataBR(r.ultimo_convite_em)}` : "nunca recebeu convite do sistema"}>
+        {convite.texto}
+      </div>
+    </div>
+  );
+}
+
+/* Os números do topo são o filtro. É como a Elis passa de "conferir quantos
+   confirmaram" para "trabalhar a lista de quem falta" sem trocar de tela.
+   Os valores vêm da view; só "inscritos" usa o tamanho da lista carregada,
+   que é a mesma fonte, já em mãos. */
+function FaixaContadores({ resumo, total, filtro, onFiltrar }) {
+  const n = (c) => Number(resumo?.[c] ?? 0);
+  const itens = [
+    { key: "todos", rotulo: "inscritos", valor: Number(resumo?.matriculados ?? total), cor: C.bright },
+    { key: "confirmado", rotulo: "confirmados", valor: n("confirmados"), cor: C.up },
+    { key: "nao vem", rotulo: "não vêm", valor: n("nao_vem"), cor: C.down },
+    { key: "sem resposta", rotulo: "sem resposta", valor: n("sem_resposta"), cor: C.warn },
+    { key: "aguardando resposta", rotulo: "aguardando", valor: n("aguardando_resposta"), cor: C.muted },
+    { key: "nao enfileirado", rotulo: "não enfileirados", valor: n("nao_enfileirados"), cor: C.faint },
+    // Estados transitórios/excepcionais: só ocupam espaço quando existem.
+    ...(n("aguardando_envio") > 0 ? [{ key: "aguardando envio", rotulo: "aguardando envio", valor: n("aguardando_envio"), cor: C.dim }] : []),
+    // "Sem contato" não é o mesmo que "não mandei": é "não tenho como mandar".
+    ...(n("sem_contato") > 0 ? [{ key: "sem_contato", rotulo: "sem contato", valor: n("sem_contato"), cor: C.warn }] : []),
+  ];
+
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "stretch" }}>
+      {itens.map((it) => {
+        const ativo = filtro === it.key;
+        const vazio = it.valor === 0 && it.key !== "todos";
+        return (
+          <button
+            key={it.key}
+            onClick={() => onFiltrar(ativo ? "todos" : it.key)}
+            disabled={vazio}
+            aria-pressed={ativo}
+            title={vazio ? "ninguém nesta situação" : ativo ? "Clique para ver todos" : `Filtrar: ${it.rotulo}`}
+            style={{
+              display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1,
+              padding: "6px 10px", borderRadius: 10, fontFamily: SANS, textAlign: "left",
+              cursor: vazio ? "default" : "pointer",
+              background: ativo ? `${it.cor}1C` : "rgba(255,255,255,.03)",
+              border: `1px solid ${ativo ? `${it.cor}66` : C.cardLine}`,
+              opacity: vazio ? 0.45 : 1,
+            }}
+          >
+            <span style={{ fontFamily: GROTESK, fontSize: 15, fontWeight: 700, lineHeight: 1, color: vazio ? C.dim : it.cor }}>
+              {numero(it.valor)}
+            </span>
+            <span style={{ fontSize: 9.5, fontWeight: 700, color: ativo ? it.cor : C.faint, whiteSpace: "nowrap" }}>
+              {it.rotulo}
+            </span>
+          </button>
+        );
+      })}
+      {filtro !== "todos" && (
+        <button onClick={() => onFiltrar("todos")} style={{
+          alignSelf: "center", marginLeft: 2, background: "none", border: "none", padding: "4px 2px",
+          cursor: "pointer", color: C.gold, fontFamily: SANS, fontSize: 11, fontWeight: 700,
+        }}>× limpar filtro</button>
+      )}
+    </div>
+  );
+}
+
+/* A tabela. A referência é a planilha do pedagógico: colunas alinhadas, uma
+   linha por pessoa, status colorido numa coluna só — o olho corre a coluna e
+   compara. Cartão empilhado ocupa três vezes a altura e caberia um terço das
+   pessoas; numa turma de 421 (o TOUR PV tem exatamente isso) essa diferença
+   decide se a tela serve.
+
+   Rolagem dentro da tabela com o cabeçalho grudado no topo, e os contadores
+   sempre visíveis acima dela. Sem paginação: ela rola procurando um nome, não
+   clica em "página 3". Sem zebrado: listra disputa atenção com a cor do
+   status, que é a única informação colorida da linha. */
+function TabelaInscritos({ linhas, ordem, onOrdenar, aberta, onAbrir, onMarcar }) {
+  const seta = (campo) => ordem.campo !== campo ? null : (ordem.dir > 0 ? " ↑" : " ↓");
+  const cabecalho = (campo, rotulo, extra = {}) => (
+    <button onClick={() => onOrdenar(campo)} style={{
+      background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left",
+      fontFamily: SANS, fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase",
+      color: ordem.campo === campo ? C.gold : C.dim, ...extra,
+    }}>{rotulo}{seta(campo)}</button>
+  );
+
+  return (
+    <>
+      <style>{`
+        .tiGrade { display: grid; grid-template-columns: minmax(0,1.7fr) 128px minmax(0,1.4fr) 122px 30px; align-items: center; gap: 10px; }
+        @media (max-width: 900px) { .tiGrade { grid-template-columns: minmax(0,1.7fr) 128px 122px 30px; } .tiEmail { display: none; } }
+        .tiLinha:hover { background: rgba(255,255,255,.02); }
+      `}</style>
+      <div className="rolagem" style={{
+        maxHeight: 420, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10,
+      }}>
+        <div className="tiGrade" style={{
+          position: "sticky", top: 0, zIndex: 2, background: "#17171c",
+          padding: "8px 12px", borderBottom: `1px solid ${C.cardLine}`,
+        }}>
+          {cabecalho("nome", "Nome")}
+          <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>Telefone</span>
+          <span className="tiEmail" style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>E-mail</span>
+          {cabecalho("situacao", "Status", { textAlign: "right" })}
+          <span />
+        </div>
+        {linhas.map((r, i) => (
+          <LinhaInscrito
+            key={`${r.aluno_id}-${i}`}
+            r={r}
+            ultima={i === linhas.length - 1}
+            aberta={aberta === r.aluno_id}
+            onAbrir={() => onAbrir(r.aluno_id)}
+            onMarcar={onMarcar}
+          />
+        ))}
+      </div>
+    </>
+  );
+}
+
+/* Uma linha de ~44px. Nome domina; telefone e e-mail apagados; o chip de
+   status é o único ponto de cor forte, e é ele que abre as três opções —
+   marcar na mão é exceção, não regra, então os botões não ficam à mostra em
+   toda linha. Nada de modal: ela marca várias em sequência. */
+function LinhaInscrito({ r, ultima, aberta, onAbrir, onMarcar }) {
+  const s = daSituacao(r.situacao);
+  const naFila = String(r.situacao ?? "") !== "nao enfileirado";
+  const anonimo = semCadastro(r);
+  const zap = r.sem_contato ? null : linkWhatsapp(r.telefone);
+  const naMao = r.resposta_origem === "hub";
+
+  const [menu, setMenu] = useState(false);
+  const copiar = (v) => { navigator.clipboard?.writeText(String(v)); setMenu(false); };
+
+  const opcao = (valor, rotulo, cor) => (
+    <button
+      key={valor}
+      onClick={() => { onMarcar(r.aluno_id, valor); onAbrir(); }}
+      style={{
+        fontFamily: SANS, fontSize: 10.5, fontWeight: 700, padding: "4px 9px", borderRadius: 7,
+        border: `1px solid ${cor}55`, background: `${cor}12`, color: cor, cursor: "pointer",
+      }}
+    >{rotulo}</button>
+  );
+  const itemMenu = (rotulo, acao) => (
+    <button onClick={acao} style={{
+      display: "block", width: "100%", textAlign: "left", background: "none", border: "none",
+      padding: "6px 10px", cursor: "pointer", fontFamily: SANS, fontSize: 11.5, color: C.muted, whiteSpace: "nowrap",
+    }}>{rotulo}</button>
+  );
+
+  const apagado = { fontSize: 11.5, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+
+  return (
+    <div style={{ borderBottom: ultima ? "none" : `1px solid ${C.hair}`, position: "relative" }}>
+      <div className="tiGrade tiLinha" style={{ minHeight: 44, padding: "0 12px" }}>
+        {/* Nome */}
+        <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+          <span style={{
+            fontSize: 13, fontWeight: 700, color: C.text,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            fontVariantNumeric: anonimo ? "tabular-nums" : "normal",
+          }} title={anonimo ? "sem cadastro em dim_alunos" : r.nome}>
+            {anonimo ? formataCpf(r.aluno_id) : r.nome}
+          </span>
+          {anonimo && <span style={{ fontSize: 10, color: C.dim, flexShrink: 0 }}>sem cadastro</span>}
+        </div>
+
+        {/* Telefone — o link é o que transforma a lista em ferramenta de ligação */}
+        <div style={apagado}>
+          {r.sem_contato ? <span style={{ color: C.warn }} title="sem telefone nem e-mail">sem contato</span>
+            : zap ? <a href={zap} target="_blank" rel="noreferrer" style={{ color: C.faint, textDecoration: "none" }}
+                       title="Abrir conversa no WhatsApp">{formataTelefone(r.telefone)}</a>
+              : <span>{formataTelefone(r.telefone) || "—"}</span>}
+        </div>
+
+        {/* E-mail — some abaixo de 900px */}
+        <div className="tiEmail" style={apagado} title={r.email || ""}>{r.email || "—"}</div>
+
+        {/* Status: o chip é o botão */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 5 }}>
+          {naMao && <span title="resposta registrada na mão" style={{
+            width: 5, height: 5, borderRadius: 999, background: C.gold, flexShrink: 0,
+          }} />}
+          <button
+            onClick={onAbrir}
+            disabled={!naFila}
+            aria-expanded={aberta}
+            title={naFila ? "Registrar a resposta que chegou por fora" : "Dispare a mensagem antes de registrar a resposta"}
+            style={{
+              fontFamily: SANS, fontSize: 10, fontWeight: 800, padding: "3px 9px", borderRadius: 999,
+              whiteSpace: "nowrap", color: s.cor,
+              background: s.fundo ? `${s.cor}${s.fundo}` : "transparent",
+              border: `1px solid ${s.cor}${s.fundo ? "44" : "55"}`,
+              cursor: naFila ? "pointer" : "default",
+            }}
+          >{s.rotulo}</button>
+        </div>
+
+        {/* Ações locais: nada que escreva no banco, só o que ela copiaria à mão */}
+        <button onClick={() => setMenu(!menu)} aria-label="Ações" style={{
+          background: "none", border: "none", cursor: "pointer", color: menu ? C.gold : C.dim,
+          padding: 2, lineHeight: 0, justifySelf: "end",
+        }}><MoreHorizontal size={15} /></button>
+      </div>
+
+      {menu && (
+        <>
+          <div onClick={() => setMenu(false)} style={{ position: "fixed", inset: 0, zIndex: 3 }} />
+          <div style={{
+            position: "absolute", right: 10, top: 36, zIndex: 4, minWidth: 150, padding: "4px 0",
+            background: "#1c1c22", border: `1px solid ${C.cardLine}`, borderRadius: 9,
+            boxShadow: "0 10px 28px rgba(0,0,0,.5)",
+          }}>
+            {zap && itemMenu("Abrir no WhatsApp", () => { window.open(zap, "_blank", "noreferrer"); setMenu(false); })}
+            {r.telefone && itemMenu("Copiar telefone", () => copiar(r.telefone))}
+            {r.email && itemMenu("Copiar e-mail", () => copiar(r.email))}
+            {itemMenu("Copiar CPF", () => copiar(formataCpf(r.aluno_id)))}
+          </div>
+        </>
+      )}
+
+      {aberta && (
+        <div style={{ display: "flex", alignItems: "center", gap: 7, padding: "0 12px 9px 12px", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 10.5, color: C.dim }}>Ela respondeu:</span>
+          {opcao("sim", "Sim, vem", C.up)}
+          {opcao("nao", "Não vem", C.down)}
+          {opcao("sem_resposta", "Sem resposta", C.warn)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Shell({ perfil }) {
   // União de setores: o setor do perfil + os de perfil_setores (já vêm em
   // perfil.setores). Admin/geral seguem vendo tudo, agora também se "geral"
@@ -5823,7 +6797,7 @@ function Shell({ perfil }) {
     };
   }, [modo, ano, mesIdx, anos, minMes, maxMes, geral]);
 
-  const visiveis = admin ? HUBS : HUBS.filter((h) => setores.includes(h.key));
+  const visiveis = admin ? HUBS : HUBS.filter((h) => setores.includes(h.setor ?? h.key));
   const hub = HUBS.find((h) => h.key === tela);
 
   const conteudo = () => {
@@ -5833,6 +6807,7 @@ function Shell({ perfil }) {
       case "financeiro": return <HubFinanceiro />;
       case "marketing":  return <HubMarketing />;
       case "pedagogico": return <HubPedagogico />;
+      case "central":    return <CentralPedagogica />;
       case "eventos":    return <HubEventos />;
       case "loja":       return <HubLoja />;
       case "estoque":    return <SemFonte hub={hub} />;

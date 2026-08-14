@@ -685,40 +685,118 @@ export function useTurmaSugestao(sigla, dataInicio, turmaId) {
   });
 }
 
-// Fila de confirmação da turma (pendentes, com PII). Sem coluna de status — são
-// os que ainda não receberam. `aluno_id` é o CPF.
-export function useFilaTurma(turmaId) {
+/* `useFilaTurma` (vw_pedagogico_fila) e `useEnviosTurma` (pedagogico_envios)
+   saíram junto com a Automação de confirmações do Hub. A Central responde a
+   mesma pergunta por `vw_turma_inscritos`, que parte dos MATRICULADOS: quem
+   nunca foi enfileirado aparece, em vez de só quem já tem linha na fila.
+   As duas fontes continuam vivas no banco — `vw_pedagogico_fila` é o que o
+   script de disparo lê. O que saiu foi a leitura pelo navegador. */
+
+/* ============================================================
+   CENTRAL PEDAGÓGICA — a tela de operação da Elis e da Gisele
+   ============================================================
+   O Hub Pedagógico é painel (gráfico, KPI, tendência). Aqui é
+   trabalho: lista, status, botão. Toda escrita passa por função do
+   banco — nenhum insert ou update direto daqui. Nunca filtrar por
+   setor: `pode_ver('pedagogico')` já filtra nas views. */
+
+/* Turmas que a Central opera (migration 115): só as de curso da grade
+   pedagógica. Lia dim_turmas direto e trazia LLPASS, Team Coaching,
+   Planejador Financeiro e afins — 89 das 234 turmas do cadastro, nenhuma
+   delas com confirmação de presença pra fazer. O corte usa norm_curso(),
+   função do banco: reimplementar a normalização aqui divergiria na
+   primeira acentuação diferente. `futura` também vem de lá — comparar
+   data no cliente depende do relógio de quem abriu a tela. */
+export const useTurmasCentral = () =>
+  useView("vw_turmas_central", { ordem: ["data_inicio", "turma_id"], staleTime: 60 * 1000 });
+
+/* Resumo por turma E por tipo de mensagem (confirmacao | grupo).
+   Vem de vw_turma_inscritos_resumo (migration 113), que parte dos
+   MATRICULADOS: quem nunca foi enfileirado aparece em
+   `nao_enfileirados` em vez de sumir. A vw_turma_resumo antiga só
+   enxergava quem já tinha linha em pedagogico_envios — 48 pessoas
+   de 872 — e por isso não serve para operar. */
+export const useTurmaInscritosResumo = () =>
+  useView("vw_turma_inscritos_resumo", { ordem: ["data_inicio", "turma_id", "tipo"], staleTime: 60 * 1000 });
+
+/* Inscritos de UMA turma, um por (aluno, tipo). `situacao` já vem
+   pronta do banco — o front não recalcula status. `sem_contato`
+   separa "não mandei" de "não tenho como mandar". */
+export function useTurmaInscritos(turmaId) {
   return useQuery({
-    queryKey: ["fila_turma", turmaId],
+    queryKey: ["turma_inscritos", turmaId],
     enabled: turmaId != null,
     staleTime: 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase
-        .from("vw_pedagogico_fila")
-        .select("aluno_id,nome,canal,telefone_bruto,telefone_invalido")
-        .eq("turma_id", turmaId);
+        .from("vw_turma_inscritos")
+        .select("aluno_id,nome,telefone,email,tipo,status,enviado_em,resposta,respondido_em,resposta_origem,situacao,sem_contato")
+        .eq("turma_id", turmaId)
+        .order("nome");
       if (error) throw error;
       return data ?? [];
     },
   });
 }
 
-// Envios já disparados da turma (com status e erro_msg). Sem nome — só CPF.
-export function useEnviosTurma(turmaId) {
-  return useQuery({
-    queryKey: ["envios_turma", turmaId],
-    enabled: turmaId != null,
-    staleTime: 60 * 1000,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("pedagogico_envios")
-        .select("aluno_id,canal,status,erro_msg,enviado_em,tipo")
-        .eq("turma_id", turmaId);
-      if (error) throw error;
-      return data ?? [];
-    },
-  });
+/* ENFILEIRA a mensagem da turma — não envia. Quem envia é o script,
+   na rodada seguinte. Devolve { ok, enfileirados, sem_contato,
+   mensagem } ou { ok:false, faltando, mensagem } quando falta campo
+   no cadastro. A tela mostra `mensagem` direto, sem reescrever: é o
+   que impede mensagem truncada chegar no cliente. */
+export async function dispararTurma(turmaId, tipo) {
+  const { data, error } = await supabase.rpc("disparar_turma", { p_turma_id: turmaId, p_tipo: tipo });
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data;
 }
+
+/* Resposta registrada na mão (alguém respondeu por telefone ou no
+   corredor). Grava resposta_origem='hub', que a sincronia do CRM
+   respeita e não sobrescreve. */
+export async function marcarResposta(alunoId, turmaId, tipo, resposta) {
+  const { data, error } = await supabase.rpc("marcar_resposta", {
+    p_aluno_id: alunoId, p_turma_id: turmaId, p_tipo: tipo, p_resposta: resposta,
+  });
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data;
+}
+
+/* REPRESADOS (migration 111). Quem comprou, tem prazo correndo e tem turma
+   disponível ANTES do vencimento — dá pra resolver, existe vaga em tempo.
+   `dias_desde_o_convite` é a coluna que decide: quem foi convidado há oito
+   meses faz sentido cobrar de novo, quem foi convidado semana passada não.
+   `pode_disparar` é SUGESTÃO (telefone + carência de 90 dias), não trava: a
+   tela mostra todo mundo e quem decide é a Elis. */
+export const useRepresadoLista = () =>
+  useView("vw_represado_lista", { ordem: ["dias_restantes", "aluno_id"], staleTime: 60 * 1000, retry: 2 });
+
+/* ENFILEIRA o convite dos elegíveis — não envia. Devolve { enfileirados,
+   mensagem }. A tela mostra `mensagem` como veio. */
+export async function dispararRepresados() {
+  const { data, error } = await supabase.rpc("disparar_represados");
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data;
+}
+
+/* Saúde da carga de presença: última carga, dias desde então, volume. A carga
+   é manual, e a fonte anterior (credenciamento) morreu ao longo de um ano sem
+   ninguém perceber. Este número precisa estar na tela sempre que um número de
+   represado/ausência aparecer — sem ele, o dado velho passa por atual. */
+export const usePresencaSaude = () => useView("vw_presenca_saude", { staleTime: 60 * 1000, retry: 2 });
+
+/* PRESENÇA POR TURMA.
+   `vw_turmas_mensuraveis` é o subconjunto onde ausência SIGNIFICA alguma
+   coisa: turma que já aconteceu, com registro de verdade (cobertura >= 40%)
+   e volume mínimo (>= 10 matriculados). Fora dali, falta de registro se
+   confunde com falta de aluno.
+   `vw_presenca_cobertura` é tudo — inclusive as 267 turmas sem nenhum
+   registro. Serve para conferir quem não tem cobertura, não para medir
+   ausência. A coluna `fonte` diz de onde veio: 'credenciamento' é a fonte
+   morta (parou em 2025), 'presenca' é a viva. */
+export const useTurmasMensuraveis = () =>
+  useView("vw_turmas_mensuraveis", { ordem: ["data_inicio", "turma"], staleTime: 60 * 1000, retry: 2 });
+export const usePresencaCobertura = () =>
+  useView("vw_presenca_cobertura", { ordem: ["turma"], staleTime: 60 * 1000, retry: 2 });
 
 export const useEventosDesempenho = () => useView("vw_eventos_desempenho");
 export const useDiretoriaConsol   = () => useView("vw_diretoria_consolidado");
