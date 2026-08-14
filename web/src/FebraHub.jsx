@@ -4836,9 +4836,6 @@ function HubPedagogico() {
   const presTempo = usePedagogicoPresencaTempo();
   const recompraCurso = usePedagogicoRecompraCurso();
   const presCurso = usePedagogicoPresencaCurso();
-  const maestros = usePedagogicoMaestrosCompleto();
-  const maestrosKpis = usePedagogicoMaestrosKpis();
-  const anotacoes = usePedagogicoMaestroAnotacoes();
   const retencaoCasos = usePedagogicoRetencaoCasos();
   const retencao = usePedagogicoRetencao();
   const retencaoMotivos = usePedagogicoRetencaoMotivos();
@@ -4846,18 +4843,10 @@ function HubPedagogico() {
   const qc = useQueryClient();
   const [turmaSel, setTurmaSel] = useState(null); // turma aberta no drawer (bloco 2)
   const [toast, setToast] = useState(null);       // feedback de escrita (some sozinho)
-  const [statusMaestro, setStatusMaestro] = useState("todos");
-  const [maestroEdit, setMaestroEdit] = useState(null); // maestro sendo editado
   const [retEdit, setRetEdit] = useState(null);         // caso de retenção ('novo' | caso | null)
 
   // Após gravar: recarrega as views afetadas e fecha o modal.
-  const aposSalvar = () => { qc.invalidateQueries(); setMaestroEdit(null); setRetEdit(null); };
-  // cargo não vem na view _completo — pré-preenche do maestro_anotacao cru.
-  const cargoPorCpf = useMemo(() => {
-    const m = new Map();
-    for (const a of anotacoes.data ?? []) if (a.aluno_id != null) m.set(String(a.aluno_id), a.cargo ?? "");
-    return m;
-  }, [anotacoes.data]);
+  const aposSalvar = () => { qc.invalidateQueries(); setRetEdit(null); };
 
   const k = kpis.data?.[0] ?? {};
   const pk = presKpis.data?.[0] ?? {};
@@ -4897,25 +4886,6 @@ function HubPedagogico() {
       .slice(0, 6),
     [presCurso.data]);
 
-  // Maestros (VIP): lista por investido (desc), com filtro por status de
-  // validade. Ativos/inativos/média saem da agregação do detalhe (a view de
-  // kpis não os traz); os contadores de VALIDADE (válidos/perto/vencidos) vêm
-  // da vw_pedagogico_maestros_kpis, mesma fonte do selo por linha.
-  const listaMaestros = useMemo(() => {
-    const arr = [...(maestros.data ?? [])].sort((a, b) => Number(b.total_investido ?? 0) - Number(a.total_investido ?? 0));
-    if (statusMaestro === "todos") return arr;
-    return arr.filter((m) => String(m.status_maestria ?? "").trim().toLowerCase() === statusMaestro);
-  }, [maestros.data, statusMaestro]);
-  const maestrosKpi = useMemo(() => {
-    const arr = maestros.data ?? [];
-    const ativos = arr.filter((m) => m.ativo).length;
-    const invest = arr.reduce((s, m) => s + Number(m.total_investido ?? 0), 0);
-    const fatGrupo = arr.reduce((s, m) => s + Number(m.faturamento ?? 0), 0);
-    return { total: arr.length, ativos, inativos: arr.length - ativos, media: arr.length ? invest / arr.length : 0, fatGrupo };
-  }, [maestros.data]);
-  const mk = maestrosKpis.data?.[0] ?? {};
-  const temMaestros = (maestros.data?.length ?? 0) > 0;
-
   // Retenção: casos recentes primeiro; motivos por frequência (retidos+cancel).
   const casos = useMemo(() =>
     [...(retencaoCasos.data ?? [])].sort((a, b) => String(b.data_ligacao ?? "").localeCompare(String(a.data_ligacao ?? ""))),
@@ -4949,10 +4919,10 @@ function HubPedagogico() {
   return (
     <>
       <style>{`
-        .pedKpis, .pedMaestrosKpi { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+        .pedKpis { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
         .pedConfKpis { display: grid; grid-template-columns: 1fr; gap: 9px; }
         .pedBot { display: grid; grid-template-columns: 1fr; gap: 12px; align-items: start; }
-        @media (min-width: 720px)  { .pedKpis, .pedMaestrosKpi { grid-template-columns: repeat(4, 1fr); } .pedConfKpis { grid-template-columns: repeat(3, 1fr); } }
+        @media (min-width: 720px)  { .pedKpis { grid-template-columns: repeat(4, 1fr); } .pedConfKpis { grid-template-columns: repeat(3, 1fr); } }
         @media (min-width: 1000px) { .pedBot { grid-template-columns: 1fr 1fr; } }  /* fideliza · falta */
       `}</style>
 
@@ -4980,39 +4950,6 @@ function HubPedagogico() {
             </div>
           )}
         </Estado>
-      </Bloco>
-
-      {/* ---- Maestros (clientes VIP · compraram MAESTRIA) ---- */}
-      <Bloco titulo="Maestros" canto="clientes VIP · MAESTRIA" sem>
-        <div style={{ padding: "12px 20px", borderBottom: `1px solid ${C.hair}` }}>
-          <div className="pedMaestrosKpi">
-            <ChipKpi compacto hero Icone={Crown} label="Maestros" valor={temMaestros ? numero(maestrosKpi.total) : "—"} nota="clientes VIP" />
-            <ChipKpi compacto Icone={UserCheck} label="Ativos" valor={temMaestros ? numero(maestrosKpi.ativos) : "—"} nota="compra < 12 meses" />
-            <ChipKpi compacto Icone={AlertTriangle} label="Inativos" valor={temMaestros ? numero(maestrosKpi.inativos) : "—"} nota="+ de 12 meses parado" />
-            <ChipKpi compacto Icone={Wallet} label="Média investida" valor={temMaestros ? moeda(maestrosKpi.media) : "—"} nota="por maestro" />
-            <ChipKpi compacto Icone={TrendingUp} label="Faturamento do grupo" valor={maestrosKpi.fatGrupo ? moeda(maestrosKpi.fatGrupo) : "—"} nota="anotado · empresas" />
-            {/* Validade da Maestria (12 meses desde a compra) — números coloridos. */}
-            <TileValidade Icone={ShieldCheck} label="Válidos" valor={temMaestros ? numero(mk.validos) : "—"} cor={C.up} nota="vigente" />
-            <TileValidade Icone={Clock} label="Perto de vencer" valor={temMaestros ? numero(mk.perto_vencer) : "—"} cor={C.warn} nota="agir" />
-            <TileValidade Icone={ShieldAlert} label="Vencidos" valor={temMaestros ? numero(mk.vencidos) : "—"} cor={C.down} nota="renovar" />
-          </div>
-        </div>
-        {/* Filtro por status de validade — ajuda a gestora a agir nos que vão vencer. */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", padding: "10px 20px", borderBottom: `1px solid ${C.hair}` }}>
-          <Segmentado label="Validade" valor={statusMaestro} onChange={setStatusMaestro}
-            opcoes={[{ key: "todos", label: "Todos" }, { key: "perto de vencer", label: "Perto de vencer" }, { key: "vencido", label: "Vencidos" }, { key: "válido", label: "Válidos" }]} />
-          <span style={{ fontSize: 10.5, color: C.faint }}>{numero(listaMaestros.length)} {listaMaestros.length === 1 ? "maestro" : "maestros"}</span>
-        </div>
-        <div className="rolagem" style={{ maxHeight: 250, overflowY: "auto" }}>
-          <Estado carregando={maestros.isLoading} erro={maestros.error} vazio={!listaMaestros.length}
-            vazioTitulo={temMaestros ? "Nenhum maestro nesse status" : "Sem maestros no acesso"}
-            vazioDica={temMaestros ? "Troque o filtro de validade acima." : "Painel restrito ao setor pedagógico — aparece com o setor conectado."}>
-            {listaMaestros.map((m, i) => <LinhaMaestro key={i} m={m} onEditar={setMaestroEdit} />)}
-          </Estado>
-        </div>
-        <div style={{ padding: "8px 20px", fontSize: 10, color: C.dim, borderTop: `1px solid ${C.hair}` }}>
-          Contém dados pessoais (nome, e-mail, telefone) — exceção justificada, restrita ao setor pedagógico.
-        </div>
       </Bloco>
 
       {/* ---- Cursos: fidelizam · faltam ---- */}
@@ -5096,11 +5033,6 @@ function HubPedagogico() {
       <RodapeIntegracoes fontes={["salesforce"]} />
 
       {/* ---- Modais de entrada (gravam nas tabelas; RLS gate pedagógico) ---- */}
-      {maestroEdit && (
-        <ModalCentro titulo="Editar maestro" onFechar={() => setMaestroEdit(null)}>
-          <FormMaestro maestro={maestroEdit} cargoInicial={cargoPorCpf.get(String(maestroEdit.cpf)) ?? ""} onSalvo={aposSalvar} />
-        </ModalCentro>
-      )}
       {retEdit && (
         <ModalCentro titulo={retEdit === "novo" ? "Registrar caso de retenção" : "Editar caso de retenção"} onFechar={() => setRetEdit(null)}>
           <FormRetencao caso={retEdit === "novo" ? null : retEdit} onSalvo={aposSalvar} />
@@ -5865,7 +5797,8 @@ function CentralPedagogica() {
       {aba === "turmas" && <CentralTurmas notificar={notificar} />}
       {aba === "represados" && <CentralRepresados notificar={notificar} />}
       {aba === "presenca" && <CentralPresenca />}
-      {aba !== "turmas" && aba !== "represados" && aba !== "presenca" && (
+      {aba === "maestros" && <CentralMaestros notificar={notificar} />}
+      {!["turmas", "represados", "presenca", "maestros"].includes(aba) && (
         <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "26px 22px" }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, color: C.bright, marginBottom: 5 }}>
             {ABAS_CENTRAL.find((a) => a.key === aba)?.label} chega na próxima etapa
@@ -6228,6 +6161,99 @@ function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
         </Estado>
       </div>
     </DrawerLado>
+  );
+}
+
+/* ---- Maestros ----
+   Veio do Hub Pedagógico sem mudança de lógica: mesmas views, mesmos
+   cálculos, mesmo filtro de validade, mesmo modal de edição. Mudou só o
+   endereço — tem botão de ação (editar anotação), então é operação, e
+   operação vive aqui. */
+function CentralMaestros({ notificar }) {
+  const maestros = usePedagogicoMaestrosCompleto();
+  const maestrosKpis = usePedagogicoMaestrosKpis();
+  const anotacoes = usePedagogicoMaestroAnotacoes();
+  const qc = useQueryClient();
+  const [statusMaestro, setStatusMaestro] = useState("todos");
+  const [maestroEdit, setMaestroEdit] = useState(null);
+
+  const aposSalvar = () => {
+    qc.invalidateQueries();
+    setMaestroEdit(null);
+    notificar?.("Anotação salva.", "ok");
+  };
+
+  // cargo não vem na view _completo — pré-preenche do maestro_anotacao cru.
+  const cargoPorCpf = useMemo(() => {
+    const m = new Map();
+    for (const a of anotacoes.data ?? []) if (a.aluno_id != null) m.set(String(a.aluno_id), a.cargo ?? "");
+    return m;
+  }, [anotacoes.data]);
+
+  // Lista por investido (desc), com filtro por status de validade.
+  // Ativos/inativos/média saem da agregação do detalhe (a view de kpis não os
+  // traz); os contadores de VALIDADE vêm da vw_pedagogico_maestros_kpis,
+  // mesma fonte do selo por linha.
+  const listaMaestros = useMemo(() => {
+    const arr = [...(maestros.data ?? [])].sort((a, b) => Number(b.total_investido ?? 0) - Number(a.total_investido ?? 0));
+    if (statusMaestro === "todos") return arr;
+    return arr.filter((m) => String(m.status_maestria ?? "").trim().toLowerCase() === statusMaestro);
+  }, [maestros.data, statusMaestro]);
+  const maestrosKpi = useMemo(() => {
+    const arr = maestros.data ?? [];
+    const ativos = arr.filter((m) => m.ativo).length;
+    const invest = arr.reduce((s, m) => s + Number(m.total_investido ?? 0), 0);
+    const fatGrupo = arr.reduce((s, m) => s + Number(m.faturamento ?? 0), 0);
+    return { total: arr.length, ativos, inativos: arr.length - ativos, media: arr.length ? invest / arr.length : 0, fatGrupo };
+  }, [maestros.data]);
+  const mk = maestrosKpis.data?.[0] ?? {};
+  const temMaestros = (maestros.data?.length ?? 0) > 0;
+
+  return (
+    <>
+      <style>{`
+        .cenMaestrosKpi { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; }
+        @media (min-width: 520px) { .cenMaestrosKpi { grid-template-columns: repeat(4, 1fr); } }
+        @media (min-width: 980px) { .cenMaestrosKpi { grid-template-columns: repeat(8, 1fr); } }
+      `}</style>
+
+      <div className="cenMaestrosKpi" style={{ marginBottom: 12 }}>
+        <ChipKpi compacto hero Icone={Crown} label="Maestros" valor={temMaestros ? numero(maestrosKpi.total) : "—"} nota="clientes VIP" />
+        <ChipKpi compacto Icone={UserCheck} label="Ativos" valor={temMaestros ? numero(maestrosKpi.ativos) : "—"} nota="compra < 12 meses" />
+        <ChipKpi compacto Icone={AlertTriangle} label="Inativos" valor={temMaestros ? numero(maestrosKpi.inativos) : "—"} nota="+ de 12 meses parado" />
+        <ChipKpi compacto Icone={Wallet} label="Média investida" valor={temMaestros ? moeda(maestrosKpi.media) : "—"} nota="por maestro" />
+        <ChipKpi compacto Icone={TrendingUp} label="Faturamento do grupo" valor={maestrosKpi.fatGrupo ? moeda(maestrosKpi.fatGrupo) : "—"} nota="anotado · empresas" />
+        {/* Validade da Maestria (12 meses desde a compra) — números coloridos. */}
+        <TileValidade Icone={ShieldCheck} label="Válidos" valor={temMaestros ? numero(mk.validos) : "—"} cor={C.up} nota="vigente" />
+        <TileValidade Icone={Clock} label="Perto de vencer" valor={temMaestros ? numero(mk.perto_vencer) : "—"} cor={C.warn} nota="agir" />
+        <TileValidade Icone={ShieldAlert} label="Vencidos" valor={temMaestros ? numero(mk.vencidos) : "—"} cor={C.down} nota="renovar" />
+      </div>
+
+      {/* Filtro por status de validade — ajuda a gestora a agir nos que vão vencer. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+        <Segmentado label="Validade" valor={statusMaestro} onChange={setStatusMaestro}
+          opcoes={[{ key: "todos", label: "Todos" }, { key: "perto de vencer", label: "Perto de vencer" }, { key: "vencido", label: "Vencidos" }, { key: "válido", label: "Válidos" }]} />
+        <span style={{ fontSize: 10.5, color: C.faint }}>{numero(listaMaestros.length)} {listaMaestros.length === 1 ? "maestro" : "maestros"}</span>
+      </div>
+
+      <div className="rolagem" style={{ maxHeight: 460, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
+        <Estado carregando={maestros.isLoading} erro={maestros.error} vazio={!listaMaestros.length}
+          vazioTitulo={temMaestros ? "Nenhum maestro nesse status" : "Sem maestros no acesso"}
+          vazioDica={temMaestros ? "Troque o filtro de validade acima." : "Painel restrito ao setor pedagógico — aparece com o setor conectado."}>
+          {listaMaestros.map((m, i) => <LinhaMaestro key={i} m={m} onEditar={setMaestroEdit} />)}
+        </Estado>
+      </div>
+
+      <div style={{ padding: "8px 2px", fontSize: 10, color: C.dim }}>
+        Contém dados pessoais (nome, e-mail, telefone) — exceção justificada, restrita ao setor pedagógico.
+      </div>
+
+      {maestroEdit && (
+        <ModalCentro titulo="Editar maestro" onFechar={() => setMaestroEdit(null)}>
+          <FormMaestro maestro={maestroEdit} cargoInicial={cargoPorCpf.get(String(maestroEdit.cpf)) ?? ""} onSalvo={aposSalvar} />
+        </ModalCentro>
+      )}
+    </>
   );
 }
 
