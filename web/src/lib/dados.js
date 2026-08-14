@@ -789,6 +789,29 @@ export async function marcarResposta(alunoId, turmaId, tipo, resposta) {
   return data;
 }
 
+/* REPRESADOS (migration 111). Quem comprou, tem prazo correndo e tem turma
+   disponível ANTES do vencimento — dá pra resolver, existe vaga em tempo.
+   `dias_desde_o_convite` é a coluna que decide: quem foi convidado há oito
+   meses faz sentido cobrar de novo, quem foi convidado semana passada não.
+   `pode_disparar` é SUGESTÃO (telefone + carência de 90 dias), não trava: a
+   tela mostra todo mundo e quem decide é a Elis. */
+export const useRepresadoLista = () =>
+  useView("vw_represado_lista", { ordem: ["dias_restantes", "aluno_id"], staleTime: 60 * 1000, retry: 2 });
+
+/* ENFILEIRA o convite dos elegíveis — não envia. Devolve { enfileirados,
+   mensagem }. A tela mostra `mensagem` como veio. */
+export async function dispararRepresados() {
+  const { data, error } = await supabase.rpc("disparar_represados");
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data;
+}
+
+/* Saúde da carga de presença: última carga, dias desde então, volume. A carga
+   é manual, e a fonte anterior (credenciamento) morreu ao longo de um ano sem
+   ninguém perceber. Este número precisa estar na tela sempre que um número de
+   represado/ausência aparecer — sem ele, o dado velho passa por atual. */
+export const usePresencaSaude = () => useView("vw_presenca_saude", { staleTime: 60 * 1000, retry: 2 });
+
 export const useEventosDesempenho = () => useView("vw_eventos_desempenho");
 export const useDiretoriaConsol   = () => useView("vw_diretoria_consolidado");
 

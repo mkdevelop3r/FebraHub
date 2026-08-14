@@ -39,6 +39,7 @@ import {
   useExecutivoReativacao, useExecutivoComercial30d,
   useTurmaDim, useTurmaSugestao, useFilaTurma, useEnviosTurma,
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
+  useRepresadoLista, dispararRepresados, usePresencaSaude,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
@@ -5862,7 +5863,8 @@ function CentralPedagogica() {
       </div>
 
       {aba === "turmas" && <CentralTurmas notificar={notificar} />}
-      {aba !== "turmas" && (
+      {aba === "represados" && <CentralRepresados notificar={notificar} />}
+      {aba !== "turmas" && aba !== "represados" && (
         <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "26px 22px" }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, color: C.bright, marginBottom: 5 }}>
             {ABAS_CENTRAL.find((a) => a.key === aba)?.label} chega na próxima etapa
@@ -6225,6 +6227,267 @@ function DrawerTurmaCentral({ turma, resumo, onFechar, notificar }) {
         </Estado>
       </div>
     </DrawerLado>
+  );
+}
+
+/* ---- Represados ----
+   Comprou, o prazo está correndo, e existe turma antes do vencimento. Dá pra
+   resolver: é só chamar. */
+function CentralRepresados({ notificar }) {
+  const lista = useRepresadoLista();
+  const saude = usePresencaSaude();
+  const [filtro, setFiltro] = useState("todos");
+  const [busca, setBusca] = useState("");
+  const [disparando, setDisparando] = useState(false);
+  const [retorno, setRetorno] = useState(null);
+  const qc = useQueryClient();
+
+  const linhas = lista.data ?? [];
+  const contas = useMemo(() => ({
+    todos: linhas.length,
+    elegivel: linhas.filter((r) => r.pode_disparar).length,
+    nunca: linhas.filter((r) => r.dias_desde_o_convite == null).length,
+    recente: linhas.filter((r) => r.dias_desde_o_convite != null && r.dias_desde_o_convite <= 30).length,
+    sem_telefone: linhas.filter((r) => !r.telefone).length,
+    urgente: linhas.filter((r) => Number(r.dias_restantes ?? 999) <= 30).length,
+  }), [linhas]);
+
+  const visiveis = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    const qNum = q.replace(/\D/g, "");
+    const passa = (r) =>
+      filtro === "todos" ? true
+        : filtro === "elegivel" ? !!r.pode_disparar
+          : filtro === "nunca" ? r.dias_desde_o_convite == null
+            : filtro === "recente" ? (r.dias_desde_o_convite != null && r.dias_desde_o_convite <= 30)
+              : filtro === "sem_telefone" ? !r.telefone
+                : filtro === "urgente" ? Number(r.dias_restantes ?? 999) <= 30
+                  : true;
+    return linhas.filter((r) => {
+      if (!passa(r)) return false;
+      if (!q) return true;
+      const doc = String(r.aluno_id ?? "").replace(/\D/g, "");
+      const tel = String(r.telefone ?? "").replace(/\D/g, "");
+      return String(r.nome ?? "").toLowerCase().includes(q)
+        || String(r.curso ?? "").toLowerCase().includes(q)
+        || (qNum.length >= 3 && (doc.includes(qNum) || tel.includes(qNum)));
+    });
+  }, [linhas, filtro, busca]);
+
+  const disparar = async () => {
+    setDisparando(true); setRetorno(null);
+    try {
+      const r = await dispararRepresados();
+      setRetorno(r);
+      notificar(r?.mensagem ?? "Pronto.", Number(r?.enfileirados ?? 0) > 0 ? "ok" : "info");
+      qc.invalidateQueries({ queryKey: ["vw_represado_lista"] });
+    } catch (e) {
+      const msg = semPermissao(e) ? "Você não tem permissão para disparar convites." : (e.message || "Não foi possível enfileirar.");
+      setRetorno({ enfileirados: 0, mensagem: msg, erro: true });
+      notificar(msg, "erro");
+    } finally { setDisparando(false); }
+  };
+
+  const s = saude.data?.[0];
+  const cargaVelha = Number(s?.dias_desde_a_carga ?? 0) > 30;
+
+  return (
+    <>
+      {/* Por que o disparo é manual. Uma linha, e ela explica a tela toda. */}
+      <div style={{
+        display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 12,
+        background: `${C.gold}0D`, border: `1px solid ${C.gold}2E`, borderRadius: 10, padding: "9px 12px",
+      }}>
+        <PhoneCall size={13} style={{ color: C.gold, marginTop: 2, flexShrink: 0 }} />
+        <span style={{ fontSize: 11.5, color: C.faint, lineHeight: 1.5 }}>
+          O disparo é manual porque o sistema não sabe quem a consultora já chamou pelo WhatsApp dela.
+          Confira <b style={{ color: C.muted }}>há quanto tempo cada um foi convidado</b> antes de mandar de novo.
+        </span>
+      </div>
+
+      <Estado
+        carregando={lista.isLoading}
+        erro={lista.error}
+        vazio={!linhas.length}
+        vazioTitulo="Ninguém represado agora"
+        vazioDica="Represado é quem comprou, está com o prazo correndo e tem turma disponível antes de vencer. Lista vazia quer dizer que todo mundo nessa situação já foi alocado."
+      >
+        {/* A data da carga fica junto do número: represado sem ela convida à
+            decisão errada — dado velho passa por atual. */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+          <span style={{ fontSize: 10.5, color: cargaVelha ? C.down : C.dim }}>
+            {s
+              ? <>presença carregada em {dataBR(s.ultima_carga)} · {Number(s.dias_desde_a_carga) === 0 ? "hoje" : `há ${numero(s.dias_desde_a_carga)} dias`}{cargaVelha && " — o dado está envelhecendo"}</>
+              : "sem informação da última carga de presença"}
+          </span>
+          <BotaoSalvar onClick={disparar} salvando={disparando} disabled={disparando}>
+            Disparar para os elegíveis{contas.elegivel > 0 ? ` (${numero(contas.elegivel)})` : ""}
+          </BotaoSalvar>
+        </div>
+
+        {retorno && (
+          <div style={{
+            fontSize: 11.5, lineHeight: 1.5, borderRadius: 10, padding: "9px 11px", marginBottom: 8,
+            color: retorno.erro ? C.warn : Number(retorno.enfileirados ?? 0) > 0 ? C.up : C.muted,
+            background: `${retorno.erro ? C.warn : Number(retorno.enfileirados ?? 0) > 0 ? C.up : C.muted}12`,
+            border: `1px solid ${retorno.erro ? C.warn : Number(retorno.enfileirados ?? 0) > 0 ? C.up : C.muted}3A`,
+          }}>
+            {retorno.mensagem}
+            {!retorno.erro && Number(retorno.enfileirados ?? 0) > 0 && (
+              <div style={{ color: C.faint, marginTop: 3 }}>Quem envia é o script, na rodada seguinte — em até 5 horas.</div>
+            )}
+          </div>
+        )}
+
+        <FaixaRepresados contas={contas} filtro={filtro} onFiltrar={setFiltro} />
+
+        <div style={{ position: "relative", margin: "10px 0 8px" }}>
+          <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.dim }} />
+          <input value={busca} onChange={(e) => setBusca(e.target.value)}
+            placeholder="Buscar por nome, curso, CPF ou telefone" style={{ ...inputAv, paddingLeft: 30 }} />
+        </div>
+
+        {!visiveis.length ? (
+          <div style={{ fontSize: 12, color: C.faint, padding: "14px 2px" }}>
+            Ninguém nesse recorte.{" "}
+            <button onClick={() => { setFiltro("todos"); setBusca(""); }} style={{
+              background: "none", border: "none", padding: 0, cursor: "pointer",
+              color: C.gold, fontFamily: SANS, fontSize: 12, fontWeight: 700, textDecoration: "underline",
+            }}>Ver todos os {numero(linhas.length)}</button>
+          </div>
+        ) : (
+          <TabelaRepresados linhas={visiveis} />
+        )}
+      </Estado>
+    </>
+  );
+}
+
+function FaixaRepresados({ contas, filtro, onFiltrar }) {
+  const itens = [
+    { key: "todos", rotulo: "represados", valor: contas.todos, cor: C.bright },
+    { key: "elegivel", rotulo: "elegíveis agora", valor: contas.elegivel, cor: C.up },
+    { key: "nunca", rotulo: "nunca convidados", valor: contas.nunca, cor: C.gold },
+    { key: "recente", rotulo: "convidados há ≤30 dias", valor: contas.recente, cor: C.muted },
+    { key: "urgente", rotulo: "vencem em ≤30 dias", valor: contas.urgente, cor: C.warn },
+    { key: "sem_telefone", rotulo: "sem telefone", valor: contas.sem_telefone, cor: C.down },
+  ];
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+      {itens.map((it) => {
+        const ativo = filtro === it.key;
+        const vazio = it.valor === 0 && it.key !== "todos";
+        return (
+          <button key={it.key} onClick={() => onFiltrar(ativo ? "todos" : it.key)} disabled={vazio} aria-pressed={ativo}
+            title={vazio ? "ninguém nesta situação" : ativo ? "Clique para ver todos" : `Filtrar: ${it.rotulo}`}
+            style={{
+              display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1,
+              padding: "6px 10px", borderRadius: 10, fontFamily: SANS, textAlign: "left",
+              cursor: vazio ? "default" : "pointer",
+              background: ativo ? `${it.cor}1C` : "rgba(255,255,255,.03)",
+              border: `1px solid ${ativo ? `${it.cor}66` : C.cardLine}`,
+              opacity: vazio ? 0.45 : 1,
+            }}>
+            <span style={{ fontFamily: GROTESK, fontSize: 15, fontWeight: 700, lineHeight: 1, color: vazio ? C.dim : it.cor }}>{numero(it.valor)}</span>
+            <span style={{ fontSize: 9.5, fontWeight: 700, color: ativo ? it.cor : C.faint, whiteSpace: "nowrap" }}>{it.rotulo}</span>
+          </button>
+        );
+      })}
+      {filtro !== "todos" && (
+        <button onClick={() => onFiltrar("todos")} style={{
+          alignSelf: "center", marginLeft: 2, background: "none", border: "none", padding: "4px 2px",
+          cursor: "pointer", color: C.gold, fontFamily: SANS, fontSize: 11, fontWeight: 700,
+        }}>× limpar filtro</button>
+      )}
+    </div>
+  );
+}
+
+/* Mesma tabela da lista de inscritos: linha de 44px, cabeçalho grudado,
+   sem zebrado. A coluna que decide é a do último convite. */
+function TabelaRepresados({ linhas }) {
+  const cab = (rotulo, extra = {}) => (
+    <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, ...extra }}>{rotulo}</span>
+  );
+  return (
+    <>
+      <style>{`
+        .trGrade { display: grid; grid-template-columns: minmax(0,1.5fr) 128px minmax(0,1.3fr) 74px minmax(0,1fr) 132px; align-items: center; gap: 10px; }
+        @media (max-width: 1100px) { .trGrade { grid-template-columns: minmax(0,1.5fr) 128px 74px minmax(0,1fr) 132px; } .trCurso { display: none; } }
+        @media (max-width: 860px)  { .trGrade { grid-template-columns: minmax(0,1.5fr) 128px 74px 132px; } .trTurma { display: none; } }
+        .trLinha:hover { background: rgba(255,255,255,.02); }
+      `}</style>
+      <div className="rolagem" style={{ maxHeight: 460, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
+        <div className="trGrade" style={{
+          position: "sticky", top: 0, zIndex: 2, background: "#17171c",
+          padding: "8px 12px", borderBottom: `1px solid ${C.cardLine}`,
+        }}>
+          {cab("Nome")}
+          {cab("Telefone")}
+          <span className="trCurso">{cab("Curso")}</span>
+          {cab("Prazo", { textAlign: "right" })}
+          <span className="trTurma">{cab("Próxima turma")}</span>
+          {cab("Último convite", { textAlign: "right" })}
+        </div>
+        {linhas.map((r, i) => <LinhaRepresado key={`${r.aluno_id}-${i}`} r={r} ultima={i === linhas.length - 1} />)}
+      </div>
+    </>
+  );
+}
+
+function LinhaRepresado({ r, ultima }) {
+  const anonimo = semCadastro(r);
+  const zap = linkWhatsapp(r.telefone);
+  const dias = Number(r.dias_restantes ?? 0);
+  const corPrazo = dias <= 30 ? C.down : dias <= 60 ? C.warn : C.muted;
+  const desde = r.dias_desde_o_convite;
+  const apagado = { fontSize: 11.5, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+
+  /* A coluna que decide se faz sentido cobrar de novo. Nunca convidado é
+     ação clara; convidado esta semana é o contrário — e a cor diz qual é
+     qual sem obrigar a ler o número. */
+  const convite = desde == null
+    ? { texto: "nunca", cor: C.gold, peso: 800 }
+    : desde <= 7 ? { texto: desde === 0 ? "hoje" : `há ${desde}d`, cor: C.dim, peso: 600 }
+      : desde <= 90 ? { texto: `há ${desde}d`, cor: C.muted, peso: 600 }
+        : { texto: `há ${Math.round(desde / 30)} meses`, cor: C.up, peso: 800 };
+
+  return (
+    <div className="trGrade trLinha" style={{
+      minHeight: 44, padding: "0 12px", borderBottom: ultima ? "none" : `1px solid ${C.hair}`,
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0 }}>
+        <span style={{
+          fontSize: 13, fontWeight: 700, color: C.text,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }} title={anonimo ? "sem cadastro" : r.nome}>
+          {anonimo ? formataCpf(r.aluno_id) : r.nome}
+        </span>
+        {r.ja_transferiu && <span title="já transferiu de turma antes" style={{ fontSize: 9.5, color: C.dim, flexShrink: 0 }}>já transferiu</span>}
+      </div>
+
+      <div style={apagado}>
+        {zap ? <a href={zap} target="_blank" rel="noreferrer" style={{ color: C.faint, textDecoration: "none" }} title="Abrir conversa no WhatsApp">{formataTelefone(r.telefone)}</a>
+          : <span style={{ color: C.warn }} title="sem telefone — não tem como convidar">sem telefone</span>}
+      </div>
+
+      <div className="trCurso" style={apagado} title={r.curso || ""}>{r.curso || "—"}</div>
+
+      <div style={{ textAlign: "right", fontSize: 12, fontWeight: 700, color: corPrazo, whiteSpace: "nowrap" }}
+           title={`vence em ${dataBR(r.vence_em)}`}>
+        {numero(dias)}d
+      </div>
+
+      <div className="trTurma" style={apagado} title={r.turma_id || ""}>
+        {r.turma_id || "—"}
+        {r.proxima_turma_em && <span style={{ color: C.dim }}> · {dataBR(r.proxima_turma_em)}</span>}
+      </div>
+
+      <div style={{ textAlign: "right", fontSize: 11.5, fontWeight: convite.peso, color: convite.cor, whiteSpace: "nowrap" }}
+           title={r.ultimo_convite_em ? `último convite em ${dataBR(r.ultimo_convite_em)}` : "nunca recebeu convite do sistema"}>
+        {convite.texto}
+      </div>
+    </div>
   );
 }
 
