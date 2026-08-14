@@ -9,16 +9,29 @@
 -- porque ele multiplicava a turma na tela. A vw_turma_inscritos (migration
 -- 115_so_turma_de_verdade) ficou com o join.
 --
--- Medido em 15/08/2026, turmas futuras:
+-- ESCOPO, MEDIDO EM 15/08/2026
+--
+-- `MÉTODO CIS GLOBAL - INTELIGÊNCIA EMOCIONAL` tem TRÊS linhas em
+-- dim_cursos que colapsam no mesmo norm_curso(). O join casa as três, e
+-- cada inscrito vira três. É o ÚNICO curso da grade nessa situação —
+-- conferido curso a curso — mas pega **39 turmas**, não só as futuras:
 --
 --   turma              linhas na view   pessoas reais   fator
+--   2026 - CIS-GL250        246              82          3x
+--   2026 - CIS-GL251        279              93          3x
 --   2026 - CIS-GL252         18               6          3x
 --   2026 - CIS-GL253          6               2          3x
---   as outras seis         igual            igual        1x
+--   ... e mais 35 turmas de CIS Global
 --
--- `MÉTODO CIS GLOBAL - INTELIGÊNCIA EMOCIONAL` tem três linhas em
--- dim_cursos que colapsam no mesmo norm_curso(). O join casa as três, e
--- cada inscrito vira três.
+-- O QUE ESTA CORREÇÃO **NÃO** RESOLVE
+--
+-- Depois de aplicar sobram 40 turmas (de 136 na grade) com mais linhas
+-- que pessoas: 97 linhas a mais no total, pior caso 20. Isso é outro
+-- problema — a MESMA pessoa com duas matrículas aprovadas na MESMA
+-- turma, em fato_base_alunos. `exists` mata o leque do join, não a
+-- matrícula repetida. Se incomodar, o conserto é a montante (na carga)
+-- ou um distinct aqui — mas aí é preciso decidir qual das duas
+-- matrículas manda, e isso é decisão de operação.
 --
 -- O QUE ISSO ESTÁ FAZENDO NA TELA HOJE
 --
@@ -38,11 +51,14 @@
 -- intenção. As duas views que dependem daqui se corrigem junto, sem
 -- precisar recriar nenhuma.
 --
--- Depois de aplicar, conferir:
---   select turma_id, count(*), count(distinct aluno_id)
+-- Depois de aplicar, conferir que o fator 3x sumiu:
+--   select turma_id, count(*) linhas, count(distinct aluno_id) pessoas
 --     from vw_turma_inscritos where tipo = 'confirmacao'
---    group by 1 having count(*) <> count(distinct aluno_id);
+--    group by 1 having count(*) >= 2 * count(distinct aluno_id);
 --   -- tem que voltar vazio.
+--
+-- (A consulta com `<>` no lugar do `>= 2 *` volta as 40 turmas da
+--  matrícula repetida, que não é o que esta migration trata.)
 -- ============================================================
 
 create or replace view public.vw_turma_inscritos as
