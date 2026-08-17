@@ -43,6 +43,9 @@ def para_fato(linha, canal):
         "score": linha.get("score"),
         "faixa": linha.get("faixa"),
         "completo": (completo == "sim"),
+        # escala contínua substitui a bandeira binária (decisão Carmen, ago/2026)
+        "etapas_cumpridas": sum(1 for e in ETAPAS if str(linha.get(e)) == "1"),
+        "etapas_avaliadas": sum(1 for e in ETAPAS if linha.get(e) not in ("", None)),
         "pontos_criticos": [c.strip() for c in criticos.split("|") if c.strip()],
         "ordem_respeitada": linha.get("ordem_respeitada"),
         "temperatura_lead": linha.get("temperatura_lead"),
