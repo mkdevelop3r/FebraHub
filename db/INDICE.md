@@ -135,3 +135,4 @@ Ordem de aplicação e o que cada uma faz. Gerado a partir do cabeçalho de cada
 | 116 | — | número livre: a tentativa de `vw_turmas_central` que ocupava o 116 nunca foi aplicada e foi absorvida pela 117 |
 | 117 | `117_central_estado_real.sql` | FebraHub · Migration 117 — vw_turmas_central: transcrição do que está aplicado (APLICADA) |
 | 118 | `118_inscritos_sem_triplicar.sql` | FebraHub · Migration 118 — vw_turma_inscritos: join → exists. Definição VÁLIDA da view (39 turmas de CIS Global triplicavam) |
+| 119 | `119_auditoria_gate.sql` | FebraHub · Migration 119 — Auditoria: `pode_ver('auditoria')` nas 4 views + policy em `dim_peso_etapa`. **NÃO APLICADA** — hoje qualquer autenticado lê o placar inteiro |

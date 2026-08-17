@@ -10,7 +10,8 @@ import {
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
   Users, Target, Construction, Percent, Filter, ChevronUp,
   Boxes, PackageX, Repeat, UserCheck, BookOpen, ShieldCheck,
-  Check, Pencil, Star, Plus, PhoneCall, Send, Link2, ClipboardList, Search, MoreHorizontal,
+  Check, Pencil, Star, Plus, PhoneCall, Send, Link2, ClipboardList, ClipboardCheck,
+  Search, MoreHorizontal,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
@@ -44,6 +45,7 @@ import {
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
   useEventosDesempenho,
+  useAuditoriaKpi, useAuditoriaGaps, useAuditoriaConsultora, useConformidadeVenda,
   useIntegracaoStatus,
   porMes, moeda, numero,
 } from "./lib/dados";
@@ -89,6 +91,11 @@ const HUBS = [
      'pedagogico'. `setor` existe só por isso — nos outros, a chave já é o
      próprio setor. */
   { key: "central", setor: "pedagogico", nome: "Central Pedagógica", Icone: ClipboardList, desc: "Operação: turmas, represados e presença" },
+  /* Placar fechado: setor próprio ('auditoria'), concedido por perfil_setores
+     a gestão de marketing, gestão comercial, CEO e gerência. NÃO pode ser
+     'comercial' — as consultoras têm esse setor e cairiam dentro. */
+  { key: "auditoria",  nome: "Auditoria",  Icone: ClipboardCheck, titulo: "Auditoria Comercial",
+    desc: "Febracis Bahia · conformidade ao processo de vendas" },
   { key: "eventos",    nome: "Eventos",    Icone: CalendarDays,  desc: "Ingressos e receita líquida" },
   { key: "loja",       nome: "Loja",       Icone: ShoppingBag,   desc: "Vendas, formas de pagamento e recebimento" },
   { key: "estoque",    nome: "Estoque",    Icone: Package,       desc: "Sem fonte conectada" },
@@ -6741,6 +6748,680 @@ function LinhaInscrito({ r, ultima, aberta, onAbrir, onMarcar }) {
   );
 }
 
+/* ============ HUB DE AUDITORIA COMERCIAL (setor 'auditoria') ============
+   Conformidade ao roteiro de vendas da Carmen. É PLACAR FECHADO: quem entra
+   é gestão (marketing, comercial, CEO, gerência), não consultora.
+
+   ATENÇÃO — o fechamento de verdade NÃO está aqui. As quatro views não têm
+   `pode_ver(...)` e `fato_auditoria` está com RLS sem policy, então hoje
+   qualquer autenticado lê o placar direto pela chave anon. Esta tela só
+   esconde o caminho; db/119_auditoria_gate.sql é que fecha a porta, e ainda
+   não foi aplicada. Ver o comentário no topo do bloco em lib/dados.js.
+
+   Três medidas separadas, que a tela nunca funde num número só:
+   score (0-100, ponderado pelos pesos), etapas cumpridas (contagem, 0-N) e
+   sondagem completa (objetivos E desafios na mesma conversa). */
+
+// Rótulo humano de cada etapa do roteiro. A chave é o valor cru de
+// dim_peso_etapa.etapa — o banco fala snake_case, a tela fala português.
+const ETAPAS_ROTULO = {
+  apresentacao: "Apresentação",
+  quebra_gelo: "Quebra-gelo",
+  conhecimento_previo: "Conhecimento prévio",
+  motivo_contato: "Motivo do contato",
+  perfil_profissional: "Perfil profissional",
+  objetivos_futuro: "Objetivos de futuro",
+  desafios_dores: "Desafios e dores",
+  apresentacao_treinamento: "Apresentação do treinamento",
+  validacao_interesse: "Validação de interesse",
+  tratamento_objecoes: "Tratamento de objeções",
+  fechamento: "Fechamento",
+  proximos_passos: "Próximos passos",
+};
+const rotuloEtapa = (e) => ETAPAS_ROTULO[e] ?? String(e ?? "—").replace(/_/g, " ");
+
+/* Critério de cada etapa, exibido no painel lateral. É descrição do que a
+   auditoria mede (nota 1 x nota 0), não regra de cálculo — quem pontua é o
+   ETL, e o front nunca reproduz essa conta.
+
+   PENDENTE DE VALIDAÇÃO: o texto do roteiro da Carmen não existe no
+   repositório nem no banco (procurei em db/, etl/ e nos comentários de
+   coluna de fato_auditoria). Isto aqui foi redigido a partir do nome e do
+   comportamento de cada etapa. Antes de tratar como palavra oficial,
+   passar pela Carmen. Por isso o painel diz "Critério de avaliação", e não
+   "roteiro da Carmen": a tela não assina o que não conferiu. */
+const CRITERIO_ETAPA = {
+  apresentacao: {
+    acerto: "A consultora se identifica pelo nome e diz que fala pela Febracis logo na abertura.",
+    falha: "Entra direto no assunto, ou o lead descobre com quem fala só depois de várias mensagens.",
+  },
+  quebra_gelo: {
+    acerto: "Abre com uma troca cordial antes de puxar o assunto comercial.",
+    falha: "Vai direto ao produto, sem nenhuma aproximação.",
+  },
+  conhecimento_previo: {
+    acerto: "Pergunta o que o lead já conhece da Febracis ou do método antes de explicar.",
+    falha: "Apresenta o treinamento sem checar o que a pessoa já sabe.",
+  },
+  motivo_contato: {
+    acerto: "Deixa claro por que está entrando em contato — evento, indicação, formulário.",
+    falha: "O lead não fica sabendo de onde veio o contato.",
+  },
+  perfil_profissional: {
+    acerto: "Levanta o que a pessoa faz: área, cargo, empresa, momento de carreira.",
+    falha: "Segue a conversa sem saber com quem está falando.",
+  },
+  objetivos_futuro: {
+    acerto: "Pergunta aonde a pessoa quer chegar — meta, plano, o que quer mudar.",
+    falha: "Nenhuma pergunta sobre objetivo. Metade da sondagem fica de fora.",
+  },
+  desafios_dores: {
+    acerto: "Pergunta o que está travando hoje: dificuldade, problema, o que dói.",
+    falha: "Nenhuma pergunta sobre dor. É a etapa de maior peso do roteiro.",
+  },
+  apresentacao_treinamento: {
+    acerto: "Explica o treinamento amarrando ao que o lead contou — objetivo ou dor dele.",
+    falha: "Despeja descrição genérica do produto, igual para qualquer pessoa.",
+  },
+  validacao_interesse: {
+    acerto: "Confere se fez sentido antes de avançar: pergunta o que a pessoa achou.",
+    falha: "Emenda no preço ou no fechamento sem saber se o lead embarcou.",
+  },
+  tratamento_objecoes: {
+    acerto: "Acolhe a objeção e responde com argumento, sem abandonar a conversa.",
+    falha: "Ignora, insiste na mesma fala ou some depois do 'vou pensar'.",
+  },
+  fechamento: {
+    acerto: "Faz o convite direto — proposta, condição, pedido de decisão.",
+    falha: "A conversa acaba sem nenhum convite para comprar.",
+  },
+  proximos_passos: {
+    acerto: "Combina o que acontece agora: data de retorno, envio de material, prazo.",
+    falha: "Encerra em aberto, sem nada marcado.",
+  },
+};
+
+const CANAIS_AUDITORIA = [
+  { key: "whatsapp", label: "WhatsApp" },
+  { key: "ligacao", label: "Ligação" },
+];
+
+/* Recortes de período. "Últimos 30 dias" foi pedido no desenho e NÃO entrou:
+   vw_auditoria_kpi e vw_conformidade_venda agregam por date_trunc('month'),
+   então o menor grão que existe é o mês. Uma janela de 30 dias corridos
+   exigiria outra view — e um botão que recorta por mês com rótulo de 30 dias
+   mentiria. "Trimestre" = o mês corrente e os dois anteriores. */
+const PERIODOS_AUDITORIA = [
+  { key: "mes", label: "Mês corrente", meses: 1 },
+  { key: "tri", label: "Trimestre", meses: 3 },
+  { key: "tudo", label: "Tudo", meses: null },
+];
+
+// Semáforo de falha: verde < 35%, âmbar 35–60%, vermelho > 60%.
+const corFalha = (pct) => (pct > 60 ? C.down : pct >= 35 ? C.warn : C.up);
+// Score é o inverso: quanto maior, melhor. Espelha os mesmos cortes.
+const corScore = (s) => (s == null ? C.faint : s >= 65 ? C.up : s >= 40 ? C.warn : C.down);
+
+// Primeiro dia do mês, N meses atrás, no formato da coluna `mes` (date).
+const mesDesde = (n) => {
+  const d = new Date();
+  return `${new Date(d.getFullYear(), d.getMonth() - (n - 1), 1).getFullYear()}-${
+    String(new Date(d.getFullYear(), d.getMonth() - (n - 1), 1).getMonth() + 1).padStart(2, "0")}-01`;
+};
+
+function BadgeRestrito() {
+  return (
+    <span title="Placar fechado: gestão de marketing, gestão comercial, CEO e gerência." style={{
+      display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0,
+      padding: "5px 10px", borderRadius: 999,
+      background: "rgba(255,255,255,.03)", border: `1px solid ${C.cardLine}`,
+      fontSize: 10.5, fontWeight: 700, color: C.muted, letterSpacing: ".2px",
+    }}>
+      <Lock size={11} style={{ color: C.gold }} /> Visível apenas para gestão
+    </span>
+  );
+}
+
+/* Aviso de recorte que a view não sabe fazer. Aparece onde o filtro do topo
+   não alcança — em vez de o bloco fingir que obedeceu ao chip. */
+function ForaDoRecorte({ texto }) {
+  return (
+    <div style={{ display: "flex", gap: 7, alignItems: "flex-start", marginTop: 10 }}>
+      <AlertTriangle size={11} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+      <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>{texto}</span>
+    </div>
+  );
+}
+
+function HubAuditoria() {
+  const kpi = useAuditoriaKpi();
+  const gaps = useAuditoriaGaps();
+  const placar = useAuditoriaConsultora();
+  const conf = useConformidadeVenda();
+
+  const [canal, setCanal] = useState("whatsapp");
+  const [periodo, setPeriodo] = useState("mes");
+  const [quem, setQuem] = useState(null); // null = todas
+  const [etapaAberta, setEtapaAberta] = useState(null);
+
+  const janela = PERIODOS_AUDITORIA.find((p) => p.key === periodo) ?? PERIODOS_AUDITORIA[0];
+  const desde = janela.meses ? mesDesde(janela.meses) : null;
+  const noPeriodo = (l) => desde == null || String(l.mes ?? "") >= desde;
+
+  // Consultoras do canal — a lista do chip e do placar saem da mesma fonte.
+  const consultoras = useMemo(() => {
+    const s = new Set();
+    for (const l of placar.data ?? []) if (l.canal === canal && l.consultora) s.add(l.consultora);
+    return [...s].sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [placar.data, canal]);
+
+  // Consultora que sumiu ao trocar de canal não deixa a tela vazia: o valor
+  // ATIVO é derivado, como no Marketing.
+  const quemAtiva = quem != null && consultoras.includes(quem) ? quem : null;
+
+  /* KPIs: a view já traz uma linha por (canal, mês). Somar os contadores e
+     REPONDERAR as médias pelo número de auditadas — média de médias mensais
+     daria peso igual a um mês de 1 conversa e a um de 27. */
+  const k = useMemo(() => {
+    const linhas = (kpi.data ?? []).filter((l) => l.canal === canal && noPeriodo(l));
+    if (!linhas.length) return null;
+    const soma = (c) => linhas.reduce((s, l) => s + Number(l[c] ?? 0), 0);
+    const auditadas = soma("auditadas");
+    const pond = (c) => (auditadas
+      ? linhas.reduce((s, l) => s + Number(l[c] ?? 0) * Number(l.auditadas ?? 0), 0) / auditadas
+      : null);
+    return {
+      auditadas,
+      score: pond("score_medio"),
+      etapas: pond("etapas_medias"),
+      possiveis: Math.max(...linhas.map((l) => Number(l.etapas_possiveis ?? 0))),
+      sondagem: soma("sondagem_completa"),
+      quentes: soma("leads_quentes"),
+      audios: soma("audios"),
+    };
+  }, [kpi.data, canal, periodo]);
+
+  /* Falha por etapa. Sem consultora escolhida, a linha da EQUIPE é
+     sum(falhas)/sum(avaliadas) — nunca a média das porcentagens por
+     consultora, que daria o mesmo peso a quem tem 15 conversas e a quem tem
+     1. `avaliadas` varia por etapa (nota nula = não se aplica), então cada
+     etapa tem o próprio denominador. */
+  const etapas = useMemo(() => {
+    const m = new Map();
+    for (const l of gaps.data ?? []) {
+      if (l.canal !== canal) continue;
+      if (quemAtiva != null && l.consultora !== quemAtiva) continue;
+      const e = m.get(l.etapa) ?? {
+        etapa: l.etapa, peso: Number(l.peso ?? 0), ordem: Number(l.ordem ?? 0),
+        avaliadas: 0, falhas: 0, porConsultora: [],
+      };
+      e.avaliadas += Number(l.avaliadas ?? 0);
+      e.falhas += Number(l.falhas ?? 0);
+      if (l.consultora) e.porConsultora.push({
+        consultora: l.consultora,
+        avaliadas: Number(l.avaliadas ?? 0),
+        falhas: Number(l.falhas ?? 0),
+      });
+      m.set(l.etapa, e);
+    }
+    return [...m.values()]
+      .filter((e) => e.avaliadas > 0)
+      .map((e) => ({ ...e, pct: (e.falhas / e.avaliadas) * 100 }))
+      .sort((a, b) => b.pct - a.pct || b.peso - a.peso);
+  }, [gaps.data, canal, quemAtiva]);
+
+  /* Pesos do canal. Deveriam vir de dim_peso_etapa, mas a RLS daquela tabela
+     devolve 0 linhas para `authenticated` (ver lib/dados.js). A gaps carrega
+     peso e ordem vindos do mesmo dim_peso_etapa pelo join, então é o mesmo
+     dado por um caminho que hoje funciona. */
+  const pesos = useMemo(() => {
+    const m = new Map();
+    for (const l of gaps.data ?? []) {
+      if (l.canal !== canal) continue;
+      m.set(l.etapa, { etapa: l.etapa, peso: Number(l.peso ?? 0), ordem: Number(l.ordem ?? 0) });
+    }
+    return [...m.values()].sort((a, b) => a.ordem - b.ordem);
+  }, [gaps.data, canal]);
+
+  const linhasPlacar = useMemo(() => (placar.data ?? [])
+    .filter((l) => l.canal === canal)
+    .filter((l) => quemAtiva == null || l.consultora === quemAtiva)
+    .sort((a, b) => Number(b.score_medio ?? 0) - Number(a.score_medio ?? 0)),
+    [placar.data, canal, quemAtiva]);
+
+  const pontos = useMemo(() => (conf.data ?? [])
+    .filter(noPeriodo)
+    .filter((l) => quemAtiva == null || l.consultora === quemAtiva),
+    [conf.data, periodo, quemAtiva]);
+
+  const rotuloCanal = CANAIS_AUDITORIA.find((c) => c.key === canal)?.label ?? canal;
+  const etapaSel = etapaAberta ? etapas.find((e) => e.etapa === etapaAberta) : null;
+
+  return (
+    <Estado
+      carregando={kpi.isLoading || gaps.isLoading || placar.isLoading}
+      erro={kpi.error ?? gaps.error ?? placar.error}
+      vazio={!kpi.data?.length && !gaps.data?.length}
+      vazioTitulo="Sem auditorias registradas"
+      vazioDica="A vw_auditoria_kpi não retornou linhas — ou a carga do run_auditoria ainda não rodou, ou seu perfil não tem acesso a este painel."
+    >
+      <div style={{
+        display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap",
+        padding: "10px 14px", marginBottom: 16, borderRadius: 12,
+        background: "rgba(255,255,255,.022)", border: `1px solid ${C.cardLine}`,
+      }}>
+        <Filter size={13} style={{ color: C.faint, flexShrink: 0 }} />
+        <Segmentado label="Período" valor={periodo} onChange={setPeriodo}
+          opcoes={PERIODOS_AUDITORIA.map((p) => ({ key: p.key, label: p.label }))} />
+        <Segmentado label="Canal" valor={canal} onChange={setCanal} opcoes={CANAIS_AUDITORIA} />
+        {consultoras.length > 0 && (
+          <Segmentado label="Consultora" valor={quemAtiva} onChange={setQuem}
+            opcoes={[{ key: null, label: "Todas" }, ...consultoras.map((c) => ({ key: c, label: c }))]} />
+        )}
+        <span style={{ marginLeft: "auto" }}><BadgeRestrito /></span>
+      </div>
+
+      {k == null ? (
+        <CanalSemDado canal={canal} rotulo={rotuloCanal} />
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 18 }}>
+            <ChipKpi Icone={ClipboardCheck} label="Conversas auditadas" hero
+              valor={numero(k.auditadas)}
+              sub={`${rotuloCanal} · ${janela.label.toLowerCase()}`} />
+            <ChipKpi Icone={Target} label="Score médio"
+              valor={<span style={{ color: corScore(k.score) }}>{k.score == null ? "—" : k.score.toFixed(0)}</span>}
+              unidade="/100"
+              sub="ponderado pelo peso das etapas" />
+            <ChipKpi Icone={ShieldCheck} label="Etapas cumpridas"
+              valor={k.etapas == null ? "—" : k.etapas.toFixed(1).replace(".", ",")}
+              unidade={`de ${k.possiveis || "—"}`}
+              sub="média por conversa" />
+            <ChipKpi Icone={Search} label="Sondagem completa"
+              valor={<span style={{ color: k.sondagem ? C.up : C.down }}>{numero(k.sondagem)}</span>}
+              unidade={`de ${numero(k.auditadas)}`}
+              sub="objetivos E desafios na mesma conversa" />
+            <ChipKpi Icone={Smile} label="Leads quentes"
+              valor={numero(k.quentes)} unidade={`de ${numero(k.auditadas)}`}
+              sub={`${k.audios ? numero(k.audios) : "nenhum"} áudio${k.audios === 1 ? "" : "s"} no período`} />
+          </div>
+
+          <div className="gridAud">
+            <FalhaPorEtapa
+              linhas={etapas}
+              recorte={quemAtiva ?? "equipe"}
+              onEtapa={setEtapaAberta}
+              periodoIgnorado={periodo !== "tudo"}
+            />
+            <ConformidadeVenda pontos={pontos} janela={janela.label} canalIgnorado={canal} />
+          </div>
+
+          <div className="gridAud">
+            <PlacarConsultoras linhas={linhasPlacar} periodoIgnorado={periodo !== "tudo"} />
+            <TabelaPesos linhas={pesos} rotuloCanal={rotuloCanal} />
+          </div>
+        </>
+      )}
+
+      {etapaSel && (
+        <DrawerEtapa etapa={etapaSel} onFechar={() => setEtapaAberta(null)} />
+      )}
+    </Estado>
+  );
+}
+
+/* Canal sem uma auditoria sequer. Não é gráfico vazio nem zero — é a
+   explicação de por que não há dado, que é a informação que a gestão
+   precisa. Hoje cai aqui a Ligação. */
+function CanalSemDado({ canal, rotulo }) {
+  return (
+    <div style={{
+      display: "flex", gap: 13, alignItems: "flex-start",
+      background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 16,
+      padding: "26px 24px",
+    }}>
+      <PhoneCall size={17} style={{ color: C.faint, marginTop: 2, flexShrink: 0 }} />
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 700, color: C.bright }}>
+          Sem {canal === "ligacao" ? "ligações" : `conversas de ${rotulo}`} no período
+        </div>
+        <div style={{ fontSize: 12.5, color: C.faint, marginTop: 6, lineHeight: 1.6, maxWidth: 520 }}>
+          {canal === "ligacao"
+            ? "As consultoras ainda não usam o discador do CRM, então não há gravação para auditar. O roteiro de ligação tem 12 etapas e já está pesado no banco — o painel liga sozinho quando a primeira ligação entrar."
+            : "Nenhuma auditoria neste canal dentro do recorte escolhido. Amplie o período ou confira se a carga rodou."}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Gráfico principal: barras horizontais, maior falha no topo. O peso vai ao
+   lado do nome porque falhar 100% numa etapa de peso 5 e numa de peso 15
+   custa coisas diferentes — sem o peso à vista, a ordem parece arbitrária. */
+function FalhaPorEtapa({ linhas, recorte, onEtapa, periodoIgnorado }) {
+  return (
+    <Bloco titulo="Falha por etapa do roteiro"
+      canto={recorte === "equipe" ? "equipe" : recorte}>
+      {!linhas.length ? (
+        <div style={{ fontSize: 12.5, color: C.faint, padding: "18px 0" }}>
+          Nenhuma etapa avaliada neste recorte.
+        </div>
+      ) : (
+        <>
+          {linhas.map((l) => (
+            <LinhaEtapaFalha key={l.etapa} l={l} onClick={() => onEtapa(l.etapa)} />
+          ))}
+          <div style={{ fontSize: 10.5, color: C.dim, marginTop: 12, lineHeight: 1.5 }}>
+            Clique numa etapa para ver o critério de acerto e falha. O denominador é
+            só o que foi avaliado: etapa que não se aplica à conversa fica de fora.
+          </div>
+          {periodoIgnorado && (
+            <ForaDoRecorte texto="Este bloco mostra a base inteira, não o período escolhido: a vw_auditoria_gaps agrega sem coluna de data. Preferi manter o número certo a rotulá-lo com um recorte que ele não tem." />
+          )}
+        </>
+      )}
+    </Bloco>
+  );
+}
+
+function LinhaEtapaFalha({ l, onClick }) {
+  const cor = corFalha(l.pct);
+  return (
+    <button onClick={onClick} style={{
+      display: "block", width: "100%", textAlign: "left", background: "none",
+      border: "none", borderBottom: `1px solid ${C.hair}`, cursor: "pointer",
+      padding: "8px 0", fontFamily: SANS,
+    }}>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 5 }}>
+        <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: C.bright }}>{rotuloEtapa(l.etapa)}</span>
+          <span style={{ fontSize: 10.5, color: C.dim, marginLeft: 7 }}>peso {l.peso}</span>
+        </span>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 7, flexShrink: 0 }}>
+          <span style={{ fontSize: 10, color: C.dim }}>{l.falhas}/{l.avaliadas}</span>
+          <span style={{ fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, color: cor }}>
+            {l.pct.toFixed(0)}%
+          </span>
+        </span>
+      </div>
+      <div style={{ height: 6, borderRadius: 3, background: "rgba(255,255,255,.05)", overflow: "hidden" }}>
+        <div style={{ width: `${l.pct}%`, height: "100%", borderRadius: 3, background: cor }} />
+      </div>
+    </button>
+  );
+}
+
+function DrawerEtapa({ etapa, onFechar }) {
+  const crit = CRITERIO_ETAPA[etapa.etapa];
+  const cor = corFalha(etapa.pct);
+  const caixa = (titulo, texto, corTitulo) => (
+    <div style={{
+      background: "rgba(255,255,255,.03)", border: `1px solid ${C.cardLine}`,
+      borderRadius: 11, padding: "12px 14px", marginBottom: 10,
+    }}>
+      <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", color: corTitulo, marginBottom: 6 }}>
+        {titulo}
+      </div>
+      <div style={{ fontSize: 12.5, color: C.bright, lineHeight: 1.6 }}>{texto}</div>
+    </div>
+  );
+  return (
+    <DrawerLado titulo={rotuloEtapa(etapa.etapa)}
+      sub={`peso ${etapa.peso} · ${etapa.falhas} falhas em ${etapa.avaliadas} conversas avaliadas`}
+      onFechar={onFechar} largura={460}>
+
+      <div style={{ display: "flex", alignItems: "baseline", gap: 9, marginBottom: 16 }}>
+        <span style={{ fontFamily: GROTESK, fontSize: 34, fontWeight: 700, color: cor, letterSpacing: "-1px" }}>
+          {etapa.pct.toFixed(0)}%
+        </span>
+        <span style={{ fontSize: 12, color: C.faint }}>das conversas falharam nesta etapa</span>
+      </div>
+
+      <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", color: C.dim, marginBottom: 9 }}>
+        Critério de avaliação
+      </div>
+      {crit
+        ? (<>
+            {caixa("Acerto · nota 1", crit.acerto, C.up)}
+            {caixa("Falha · nota 0", crit.falha, C.down)}
+          </>)
+        : (<div style={{ fontSize: 12.5, color: C.faint, lineHeight: 1.6, marginBottom: 10 }}>
+            Sem critério cadastrado para esta etapa.
+          </div>)}
+
+      {etapa.porConsultora.length > 1 && (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", color: C.dim, margin: "18px 0 9px" }}>
+            Por consultora
+          </div>
+          {[...etapa.porConsultora]
+            .sort((a, b) => (b.falhas / (b.avaliadas || 1)) - (a.falhas / (a.avaliadas || 1)))
+            .map((c) => {
+              const pct = c.avaliadas ? (c.falhas / c.avaliadas) * 100 : null;
+              return (
+                <div key={c.consultora} style={{
+                  display: "flex", alignItems: "center", justifyContent: "space-between",
+                  gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.hair}`,
+                }}>
+                  <span style={{ fontSize: 12.5, color: C.bright, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {c.consultora}
+                  </span>
+                  <span style={{ display: "flex", alignItems: "baseline", gap: 8, flexShrink: 0 }}>
+                    <span style={{ fontSize: 10, color: C.dim }}>{c.falhas}/{c.avaliadas}</span>
+                    <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: pct == null ? C.faint : corFalha(pct) }}>
+                      {pct == null ? "—" : `${pct.toFixed(0)}%`}
+                    </span>
+                  </span>
+                </div>
+              );
+            })}
+        </>
+      )}
+    </DrawerLado>
+  );
+}
+
+/* Dispersão conformidade × venda. As medianas vêm da view (score_mediano,
+   receita_mediana) e são calculadas SÓ entre quem tem amostra suficiente —
+   quando ninguém tem, elas voltam nulas e não há quadrante nenhum. Nesse
+   caso o gráfico não desenha linha de corte: inventar uma mediana com 3
+   pessoas de 1 a 15 conversas classificaria gente que a view se recusou a
+   classificar. */
+function ConformidadeVenda({ pontos, janela, canalIgnorado }) {
+  const L = 44, B = 30, W = 480, H = 250;
+
+  const medX = pontos.find((p) => p.score_mediano != null)?.score_mediano ?? null;
+  const medY = pontos.find((p) => p.receita_mediana != null)?.receita_mediana ?? null;
+
+  const comReceita = pontos.filter((p) => p.receita != null);
+  const maxY = Math.max(...comReceita.map((p) => Number(p.receita)), Number(medY ?? 0), 1);
+  const px = (s) => L + (Math.min(Math.max(Number(s ?? 0), 0), 100) / 100) * (W - L - 14);
+  const py = (r) => H - B - (Number(r ?? 0) / maxY) * (H - B - 16);
+
+  const semVenda = pontos.filter((p) => p.receita == null);
+
+  return (
+    <Bloco titulo="Conformidade × venda real" canto={janela}>
+      {!pontos.length ? (
+        <div style={{ fontSize: 12.5, color: C.faint, padding: "18px 0" }}>
+          Sem consultora com auditoria e venda no período.
+        </div>
+      ) : (
+        <>
+          <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+            <line x1={L} y1={H - B} x2={W - 6} y2={H - B} stroke="rgba(255,255,255,.12)" />
+            <line x1={L} y1={12} x2={L} y2={H - B} stroke="rgba(255,255,255,.12)" />
+
+            {medX != null && medY != null && (
+              <>
+                <line x1={px(medX)} y1={12} x2={px(medX)} y2={H - B} stroke={C.gold} strokeOpacity=".45" strokeDasharray="4 4" />
+                <line x1={L} y1={py(medY)} x2={W - 6} y2={py(medY)} stroke={C.gold} strokeOpacity=".45" strokeDasharray="4 4" />
+                <text x={px(medX) + 4} y={20} fill={C.dim} fontSize="9">mediana</text>
+              </>
+            )}
+
+            {[0, 25, 50, 75, 100].map((s) => (
+              <text key={s} x={px(s)} y={H - B + 13} fill={C.dim} fontSize="9" textAnchor="middle">{s}</text>
+            ))}
+            <text x={L} y={H - 4} fill={C.faint} fontSize="9.5">score médio →</text>
+            <text x={6} y={20} fill={C.faint} fontSize="9.5">receita ↑</text>
+
+            {comReceita.map((p) => {
+              const ok = p.amostra_suficiente;
+              return (
+                <g key={`${p.mes}-${p.consultora}`}>
+                  <circle cx={px(p.score_medio)} cy={py(p.receita)} r={6}
+                    fill={ok ? C.gold : "rgba(255,255,255,.16)"}
+                    stroke={ok ? C.goldTop : C.faint} strokeWidth="1" />
+                  <text x={px(p.score_medio) + 10} y={py(p.receita) + 3.5}
+                    fill={ok ? C.bright : C.faint} fontSize="10">
+                    {p.consultora}
+                  </text>
+                  {!ok && (
+                    <text x={px(p.score_medio) + 10} y={py(p.receita) + 14}
+                      fill={C.dim} fontSize="8.5">amostra insuficiente</text>
+                  )}
+                </g>
+              );
+            })}
+          </svg>
+
+          {medX == null && (
+            <div style={{ fontSize: 11, color: C.faint, lineHeight: 1.6, marginTop: 4 }}>
+              Sem linhas de mediana e sem quadrantes: nenhuma consultora chegou às
+              20 auditorias que a view exige para classificar. Os pontos aparecem em
+              cinza porque estão medidos, não julgados —{" "}
+              <span style={{ color: C.muted }}>modelo, treinar, revisar roteiro e acompanhar</span>{" "}
+              voltam sozinhos quando a amostra crescer.
+            </div>
+          )}
+          {semVenda.length > 0 && (
+            <div style={{ fontSize: 10.5, color: C.dim, marginTop: 8 }}>
+              Fora do gráfico, sem venda atribuída no período: {semVenda.map((p) => p.consultora).join(", ")}.
+            </div>
+          )}
+          {canalIgnorado === "ligacao" && (
+            <ForaDoRecorte texto="A vw_conformidade_venda não separa por canal — este bloco soma WhatsApp e ligação." />
+          )}
+        </>
+      )}
+    </Bloco>
+  );
+}
+
+/* Placar por consultora. Quem não tem 20 auditorias NÃO recebe posição: a
+   coluna de posição fica com um traço. A linha continua visível — esconder
+   quem tem pouca amostra deixaria a gestão achando que a pessoa não foi
+   auditada. */
+function PlacarConsultoras({ linhas, periodoIgnorado }) {
+  const th = {
+    fontSize: 10, fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase",
+    color: C.dim, padding: "0 0 8px", textAlign: "right", whiteSpace: "nowrap",
+  };
+  const td = { fontFamily: GROTESK, fontSize: 13, fontWeight: 700, padding: "9px 0", textAlign: "right", whiteSpace: "nowrap" };
+  let posicao = 0;
+  return (
+    <Bloco titulo="Placar por consultora" canto={`${linhas.length} ${linhas.length === 1 ? "consultora" : "consultoras"}`}>
+      {!linhas.length ? (
+        <div style={{ fontSize: 12.5, color: C.faint, padding: "18px 0" }}>Sem consultora neste recorte.</div>
+      ) : (
+        <>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${C.hair}` }}>
+                <th style={{ ...th, textAlign: "left", width: 28 }}>#</th>
+                <th style={{ ...th, textAlign: "left", width: "40%" }}>Consultora</th>
+                <th style={th}>Auditadas</th>
+                <th style={th}>Score</th>
+                <th style={th}>Etapas</th>
+                <th style={th}>Pior–melhor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {linhas.map((l) => {
+                const ok = l.amostra_suficiente;
+                if (ok) posicao += 1;
+                return (
+                  <tr key={`${l.canal}-${l.consultora}`} style={{ borderBottom: `1px solid ${C.hair}` }}>
+                    <td style={{ ...td, textAlign: "left", color: ok ? C.gold : C.dim }}>
+                      {ok ? posicao : "—"}
+                    </td>
+                    <td style={{
+                      fontSize: 12.5, fontWeight: 600, padding: "9px 0", textAlign: "left",
+                      color: ok ? C.bright : C.muted, maxWidth: 0,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    }} title={ok ? l.consultora : `${l.consultora} — amostra insuficiente para classificar`}>
+                      {l.consultora}
+                      {!ok && <span style={{ fontSize: 10, color: C.dim, marginLeft: 7 }}>amostra insuficiente</span>}
+                    </td>
+                    <td style={{ ...td, color: C.muted }}>{numero(l.auditadas)}</td>
+                    <td style={{ ...td, color: corScore(Number(l.score_medio)) }}>
+                      {l.score_medio == null ? "—" : Number(l.score_medio).toFixed(0)}
+                    </td>
+                    <td style={{ ...td, color: C.text }}>
+                      {l.etapas_medias == null ? "—" : String(l.etapas_medias).replace(".", ",")}
+                    </td>
+                    <td style={{ ...td, color: C.muted }}>{l.pior ?? "—"}–{l.melhor ?? "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <div style={{ fontSize: 10.5, color: C.dim, marginTop: 10, lineHeight: 1.5 }}>
+            Posição só para quem tem 20 auditorias ou mais. Score e etapas cumpridas
+            são medidas distintas e ficam em colunas separadas de propósito.
+          </div>
+          {periodoIgnorado && (
+            <ForaDoRecorte texto="Números de toda a base: a vw_auditoria_consultora agrega sem coluna de data e não acompanha o filtro de período." />
+          )}
+        </>
+      )}
+    </Bloco>
+  );
+}
+
+/* Tabela de pesos. Fica à vista por transparência: o score é ponderado, e
+   sem ver quanto cada etapa vale o número parece arbitrário. */
+function TabelaPesos({ linhas, rotuloCanal }) {
+  const total = linhas.reduce((s, l) => s + l.peso, 0);
+  return (
+    <Bloco titulo="Peso de cada etapa" canto={rotuloCanal}>
+      {!linhas.length ? (
+        <div style={{ fontSize: 12.5, color: C.faint, padding: "18px 0" }}>
+          Sem pesos cadastrados para este canal.
+        </div>
+      ) : (
+        <>
+          {linhas.map((l) => (
+            <div key={l.etapa} style={{
+              display: "flex", alignItems: "center", gap: 10,
+              padding: "6px 0", borderBottom: `1px solid ${C.hair}`,
+            }}>
+              <span style={{ fontSize: 10, color: C.dim, width: 16, flexShrink: 0, fontFamily: GROTESK }}>{l.ordem}</span>
+              <span style={{ fontSize: 12.5, color: C.bright, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {rotuloEtapa(l.etapa)}
+              </span>
+              <span style={{ width: 84, height: 5, borderRadius: 3, background: "rgba(255,255,255,.05)", overflow: "hidden", flexShrink: 0 }}>
+                <span style={{
+                  display: "block", width: `${(l.peso / Math.max(...linhas.map((x) => x.peso), 1)) * 100}%`,
+                  height: "100%", borderRadius: 3, background: `linear-gradient(90deg, ${C.goldBase}, ${C.gold})`,
+                }} />
+              </span>
+              <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: C.text, width: 30, textAlign: "right", flexShrink: 0 }}>
+                {l.peso}
+              </span>
+            </div>
+          ))}
+          <div style={{ fontSize: 10.5, color: C.dim, marginTop: 10, lineHeight: 1.5 }}>
+            Soma {total} pontos em {linhas.length} etapas. É quanto cada etapa desconta
+            do score quando a consultora não a cumpre.
+          </div>
+        </>
+      )}
+    </Bloco>
+  );
+}
+
 function Shell({ perfil }) {
   // União de setores: o setor do perfil + os de perfil_setores (já vêm em
   // perfil.setores). Admin/geral seguem vendo tudo, agora também se "geral"
@@ -6808,6 +7489,7 @@ function Shell({ perfil }) {
       case "marketing":  return <HubMarketing />;
       case "pedagogico": return <HubPedagogico />;
       case "central":    return <CentralPedagogica />;
+      case "auditoria":  return <HubAuditoria />;
       case "eventos":    return <HubEventos />;
       case "loja":       return <HubLoja />;
       case "estoque":    return <SemFonte hub={hub} />;
@@ -6872,6 +7554,10 @@ function Shell({ perfil }) {
            pra caber numa TV 16:9 sem rolagem. */
         .gridCom { display: grid; grid-template-columns: 1fr; column-gap: 14px; align-items: start; }
         @media (min-width: 1100px) { .gridCom { grid-template-columns: 7fr 5fr; } }
+        /* Auditoria: gráfico à esquerda, contexto à direita, nas duas faixas.
+           Denso o bastante pra caber em 1080 sem rolagem. */
+        .gridAud { display: grid; grid-template-columns: 1fr; column-gap: 16px; align-items: start; }
+        @media (min-width: 1100px) { .gridAud { grid-template-columns: 6fr 5fr; } }
         @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
       `}</style>
 
@@ -6948,7 +7634,9 @@ function Shell({ perfil }) {
               <h1 style={{ fontSize: 29, fontWeight: 800, letterSpacing: "-.6px", fontFamily: SANS }}>
                 {tela === "executivo"
                   ? `${saudacao}, ${primeiroNome}.`
-                  : hub?.nome}
+                  /* `titulo` existe pra quando o nome do menu precisa ser curto
+                     e o do cabeçalho, completo. Sem ele, é o mesmo texto. */
+                  : (hub?.titulo ?? hub?.nome)}
               </h1>
               {tela !== "executivo" && (
                 <div style={{ fontSize: 13, color: C.faint, marginTop: 5 }}>{hub?.desc}</div>
@@ -6958,7 +7646,10 @@ function Shell({ perfil }) {
             <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
               {/* Executivo é sempre mês corrente — sem filtro de período. Os hubs
                   setoriais mantêm o seletor (é lá que a Dulce fatia por período). */}
-              {tela !== "executivo" && <SeletorPeriodo />}
+              {/* Auditoria traz o próprio recorte de período nos chips: as views
+                  dela agregam por mês, e o seletor global (que fatia por dia)
+                  prometeria um corte que elas não sabem fazer. */}
+              {tela !== "executivo" && tela !== "auditoria" && <SeletorPeriodo />}
               {tela === "comercial" && <SeletorCategoria />}
               <div style={{
                 width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.cardLine}`,

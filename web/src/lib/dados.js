@@ -806,6 +806,40 @@ export const useDiretoriaConsol   = () => useView("vw_diretoria_consolidado");
 export const useIntegracaoStatus  = () => useView("vw_integracao_status");
 
 /* ============================================================
+   AUDITORIA COMERCIAL — placar fechado
+   ============================================================
+   As quatro views já agregam tudo (score, gaps, placar, quadrantes). O
+   front NÃO recalcula nenhuma delas: só recorta e ordena.
+
+   Duas ressalvas medidas no banco em 17/08/2026, que explicam o formato
+   dos hooks abaixo:
+
+   1. NENHUMA das quatro tem o gate `pode_ver(...)` que todas as views de
+      comercial/financeiro têm, e `fato_auditoria` está com RLS ligada e
+      ZERO policies. Como as views pertencem ao postgres e não são
+      `security_invoker`, elas passam por cima da RLS da tabela: qualquer
+      usuário autenticado — consultora inclusive — lê o placar inteiro
+      pela chave anon, que vai no bundle. Esconder o item da sidebar não
+      fecha isso. O gate está escrito em db/119_auditoria_gate.sql,
+      AGUARDANDO aplicação.
+
+   2. `dim_peso_etapa` é tabela, não view, e a RLS dela devolve 0 linhas
+      para `authenticated` (mesma causa: RLS ligada, sem policy). Por isso
+      a tabela de pesos da tela lê de vw_auditoria_gaps, que carrega
+      canal/etapa/peso/ordem vindos do próprio dim_peso_etapa pelo join —
+      é o MESMO dado, por um caminho que hoje funciona. Depois da 119 dá
+      pra trocar por usePesoEtapa() e cobrir também os canais sem
+      auditoria nenhuma. */
+export const useAuditoriaKpi = () =>
+  useView("vw_auditoria_kpi", { ordem: ["canal", "mes"] });
+export const useAuditoriaGaps = () =>
+  useView("vw_auditoria_gaps", { ordem: ["canal", "consultora", "ordem"] });
+export const useAuditoriaConsultora = () =>
+  useView("vw_auditoria_consultora", { ordem: ["canal", "consultora"] });
+export const useConformidadeVenda = () =>
+  useView("vw_conformidade_venda", { ordem: ["mes", "consultora"] });
+
+/* ============================================================
    AGREGAÇÃO — as views vem agrupadas por mes.
    O KPI compara o ultimo mes fechado com o anterior.
    ============================================================ */
