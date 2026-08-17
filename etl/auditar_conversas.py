@@ -159,6 +159,7 @@ def carregar_transcricoes(caminho="transcricoes.csv"):
 def montar_conversa(msgs, transcricoes):
     """Devolve (texto_da_conversa, consultora, humanas, audio_pendente)."""
     linhas, consultora, humanas, pendente = [], None, 0, 0
+    consultora_uid = None
     for m in sorted(msgs, key=lambda x: x.get("dateAdded") or ""):
         if m.get("messageType", "").startswith("TYPE_ACTIVITY"):
             continue                                  # evento de funil, não é fala
@@ -170,6 +171,7 @@ def montar_conversa(msgs, transcricoes):
 
         if eh_saida and uid in GGB:
             consultora = GGB[uid]
+            consultora_uid = uid
 
         if anexos and not corpo:                      # mensagem de mídia
             t = transcricoes.get(m.get("id"))
@@ -193,7 +195,7 @@ def montar_conversa(msgs, transcricoes):
 
         data = (m.get("dateAdded") or "")[:16].replace("T", " ")
         linhas.append(f"[{data}] {quem}: {corpo}")
-    return "\n".join(linhas), consultora, humanas, pendente
+    return "\n".join(linhas), consultora, consultora_uid, humanas, pendente
 
 
 def auditar(texto, cid, contact_id, consultora):
@@ -257,13 +259,14 @@ def calcular_score(etapas):
     return valor, faixa
 
 
-def linha_csv(a, cid, consultora, humanas, n_audios):
+def linha_csv(a, cid, consultora, user_id, humanas, n_audios):
     etapas = a.get("etapas", {})
     score, faixa = calcular_score(etapas)
     criticos = [k for k in CRITICOS if (a.get("criticos") or {}).get(k)]
     linha = {
         "conversation_id": cid,
         "consultora": consultora,
+        "user_id": user_id,
         "msgs_humanas": humanas,
         "audios_usados": n_audios,
         "score": score,
@@ -308,7 +311,7 @@ if __name__ == "__main__":
             print(f"{cid}: ! {detalhe_erro(e)}")
             continue
 
-        texto, consultora, humanas, pendente = montar_conversa(msgs, transcricoes)
+        texto, consultora, consultora_uid, humanas, pendente = montar_conversa(msgs, transcricoes)
 
         if pendente:
             print(f"{cid}: pulada — {pendente} áudio(s) sem transcrição")
@@ -324,7 +327,7 @@ if __name__ == "__main__":
             print(f"{cid}: ! auditoria falhou — {detalhe_erro(e)}")
             continue
 
-        linha = linha_csv(a, cid, consultora, humanas, n_audios)
+        linha = linha_csv(a, cid, consultora, consultora_uid, humanas, n_audios)
         resultados.append(linha)
         marca = "COMPLETO" if linha["atendimento_completo"] == "sim" else \
                 f"{len(linha['pontos_criticos'].split(' | '))} críticos"
