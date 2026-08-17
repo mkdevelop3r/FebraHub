@@ -7187,17 +7187,9 @@ function FalhaPorEtapa({ linhas, recorte, onEtapa, periodoIgnorado }) {
         </div>
       ) : (
         <>
-          {/* Só a LISTA rola, com a altura que os outros hubs usam. As notas
-              de baixo ficam de fora do recorte de propósito: são elas que
-              explicam o denominador e avisam que o período não alcança este
-              bloco — enterrá-las abaixo da dobra seria esconder a ressalva.
-              A ordem é da maior falha para a menor, então o que aparece sem
-              rolar é justamente o que a gestão precisa ver. */}
-          <div className="rolagem" style={{ maxHeight: ALTURA_PAINEL, overflowY: "auto", marginRight: -6, paddingRight: 6 }}>
-            {linhas.map((l) => (
-              <LinhaEtapaFalha key={l.etapa} l={l} onClick={() => onEtapa(l.etapa)} />
-            ))}
-          </div>
+          {linhas.map((l) => (
+            <LinhaEtapaFalha key={l.etapa} l={l} onClick={() => onEtapa(l.etapa)} />
+          ))}
           <div style={{ fontSize: 10.5, color: C.dim, marginTop: 12, lineHeight: 1.5 }}>
             Clique numa etapa para ver o critério de acerto e falha. O denominador é
             só o que foi avaliado: etapa que não se aplica à conversa fica de fora.
