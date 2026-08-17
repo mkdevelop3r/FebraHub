@@ -7119,19 +7119,25 @@ function HubAuditoria() {
               sub={`${k.audios ? numero(k.audios) : "nenhum"} áudio${k.audios === 1 ? "" : "s"} no período`} />
           </div>
 
+          {/* Duas COLUNAS que empilham sozinhas, não duas faixas. Em faixa, a
+              altura da linha é ditada pelo bloco mais alto (o gráfico de
+              falhas, que tem 10-12 etapas), e a coluna da direita ficava com
+              um buraco entre a dispersão e a tabela de pesos. Empilhando por
+              coluna, cada bloco sobe até encostar no de cima. */}
           <div className="gridAud">
-            <FalhaPorEtapa
-              linhas={etapas}
-              recorte={quemAtiva ?? "equipe"}
-              onEtapa={setEtapaAberta}
-              periodoIgnorado={periodo !== "tudo"}
-            />
-            <ConformidadeVenda pontos={pontos} janela={janela.label} canalIgnorado={canal} />
-          </div>
-
-          <div className="gridAud">
-            <PlacarConsultoras linhas={linhasPlacar} periodoIgnorado={periodo !== "tudo"} />
-            <TabelaPesos linhas={pesos} rotuloCanal={rotuloCanal} />
+            <div>
+              <FalhaPorEtapa
+                linhas={etapas}
+                recorte={quemAtiva ?? "equipe"}
+                onEtapa={setEtapaAberta}
+                periodoIgnorado={periodo !== "tudo"}
+              />
+              <PlacarConsultoras linhas={linhasPlacar} periodoIgnorado={periodo !== "tudo"} />
+            </div>
+            <div>
+              <ConformidadeVenda pontos={pontos} janela={janela.label} canalIgnorado={canal} />
+              <TabelaPesos linhas={pesos} rotuloCanal={rotuloCanal} />
+            </div>
           </div>
         </>
       )}
