@@ -6780,64 +6780,137 @@ const ETAPAS_ROTULO = {
 };
 const rotuloEtapa = (e) => ETAPAS_ROTULO[e] ?? String(e ?? "—").replace(/_/g, " ");
 
-/* Critério de cada etapa, exibido no painel lateral. É descrição do que a
-   auditoria mede (nota 1 x nota 0), não regra de cálculo — quem pontua é o
-   ETL, e o front nunca reproduz essa conta.
+/* Critério de cada etapa, exibido no painel lateral. Texto da fonte:
+   docs/criterios_etapas_roteiro_carmen.md, extraído do "Roteiro de Ligação e
+   Critérios de Auditoria" (Carmen · Liderança Comercial · ago/2026).
 
-   PENDENTE DE VALIDAÇÃO: o texto do roteiro da Carmen não existe no
-   repositório nem no banco (procurei em db/, etl/ e nos comentários de
-   coluna de fato_auditoria). Isto aqui foi redigido a partir do nome e do
-   comportamento de cada etapa. Antes de tratar como palavra oficial,
-   passar pela Carmen. Por isso o painel diz "Critério de avaliação", e não
-   "roteiro da Carmen": a tela não assina o que não conferiu. */
+   É descrição do que a auditoria mede (nota 1 x nota 0), não regra de
+   cálculo — quem pontua é o ETL, e o front nunca reproduz essa conta.
+
+   As perguntas do roteiro ficam preservadas de propósito: é o que
+   transforma o critério em coisa acionável. Sem elas, a gestão vê que a
+   etapa falhou e não sabe o que cobrar.
+
+   Campos, todos opcionais menos `acerto`:
+     sequencia  — passo a passo obrigatório, vai acima de tudo
+     acerto     — o que caracteriza nota 1
+     lista      — áreas a investigar / objeções a observar
+     perguntas  — falas literais do roteiro
+     destaque   — Regra de Ouro, Atenção do roteiro
+     falha      — o que caracteriza nota 0
+     nota       — ressalva curta (condicional, ordem)
+     soLigacao  — etapa que o roteiro de WhatsApp não tem */
 const CRITERIO_ETAPA = {
   apresentacao: {
-    acerto: "A consultora se identifica pelo nome e diz que fala pela Febracis logo na abertura.",
-    falha: "Entra direto no assunto, ou o lead descobre com quem fala só depois de várias mensagens.",
+    acerto: "Apresenta-se de forma clara, informa a empresa/Febracis, confirma com quem está falando, demonstra segurança e cordialidade, cria abertura para a conversa.",
+    falha: "Inicia falando diretamente de preço ou produto; não identifica o cliente corretamente; não informa de onde está falando.",
   },
   quebra_gelo: {
-    acerto: "Abre com uma troca cordial antes de puxar o assunto comercial.",
-    falha: "Vai direto ao produto, sem nenhuma aproximação.",
+    soLigacao: true,
+    acerto: "Estabelece conversa natural, demonstra interesse genuíno pelo cliente, usa informações disponíveis no contexto da ligação.",
+    falha: "Abordagem robotizada ou excessivamente mecânica; pula direto para a oferta.",
+    nota: "O quebra-gelo deve acontecer antes da sondagem.",
   },
   conhecimento_previo: {
-    acerto: "Pergunta o que o lead já conhece da Febracis ou do método antes de explicar.",
-    falha: "Apresenta o treinamento sem checar o que a pessoa já sabe.",
+    soLigacao: true,
+    acerto: "Verifica se o cliente já conhece a Febracis, se já participou de algum treinamento, se conhece o treinamento específico.",
+    perguntas: {
+      titulo: "Perguntas do roteiro",
+      itens: [
+        "Você já conhece a Febracis?",
+        "Já participou de algum treinamento nosso?",
+        "O que você já conhece sobre o treinamento?",
+      ],
+    },
   },
   motivo_contato: {
-    acerto: "Deixa claro por que está entrando em contato — evento, indicação, formulário.",
-    falha: "O lead não fica sabendo de onde veio o contato.",
+    acerto: "Descobre o que fez o cliente entrar em contato, o que chamou sua atenção, o motivo inicial do interesse e o que ele espera encontrar no treinamento.",
+    perguntas: {
+      titulo: "Perguntas do roteiro",
+      itens: [
+        "O que chamou sua atenção para esse treinamento?",
+        "O que fez você buscar esse tipo de desenvolvimento agora?",
+        "O que você espera encontrar nessa experiência?",
+      ],
+    },
   },
   perfil_profissional: {
-    acerto: "Levanta o que a pessoa faz: área, cargo, empresa, momento de carreira.",
-    falha: "Segue a conversa sem saber com quem está falando.",
+    acerto: "Identifica profissão, cargo, ramo de atuação, empresa ou negócio, tempo de atuação e momento profissional.",
+    perguntas: {
+      titulo: "Perguntas do roteiro",
+      itens: [
+        "Hoje você trabalha com o quê?",
+        "Qual é o seu ramo de atuação?",
+        "Você atua como profissional ou possui um negócio próprio?",
+      ],
+    },
   },
   objetivos_futuro: {
-    acerto: "Pergunta aonde a pessoa quer chegar — meta, plano, o que quer mudar.",
-    falha: "Nenhuma pergunta sobre objetivo. Metade da sondagem fica de fora.",
+    acerto: "Compreende onde o cliente quer chegar — objetivos profissionais e empresariais, crescimento desejado, planos para o futuro, resultados que quer alcançar.",
+    perguntas: {
+      titulo: "Perguntas do roteiro",
+      itens: [
+        "Pensando nos próximos anos, onde você gostaria de estar?",
+        "O que você gostaria de mudar ou conquistar profissionalmente?",
+        "Se sua empresa estivesse no cenário ideal, como ela estaria?",
+      ],
+    },
   },
   desafios_dores: {
-    acerto: "Pergunta o que está travando hoje: dificuldade, problema, o que dói.",
-    falha: "Nenhuma pergunta sobre dor. É a etapa de maior peso do roteiro.",
+    acerto: "Identifica pelo menos um desafio real, aprofunda a resposta do cliente, faz perguntas complementares, entende a consequência daquele problema e relaciona o desafio com a necessidade de desenvolvimento.",
+    lista: {
+      titulo: "Áreas a investigar",
+      texto: "Gestão, liderança, pessoas, vendas, resultados, organização, disciplina, comunicação, desenvolvimento pessoal, crescimento empresarial.",
+    },
+    destaque: {
+      titulo: "Atenção do roteiro",
+      texto: "Não considerar sondagem suficiente quando o consultor apenas pergunta “qual seu objetivo?” e segue imediatamente para a apresentação.",
+    },
   },
   apresentacao_treinamento: {
-    acerto: "Explica o treinamento amarrando ao que o lead contou — objetivo ou dor dele.",
-    falha: "Despeja descrição genérica do produto, igual para qualquer pessoa.",
+    acerto: "Somente após compreender o cliente, explica o que é o treinamento, a proposta, como funciona, o que será trabalhado, os principais benefícios e por que aquela experiência contribui para o objetivo apresentado pelo cliente.",
+    destaque: {
+      titulo: "Regra de Ouro da auditoria",
+      texto: "O consultor deve conectar a solução à necessidade identificada na sondagem. O auditor deve avaliar se existe essa conexão.",
+      exemplo: "Você me contou que hoje seu principal desafio é liderança e que pretende ampliar sua equipe. Por isso, esse treinamento faz sentido para você, porque…",
+    },
+    falha: "Apresentação genérica de catálogo ou descrição de carga horária sem conexão com o problema do cliente.",
   },
   validacao_interesse: {
-    acerto: "Confere se fez sentido antes de avançar: pergunta o que a pessoa achou.",
-    falha: "Emenda no preço ou no fechamento sem saber se o lead embarcou.",
+    acerto: "Valida a percepção do cliente, dá espaço para ele falar, identifica possíveis dúvidas e percebe sinais de compra ou resistência.",
+    perguntas: {
+      titulo: "Exemplos do roteiro",
+      itens: [
+        "Faz sentido para o momento que você está vivendo?",
+        "Isso conversa com o que você está buscando?",
+        "Diante do que você me contou, você acredita que essa experiência poderia contribuir para o seu objetivo?",
+      ],
+    },
   },
   tratamento_objecoes: {
-    acerto: "Acolhe a objeção e responde com argumento, sem abandonar a conversa.",
-    falha: "Ignora, insiste na mesma fala ou some depois do 'vou pensar'.",
+    sequencia: ["OUVIR", "ENTENDER", "INVESTIGAR", "RESPONDER", "VALIDAR"],
+    acerto: "Ouve a objeção sem interromper, investiga o verdadeiro motivo, evita entrar imediatamente em desconto, responde de forma personalizada, reforça valor antes de falar novamente sobre preço, valida se a objeção foi resolvida.",
+    lista: {
+      titulo: "Objeções a observar",
+      texto: "Preço, falta de tempo, precisa falar com alguém, não conhece o treinamento, precisa pensar, momento financeiro, não vê necessidade, insegurança sobre o investimento.",
+    },
+    nota: "Condicional: só é avaliada quando houve objeção.",
   },
   fechamento: {
-    acerto: "Faz o convite direto — proposta, condição, pedido de decisão.",
-    falha: "A conversa acaba sem nenhum convite para comprar.",
+    acerto: "Retoma a necessidade identificada, reforça o valor da solução, apresenta as condições de contratação, pergunta pela decisão e orienta os próximos passos.",
+    perguntas: {
+      titulo: "Exemplos do roteiro",
+      itens: [
+        "Diante de tudo que conversamos, faz sentido para você avançarmos?",
+        "Vamos garantir sua participação?",
+        "Posso realizar sua inscrição agora?",
+      ],
+    },
+    falha: "Não houve tentativa de fechamento; não pediu a decisão de forma clara.",
   },
   proximos_passos: {
-    acerto: "Combina o que acontece agora: data de retorno, envio de material, prazo.",
-    falha: "Encerra em aberto, sem nada marcado.",
+    acerto: "Finaliza direcionando o passo seguinte, com data ou ação definida, confirma os dados necessários e encerra com segurança.",
+    falha: "Finaliza a ligação sem direcionar o próximo passo.",
   },
 };
 
@@ -7064,7 +7137,7 @@ function HubAuditoria() {
       )}
 
       {etapaSel && (
-        <DrawerEtapa etapa={etapaSel} onFechar={() => setEtapaAberta(null)} />
+        <DrawerEtapa etapa={etapaSel} canal={canal} onFechar={() => setEtapaAberta(null)} />
       )}
     </Estado>
   );
@@ -7151,9 +7224,16 @@ function LinhaEtapaFalha({ l, onClick }) {
   );
 }
 
-function DrawerEtapa({ etapa, onFechar }) {
-  const crit = CRITERIO_ETAPA[etapa.etapa];
+function DrawerEtapa({ etapa, canal, onFechar }) {
+  const bruto = CRITERIO_ETAPA[etapa.etapa];
+  /* Quebra-gelo e conhecimento prévio só existem no roteiro de ligação. O
+     WhatsApp nem chega aqui hoje (dim_peso_etapa não tem as duas para esse
+     canal, então elas não aparecem no gráfico e não há o que clicar) — mas
+     a guarda fica explícita: se um dia entrarem por outro caminho, o painel
+     não vai exibir critério de um roteiro que não é o daquele canal. */
+  const crit = bruto && bruto.soLigacao && canal !== "ligacao" ? null : bruto;
   const cor = corFalha(etapa.pct);
+
   const caixa = (titulo, texto, corTitulo) => (
     <div style={{
       background: "rgba(255,255,255,.03)", border: `1px solid ${C.cardLine}`,
@@ -7165,6 +7245,7 @@ function DrawerEtapa({ etapa, onFechar }) {
       <div style={{ fontSize: 12.5, color: C.bright, lineHeight: 1.6 }}>{texto}</div>
     </div>
   );
+
   return (
     <DrawerLado titulo={rotuloEtapa(etapa.etapa)}
       sub={`peso ${etapa.peso} · ${etapa.falhas} falhas em ${etapa.avaliadas} conversas avaliadas`}
@@ -7178,16 +7259,95 @@ function DrawerEtapa({ etapa, onFechar }) {
       </div>
 
       <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", color: C.dim, marginBottom: 9 }}>
-        Critério de avaliação
+        Roteiro da Carmen
       </div>
-      {crit
-        ? (<>
-            {caixa("Acerto · nota 1", crit.acerto, C.up)}
-            {caixa("Falha · nota 0", crit.falha, C.down)}
-          </>)
-        : (<div style={{ fontSize: 12.5, color: C.faint, lineHeight: 1.6, marginBottom: 10 }}>
-            Sem critério cadastrado para esta etapa.
-          </div>)}
+
+      {!crit ? (
+        <div style={{ fontSize: 12.5, color: C.faint, lineHeight: 1.6, marginBottom: 10 }}>
+          Sem critério cadastrado para esta etapa neste canal.
+        </div>
+      ) : (<>
+        {/* Sequência obrigatória (objeções): vem antes de tudo porque é a
+            ordem que o auditor confere, não um detalhe do acerto. */}
+        {crit.sequencia && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
+            marginBottom: 12, padding: "10px 12px", borderRadius: 11,
+            background: `${C.gold}0F`, border: `1px solid ${C.gold}33`,
+          }}>
+            <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", color: C.gold, width: "100%", marginBottom: 2 }}>
+              Sequência obrigatória
+            </span>
+            {crit.sequencia.map((passo, i) => (
+              <span key={passo} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {i > 0 && <ArrowRight size={11} style={{ color: C.dim }} />}
+                <span style={{ fontFamily: GROTESK, fontSize: 11, fontWeight: 700, color: C.bright, letterSpacing: ".3px" }}>{passo}</span>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {caixa("Acerto · nota 1", crit.acerto, C.up)}
+
+        {crit.lista && (
+          <div style={{ marginBottom: 10, padding: "0 2px" }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", color: C.dim, marginBottom: 5 }}>
+              {crit.lista.titulo}
+            </div>
+            <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>{crit.lista.texto}</div>
+          </div>
+        )}
+
+        {/* As falas literais do roteiro. É o que a gestão repete na
+            devolutiva — sem elas o critério vira adjetivo. */}
+        {crit.perguntas && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", color: C.dim, marginBottom: 6 }}>
+              {crit.perguntas.titulo}
+            </div>
+            {crit.perguntas.itens.map((p) => (
+              <div key={p} style={{
+                display: "flex", gap: 8, alignItems: "flex-start",
+                padding: "7px 11px", marginBottom: 5, borderRadius: 9,
+                background: "rgba(255,255,255,.025)", borderLeft: `2px solid ${C.gold}55`,
+              }}>
+                <span style={{ fontSize: 12.5, color: C.bright, lineHeight: 1.55, fontStyle: "italic" }}>“{p}”</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {crit.destaque && (
+          <div style={{
+            marginBottom: 10, padding: "12px 14px", borderRadius: 11,
+            background: `${C.gold}0F`, border: `1px solid ${C.gold}33`,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <Star size={11} style={{ color: C.gold }} />
+              <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".6px", textTransform: "uppercase", color: C.gold }}>
+                {crit.destaque.titulo}
+              </span>
+            </div>
+            <div style={{ fontSize: 12.5, color: C.bright, lineHeight: 1.6 }}>{crit.destaque.texto}</div>
+            {crit.destaque.exemplo && (
+              <div style={{
+                fontSize: 12, color: C.muted, lineHeight: 1.6, fontStyle: "italic",
+                marginTop: 8, paddingLeft: 10, borderLeft: `2px solid ${C.gold}44`,
+              }}>
+                “{crit.destaque.exemplo}”
+              </div>
+            )}
+          </div>
+        )}
+
+        {crit.falha && caixa("Falha · nota 0", crit.falha, C.down)}
+
+        {crit.nota && (
+          <div style={{ fontSize: 11.5, color: C.faint, lineHeight: 1.6, fontStyle: "italic", marginBottom: 10 }}>
+            {crit.nota}
+          </div>
+        )}
+      </>)}
 
       {etapa.porConsultora.length > 1 && (
         <>
