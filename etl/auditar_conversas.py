@@ -41,6 +41,11 @@ def carregar_env(caminho=".env"):
 
 carregar_env()
 
+try:
+    import db
+except ImportError:
+    db = None
+
 BLACKCRM_TOKEN = os.environ.get("BLACK_CRM_TOKEN")
 OPENAI_KEY     = os.environ.get("OPENAI_API_KEY")
 API_BASE       = "https://services.leadconnectorhq.com"
@@ -332,7 +337,13 @@ if __name__ == "__main__":
             w = csv.DictWriter(f, fieldnames=list(resultados[0].keys()))
             w.writeheader(); w.writerows(resultados)
         media = sum(r["score"] for r in resultados if r["score"]) / len(resultados)
-        print(f"\n{len(resultados)} auditadas · score médio {media:.0f} -> auditorias.csv")
+        print(f"\n{len(resultados)} auditadas · score médio {media:.0f} -> auditorias_whatsapp.csv")
+
+        if db and db.disponivel():
+            n, erro = db.gravar(resultados, "whatsapp")
+            print("Supabase: " + (f"{n} auditorias gravadas" if not erro else f"FALHOU — {erro}"))
+        else:
+            print("Supabase: não configurado — resultado só no CSV")
     else:
         print("\nNenhuma conversa auditada.")
     if pulados:

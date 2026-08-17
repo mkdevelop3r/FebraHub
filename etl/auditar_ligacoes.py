@@ -42,6 +42,11 @@ def carregar_env(caminho=".env"):
 
 carregar_env()
 
+try:
+    import db
+except ImportError:
+    db = None
+
 TOKEN       = os.environ.get("BLACK_CRM_TOKEN")
 OPENAI_KEY  = os.environ.get("OPENAI_API_KEY")
 API         = "https://services.leadconnectorhq.com"
@@ -321,6 +326,12 @@ def main(dias):
     completas = sum(1 for l in linhas if l["ligacao_completa"] == "sim")
     print(f"\n{len(linhas)} auditadas · score médio {media:.0f} · "
           f"{completas} completas -> auditorias_ligacoes.csv")
+
+    if db and db.disponivel():
+        n, erro = db.gravar(linhas, "ligacao")
+        print("Supabase: " + (f"{n} auditorias gravadas" if not erro else f"FALHOU — {erro}"))
+    else:
+        print("Supabase: não configurado — resultado só no CSV")
 
 
 if __name__ == "__main__":
