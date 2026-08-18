@@ -12,11 +12,11 @@
    vivem no banco. Quando o banco recusa, o texto dele aparece no aviso de
    erro da própria página — nunca em alert() nem só no console.
 
-   PALETA: este arquivo declara o `C` local com os mesmos valores de
-   Rotas/Avaliacao.jsx, que é a convenção dos componentes extraídos. Note
-   que NÃO é a paleta do FebraHub.jsx (void #08080A, gold #E4C06A): as duas
-   convivem no repositório desde antes deste módulo. Trocar é mudar um
-   objeto só, se um dia forem unificadas.
+   DESENHO: "ordem do dia". O time é designer, audiovisual, social media e
+   tráfego — gente de produção —, e a rotina espelha uma call sheet: régua de
+   dias na margem, área responsável em etiqueta, entrega ao lado. Densa e
+   utilitária, sem decoração. A régua é a assinatura da tela: faz "hoje" ser
+   achado sem leitura.
    ============================================================ */
 
 import { useState, useEffect, useCallback } from "react";
@@ -31,20 +31,37 @@ import {
   mktAcoesDoPeriodo, mktAcoesAtrasadas,
 } from "../lib/dados";
 
-/* ============ DESIGN TOKENS ============ */
+/* ============ DESIGN TOKENS ============
+   Mesma paleta do FebraHub.jsx. Antes este arquivo tinha a sua (#121217 /
+   #C3A34B), herdada do protótipo, e a tela ficava com dois dourados brigando
+   ao lado dos outros hubs. A identidade do módulo vem da ESTRUTURA — a régua
+   de dias, as etiquetas de área — e não de uma cor só dele.
+
+   O dourado é escasso de propósito: marca decisão (hoje, e a fila que espera
+   alguém). Contorno dourado em caixa grande vira papel de parede e some. */
 const C = {
-  void: "#121217",
-  surface: "#1C1C24",
-  bronzeLine: "#413a30",
-  gold: "#C3A34B",
-  goldDim: "#8A7239",
-  text: "#F2EDE1",
-  textMuted: "#9C968A",
-  textFaint: "#6b665c",
-  alert: "#C2665A",
-  positive: "#8FAE7C",
+  void: "#08080A",
+  surface: "rgba(255,255,255,.028)",
+  bronzeLine: "rgba(255,255,255,.07)",
+  hair: "rgba(255,255,255,.045)",
+  gold: "#E4C06A",
+  goldDim: "#B8934A",
+  text: "#F5F3EE",
+  textMuted: "#8B8B90",
+  textFaint: "#5B5B62",
+  alert: "#E06C75",
+  positive: "#6FCF97",
 };
-const FONT_DISPLAY = "'Space Grotesk', sans-serif";
+const FONT_DISPLAY = "'Space Grotesk', system-ui, sans-serif";
+
+/* Etiqueta de área (Designer, Audiovisual, Tráfego…). Caixa alta pequena e
+   espaçada, como a coluna de departamento de uma ordem do dia: identifica
+   sem competir com o nome da entrega. */
+const etiqueta = {
+  fontSize: 9.5, fontWeight: 700, letterSpacing: ".11em",
+  textTransform: "uppercase", fontFamily: FONT_DISPLAY,
+  whiteSpace: "nowrap",
+};
 
 /* ============ UTIL ============ */
 const HOJE = new Date().toISOString().slice(0, 10);
@@ -239,18 +256,43 @@ function EventoCard({ evento, aberto, aoAbrir, aoMarcar, salvandoId }) {
 }
 
 /* ============ FILA: PRECISA DE ALGUMA COISA? ============ */
+/* Triagem, não trabalho — por isso vem fechada. Aberta, dez linhas iguais com
+   "Classificar" repetido dez vezes empurravam a pauta para baixo da dobra e
+   davam à decisão menos frequente o maior peso da tela. */
 function FilaPendentes({ pendentes, tipos, aoClassificar }) {
   const [aberto, setAberto] = useState(null);
+  const [expandida, setExpandida] = useState(false);
   if (!pendentes.length) return null;
 
+  if (!expandida) {
+    return (
+      <button onClick={() => setExpandida(true)}
+        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 mb-5 rounded-xl text-left"
+        style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
+        <HelpCircle size={14} style={{ color: C.gold }} className="shrink-0" />
+        <span className="text-[13px]" style={{ color: C.text }}>
+          {pendentes.length} evento{pendentes.length > 1 ? "s" : ""} esperando classificação
+        </span>
+        <span className="text-[11.5px] hidden sm:inline" style={{ color: C.textFaint }}>
+          — sem tipo, não geram checklist
+        </span>
+        <span className="ml-auto shrink-0" style={{ ...etiqueta, color: C.gold }}>Ver fila</span>
+      </button>
+    );
+  }
+
   return (
-    <div className="rounded-xl p-4 mb-6"
-      style={{ background: "rgba(195,163,75,0.06)", border: `1px solid ${C.goldDim}` }}>
+    <div className="rounded-xl p-4 mb-5"
+      style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
       <div className="flex items-center gap-2 mb-3">
-        <HelpCircle size={15} style={{ color: C.gold }} />
-        <p className="text-sm font-medium" style={{ color: C.gold }}>
-          Precisa de alguma coisa? · {pendentes.length} evento{pendentes.length > 1 ? "s" : ""} sem classificação
+        <HelpCircle size={14} style={{ color: C.gold }} />
+        <p className="text-[13px]" style={{ color: C.text }}>
+          {pendentes.length} evento{pendentes.length > 1 ? "s" : ""} esperando classificação
         </p>
+        <button onClick={() => { setExpandida(false); setAberto(null); }}
+          className="ml-auto" style={{ ...etiqueta, color: C.textMuted }}>
+          Fechar
+        </button>
       </div>
       <div className="flex flex-col gap-2">
         {pendentes.map((p) => (
@@ -261,8 +303,10 @@ function FilaPendentes({ pendentes, tipos, aoClassificar }) {
                 <p className="text-[11px]" style={{ color: C.textFaint }}>{fmtDia(p.data_evento)}</p>
               </div>
               <button onClick={() => setAberto(aberto === p.id ? null : p.id)}
-                className="text-xs px-3 py-1.5 rounded-lg shrink-0"
-                style={{ background: C.void, color: C.textMuted, border: `1px solid ${C.bronzeLine}` }}>
+                className="shrink-0 px-2.5 py-1 rounded-md"
+                style={{ ...etiqueta, color: aberto === p.id ? C.textMuted : C.gold,
+                  background: aberto === p.id ? "transparent" : `${C.gold}14`,
+                  border: `1px solid ${aberto === p.id ? C.bronzeLine : `${C.gold}33`}` }}>
                 {aberto === p.id ? "Fechar" : "Classificar"}
               </button>
             </div>
@@ -305,79 +349,107 @@ function FilaPendentes({ pendentes, tipos, aoClassificar }) {
    Existe porque prazo e data do evento divergem: 45 das 98 ações vencem em
    mês diferente do evento. Indexar a tela pela data do evento fazia agosto
    aparecer vazio tendo 27 ações a vencer. */
-function LinhaPauta({ acao, aoMarcar, salvando }) {
+function LinhaPauta({ acao, aoMarcar, salvando, mostraPrazo }) {
   const atrasada = !acao.concluida && acao.prazo < HOJE;
   const automatica = acao.conclusao === "automatica";
-  const cor = acao.concluida ? C.positive : atrasada ? C.alert : C.textMuted;
   const ev = acao.evento;
+  const corMarca = acao.concluida ? C.positive : atrasada ? C.alert : C.textFaint;
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2.5"
-      style={{ borderTop: `1px solid ${C.bronzeLine}` }}>
+    <div className="flex items-baseline gap-3 py-2.5 pr-1" style={{ borderTop: `1px solid ${C.hair}` }}>
       <button
         onClick={() => !automatica && aoMarcar(acao.id, !acao.concluida)}
         disabled={automatica || salvando}
         aria-label={acao.concluida ? "Desmarcar" : "Concluir"}
         className="shrink-0 transition-transform hover:scale-110"
-        style={{ color: cor, cursor: automatica ? "not-allowed" : "pointer", opacity: salvando ? 0.5 : 1 }}
-        title={automatica ? "Ação automática: o sistema marca quando a campanha estiver rodando" : ""}
+        style={{
+          color: corMarca, cursor: automatica ? "not-allowed" : "pointer",
+          opacity: salvando ? 0.4 : 1, transform: "translateY(3px)",
+        }}
+        title={automatica ? "Ação automática: o sistema marca quando a campanha entrar no ar" : ""}
       >
-        {acao.concluida ? <CircleCheck size={18} />
-          : automatica ? <Zap size={16} />
-            : <Circle size={18} />}
+        {acao.concluida ? <CircleCheck size={17} />
+          : automatica ? <Zap size={15} />
+            : <Circle size={17} />}
       </button>
 
       <div className="flex-1 min-w-0">
-        <p className="text-sm truncate" style={{
-          color: acao.concluida ? C.textMuted : C.text,
-          textDecorationLine: acao.concluida ? "line-through" : "none",
-          textDecorationColor: C.textFaint,
-        }}>
-          {acao.nome}
-          {automatica && <span className="text-[10px] ml-1.5 uppercase tracking-wide" style={{ color: C.goldDim }}>auto</span>}
-        </p>
-        <p className="text-[11px] truncate" style={{ color: C.textFaint }}>
-          {acao.responsavel || "Sem responsável"}
-          {ev ? ` · ${ev.nome}` : ""}
-        </p>
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className="text-[14.5px] truncate" style={{
+            color: acao.concluida ? C.textFaint : C.text,
+            textDecorationLine: acao.concluida ? "line-through" : "none",
+            textDecorationColor: C.textFaint,
+          }}>
+            {acao.nome}
+          </span>
+          {/* Área responsável como etiqueta, não como prosa: é a coluna de
+              departamento da ordem do dia — quem pega, num relance. */}
+          {acao.responsavel && (
+            <span style={{ ...etiqueta, color: automatica ? C.goldDim : C.textMuted }}>
+              {automatica ? `${acao.responsavel} · auto` : acao.responsavel}
+            </span>
+          )}
+        </div>
+        {ev && (
+          <p className="text-[11.5px] truncate mt-0.5" style={{ color: C.textFaint }}>
+            {ev.nome}
+          </p>
+        )}
       </div>
 
-      {/* A data do EVENTO fica à direita: na pauta o prazo já é o
-          agrupamento, então o que falta saber é para quando é a entrega. */}
-      {ev && (
-        <span className="text-xs tabular-nums shrink-0 hidden sm:inline" style={{ color: C.textFaint }}>
-          {fmtDia(ev.data_evento)}
-        </span>
-      )}
-      {atrasada && (
-        <span className="text-xs tabular-nums shrink-0" style={{ color: C.alert }}>
-          {-diasAte(acao.prazo)}d
-        </span>
-      )}
+      {/* À direita, o alvo: para quando é o evento. Na pauta o prazo já é o
+          agrupamento — menos no bloco de atrasadas, que mistura datas. */}
+      <span className="shrink-0 tabular-nums text-right" style={{
+        fontFamily: FONT_DISPLAY, fontSize: 11.5,
+        color: atrasada ? C.alert : C.textFaint,
+      }}>
+        {mostraPrazo ? fmtDia(acao.prazo) : ev ? fmtDia(ev.data_evento) : "—"}
+      </span>
     </div>
   );
 }
 
-function GrupoPauta({ titulo, acoes, tom, aoMarcar, salvandoId }) {
+/* Régua de dias: a margem esquerda carrega o dia em número grande e o dia da
+   semana embaixo. É a espinha da página — faz "hoje" ser achado sem leitura,
+   e é o que separa esta tela de uma pilha de divs. */
+function GrupoPauta({ dia, titulo, acoes, tom, aoMarcar, salvandoId }) {
   if (!acoes.length) return null;
   const alerta = tom === "alerta";
+  const hoje = tom === "hoje";
+  const corRegua = alerta ? C.alert : hoje ? C.gold : C.text;
+  const d = dia ? new Date(dia + "T00:00:00") : null;
+
   return (
-    <div>
-      <div className="px-4 py-2"
-        style={{
-          background: alerta ? "rgba(194,102,90,0.10)" : "rgba(255,255,255,0.02)",
-          borderTop: `1px solid ${C.bronzeLine}`,
-        }}>
-        <span className="text-[12px] font-medium" style={{ color: alerta ? C.alert : C.text }}>
-          {titulo}
-        </span>
-        <span className="text-[11px] ml-2" style={{ color: C.textFaint }}>
-          {acoes.length} {acoes.length === 1 ? "ação" : "ações"}
-        </span>
+    <div className="flex gap-4 sm:gap-5" style={{ borderTop: `1px solid ${C.bronzeLine}` }}>
+      <div className="shrink-0 pt-3.5 text-right" style={{ width: 52 }}>
+        {d ? (
+          <>
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 22, lineHeight: 1, color: corRegua, fontWeight: 500 }}>
+              {String(d.getDate()).padStart(2, "0")}
+            </div>
+            <div style={{ ...etiqueta, fontSize: 9, color: C.textFaint, marginTop: 3 }}>
+              {d.toLocaleDateString("pt-BR", { weekday: "short" }).replace(".", "").slice(0, 3)}
+            </div>
+          </>
+        ) : (
+          <div style={{ ...etiqueta, color: C.alert, marginTop: 4, whiteSpace: "normal", lineHeight: 1.3 }}>
+            Atrasado
+          </div>
+        )}
+        {titulo && (
+          <div style={{ ...etiqueta, fontSize: 9, color: hoje ? C.gold : C.textFaint, marginTop: 4 }}>
+            {titulo}
+          </div>
+        )}
       </div>
-      {acoes.map((a) => (
-        <LinhaPauta key={a.id} acao={a} aoMarcar={aoMarcar} salvando={salvandoId === a.id} />
-      ))}
+
+      <div className="flex-1 min-w-0 pb-1"
+        style={alerta ? { borderLeft: `2px solid ${C.alert}`, paddingLeft: 14, marginLeft: -8 } : undefined}>
+        {acoes.map((a) => (
+          <LinhaPauta key={a.id} acao={a} aoMarcar={aoMarcar}
+            salvando={salvandoId === a.id} mostraPrazo={alerta} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -411,16 +483,19 @@ function Pauta({ atrasadas, acoes, mes, aoMarcar, salvandoId }) {
   }
 
   return (
-    <div className="rounded-xl overflow-hidden"
-      style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
+    <div>
       {/* Atrasado vem sempre no topo e ignora o mês escolhido: dívida vencida
           não some da vista porque a pessoa navegou para outro mês. */}
-      <GrupoPauta titulo="Atrasado" acoes={atrasadas} tom="alerta"
-        aoMarcar={aoMarcar} salvandoId={salvandoId} />
-      {[...porDia.entries()].map(([dia, lista]) => (
-        <GrupoPauta key={dia} titulo={rotuloDia(dia)} acoes={lista}
-          aoMarcar={aoMarcar} salvandoId={salvandoId} />
-      ))}
+      <GrupoPauta acoes={atrasadas} tom="alerta" aoMarcar={aoMarcar} salvandoId={salvandoId} />
+      {[...porDia.entries()].map(([dia, lista]) => {
+        const d = diasAte(dia);
+        return (
+          <GrupoPauta key={dia} dia={dia} acoes={lista}
+            titulo={d === 0 ? "hoje" : d === 1 ? "amanhã" : null}
+            tom={d === 0 ? "hoje" : null}
+            aoMarcar={aoMarcar} salvandoId={salvandoId} />
+        );
+      })}
     </div>
   );
 }
@@ -616,18 +691,21 @@ export default function CentralEventos() {
       {/* Duas leituras do MESMO dado. A pauta responde "o que eu faço hoje";
           o card, "está tudo pronto para a palestra do Valter?". A primeira é
           o padrão porque é a pergunta diária. */}
-      <div className="flex items-center gap-1 mb-5">
+      {/* Abas como guias sublinhadas, não pílulas: pílula dourada some no meio
+          das outras pílulas douradas da tela. A linha embaixo diz onde você
+          está sem gastar mais uma cor. */}
+      <div className="flex items-center gap-6 mb-5" style={{ borderBottom: `1px solid ${C.bronzeLine}` }}>
         {[["pauta", "Pauta", ListChecks], ["eventos", "Por evento", CalendarDays]].map(([k, rot, Icone]) => {
           const on = aba === k;
           return (
             <button key={k} onClick={() => setAba(k)}
-              className="text-xs px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 transition-colors"
+              className="inline-flex items-center gap-2 pb-2.5 -mb-px"
               style={{
-                background: on ? "rgba(195,163,75,0.14)" : C.surface,
-                color: on ? C.gold : C.textMuted,
-                border: `1px solid ${on ? C.goldDim : C.bronzeLine}`,
+                color: on ? C.text : C.textMuted,
+                borderBottom: `2px solid ${on ? C.gold : "transparent"}`,
               }}>
-              <Icone size={13} /> {rot}
+              <Icone size={14} style={{ color: on ? C.gold : C.textFaint }} />
+              <span style={{ ...etiqueta, fontSize: 10.5 }}>{rot}</span>
             </button>
           );
         })}
