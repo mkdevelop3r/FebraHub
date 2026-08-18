@@ -933,6 +933,45 @@ export async function mktProximoEventoAtivo(deData) {
   return data?.[0]?.data_evento ?? null;
 }
 
+/* ---------- Pauta: ações por PRAZO ----------
+   O inverso de mktEventosDoMes. Existe porque prazo e data do evento são
+   coisas diferentes: medido em 18/08/2026, 45 das 98 ações vencem num mês
+   diferente do evento (média de 11,4 dias antes, até 20). Agosto tinha 27
+   ações a vencer e ZERO eventos — uma tela indexada por data de evento
+   mostrava o mês em branco enquanto havia 27 coisas para fazer.
+
+   `!inner` é obrigatório: sem ele o PostgREST não deixa filtrar por coluna
+   da tabela embutida, e `evento.status` seria ignorado silenciosamente. */
+const SELECT_ACAO =
+  "id, nome, responsavel, prazo, conclusao, concluida, concluida_em," +
+  "evento:mkt_eventos!inner(id, nome, codigo, data_evento, unidade_id)";
+
+export async function mktAcoesDoPeriodo(inicio, fim) {
+  const { data, error } = await supabase
+    .from("mkt_acoes_evento")
+    .select(SELECT_ACAO)
+    .eq("evento.status", "ativo")
+    .gte("prazo", inicio)
+    .lt("prazo", fim)
+    .order("prazo");
+  erroSupabase(error);
+  return (data ?? []).map((a) => ({ ...a, evento: primeiro(a.evento) }));
+}
+
+/* Atrasadas ignoram a janela de propósito: dívida vencida não some da vista
+   porque a pessoa navegou para outro mês. */
+export async function mktAcoesAtrasadas(hoje) {
+  const { data, error } = await supabase
+    .from("mkt_acoes_evento")
+    .select(SELECT_ACAO)
+    .eq("evento.status", "ativo")
+    .eq("concluida", false)
+    .lt("prazo", hoje)
+    .order("prazo");
+  erroSupabase(error);
+  return (data ?? []).map((a) => ({ ...a, evento: primeiro(a.evento) }));
+}
+
 export async function mktPendentes() {
   const { data, error } = await supabase
     .from("mkt_eventos")

@@ -23,11 +23,12 @@ import { useState, useEffect, useCallback } from "react";
 import {
   CalendarDays, ChevronLeft, ChevronRight, CircleCheck, Circle,
   AlertTriangle, Copy, Check, Users, UserCheck, Zap, HelpCircle,
-  RefreshCw, X,
+  RefreshCw, X, ListChecks,
 } from "lucide-react";
 import {
   mktUnidadesAtivas, mktTiposComChecklist, mktEventosDoMes,
   mktPendentes, mktMarcarAcao, mktClassificarEvento, mktProximoEventoAtivo,
+  mktAcoesDoPeriodo, mktAcoesAtrasadas,
 } from "../lib/dados";
 
 /* ============ DESIGN TOKENS ============ */
@@ -61,6 +62,18 @@ const fmtDataHora = (iso) => {
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")} às ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
 const diasAte = (iso) => Math.ceil((new Date(iso) - new Date(HOJE)) / 86400000);
+
+/* Cabeçalho de cada grupo da pauta. "Hoje" e "Amanhã" por nome porque é
+   assim que a operação fala; o resto ganha dia da semana, que é o que
+   deixa "sexta" visível sem contar no calendário. */
+const rotuloDia = (iso) => {
+  const d = diasAte(iso);
+  if (d === 0) return "Hoje";
+  if (d === 1) return "Amanhã";
+  const dt = new Date(iso + "T00:00:00");
+  const semana = dt.toLocaleDateString("pt-BR", { weekday: "long" });
+  return `${semana.charAt(0).toUpperCase()}${semana.slice(1)}, ${dt.getDate()} de ${MESES[dt.getMonth()].toLowerCase()}`;
+};
 
 /* ============ PRIMITIVES ============ */
 function Chip({ children, tone = "muted" }) {
@@ -284,6 +297,134 @@ function FilaPendentes({ pendentes, tipos, aoClassificar }) {
   );
 }
 
+/* ============ PAUTA (por prazo) ============
+   A visão de trabalho. Uma linha por AÇÃO, agrupada pelo dia em que vence,
+   com o evento como contexto à direita — o inverso do card, que agrupa por
+   evento e esconde o prazo lá dentro.
+
+   Existe porque prazo e data do evento divergem: 45 das 98 ações vencem em
+   mês diferente do evento. Indexar a tela pela data do evento fazia agosto
+   aparecer vazio tendo 27 ações a vencer. */
+function LinhaPauta({ acao, aoMarcar, salvando }) {
+  const atrasada = !acao.concluida && acao.prazo < HOJE;
+  const automatica = acao.conclusao === "automatica";
+  const cor = acao.concluida ? C.positive : atrasada ? C.alert : C.textMuted;
+  const ev = acao.evento;
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5"
+      style={{ borderTop: `1px solid ${C.bronzeLine}` }}>
+      <button
+        onClick={() => !automatica && aoMarcar(acao.id, !acao.concluida)}
+        disabled={automatica || salvando}
+        aria-label={acao.concluida ? "Desmarcar" : "Concluir"}
+        className="shrink-0 transition-transform hover:scale-110"
+        style={{ color: cor, cursor: automatica ? "not-allowed" : "pointer", opacity: salvando ? 0.5 : 1 }}
+        title={automatica ? "Ação automática: o sistema marca quando a campanha estiver rodando" : ""}
+      >
+        {acao.concluida ? <CircleCheck size={18} />
+          : automatica ? <Zap size={16} />
+            : <Circle size={18} />}
+      </button>
+
+      <div className="flex-1 min-w-0">
+        <p className="text-sm truncate" style={{
+          color: acao.concluida ? C.textMuted : C.text,
+          textDecorationLine: acao.concluida ? "line-through" : "none",
+          textDecorationColor: C.textFaint,
+        }}>
+          {acao.nome}
+          {automatica && <span className="text-[10px] ml-1.5 uppercase tracking-wide" style={{ color: C.goldDim }}>auto</span>}
+        </p>
+        <p className="text-[11px] truncate" style={{ color: C.textFaint }}>
+          {acao.responsavel || "Sem responsável"}
+          {ev ? ` · ${ev.nome}` : ""}
+        </p>
+      </div>
+
+      {/* A data do EVENTO fica à direita: na pauta o prazo já é o
+          agrupamento, então o que falta saber é para quando é a entrega. */}
+      {ev && (
+        <span className="text-xs tabular-nums shrink-0 hidden sm:inline" style={{ color: C.textFaint }}>
+          {fmtDia(ev.data_evento)}
+        </span>
+      )}
+      {atrasada && (
+        <span className="text-xs tabular-nums shrink-0" style={{ color: C.alert }}>
+          {-diasAte(acao.prazo)}d
+        </span>
+      )}
+    </div>
+  );
+}
+
+function GrupoPauta({ titulo, acoes, tom, aoMarcar, salvandoId }) {
+  if (!acoes.length) return null;
+  const alerta = tom === "alerta";
+  return (
+    <div>
+      <div className="px-4 py-2"
+        style={{
+          background: alerta ? "rgba(194,102,90,0.10)" : "rgba(255,255,255,0.02)",
+          borderTop: `1px solid ${C.bronzeLine}`,
+        }}>
+        <span className="text-[12px] font-medium" style={{ color: alerta ? C.alert : C.text }}>
+          {titulo}
+        </span>
+        <span className="text-[11px] ml-2" style={{ color: C.textFaint }}>
+          {acoes.length} {acoes.length === 1 ? "ação" : "ações"}
+        </span>
+      </div>
+      {acoes.map((a) => (
+        <LinhaPauta key={a.id} acao={a} aoMarcar={aoMarcar} salvando={salvandoId === a.id} />
+      ))}
+    </div>
+  );
+}
+
+function Pauta({ atrasadas, acoes, mes, aoMarcar, salvandoId }) {
+  /* Uma ação vencida DENTRO do mês na tela vem nas duas listas: em
+     `atrasadas` (que varre a base toda) e em `acoes` (a janela do mês). Sem
+     tirar a repetição, ela aparecia duas vezes — no topo e de novo no dia
+     dela. O grupo "Atrasado" ganha. */
+  const jaNoTopo = new Set(atrasadas.map((a) => a.id));
+
+  // Um grupo por dia, na ordem do prazo. Map preserva ordem de inserção e a
+  // lista já vem ordenada do banco.
+  const porDia = new Map();
+  for (const a of acoes) {
+    if (jaNoTopo.has(a.id)) continue;
+    if (!porDia.has(a.prazo)) porDia.set(a.prazo, []);
+    porDia.get(a.prazo).push(a);
+  }
+
+  if (!atrasadas.length && !acoes.length) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-16 text-center">
+        <CalendarDays size={28} style={{ color: C.textFaint }} />
+        <p className="text-sm max-w-md" style={{ color: C.textMuted }}>
+          Nada a fazer com prazo em {MESES[mes]}. As ações nascem junto com o
+          evento, a partir do modelo do tipo dele.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl overflow-hidden"
+      style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
+      {/* Atrasado vem sempre no topo e ignora o mês escolhido: dívida vencida
+          não some da vista porque a pessoa navegou para outro mês. */}
+      <GrupoPauta titulo="Atrasado" acoes={atrasadas} tom="alerta"
+        aoMarcar={aoMarcar} salvandoId={salvandoId} />
+      {[...porDia.entries()].map(([dia, lista]) => (
+        <GrupoPauta key={dia} titulo={rotuloDia(dia)} acoes={lista}
+          aoMarcar={aoMarcar} salvandoId={salvandoId} />
+      ))}
+    </div>
+  );
+}
+
 /* ============ SELETOR DE MÊS ============ */
 function SeletorMes({ ano, mes, aoMudar }) {
   const voltar = () => (mes === 0 ? aoMudar(ano - 1, 11) : aoMudar(ano, mes - 1));
@@ -339,7 +480,10 @@ export default function CentralEventos() {
   const agora = new Date();
   const [ano, setAno] = useState(agora.getFullYear());
   const [mes, setMes] = useState(agora.getMonth());
+  const [aba, setAba] = useState("pauta"); // pauta = onde se trabalha
   const [eventos, setEventos] = useState([]);
+  const [acoes, setAcoes] = useState([]);
+  const [atrasadas, setAtrasadas] = useState([]);
   const [pendentes, setPendentes] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [unidades, setUnidades] = useState([]);
@@ -356,11 +500,13 @@ export default function CentralEventos() {
     try {
       const ini = `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
       const fim = mes === 11 ? `${ano + 1}-01-01` : `${ano}-${String(mes + 2).padStart(2, "0")}-01`;
-      const [evs, pends, tps, unis, prox] = await Promise.all([
-        mktEventosDoMes(ini, fim), mktPendentes(), mktTiposComChecklist(),
-        mktUnidadesAtivas(), mktProximoEventoAtivo(fim),
+      const [evs, acs, atr, pends, tps, unis, prox] = await Promise.all([
+        mktEventosDoMes(ini, fim), mktAcoesDoPeriodo(ini, fim), mktAcoesAtrasadas(HOJE),
+        mktPendentes(), mktTiposComChecklist(), mktUnidadesAtivas(), mktProximoEventoAtivo(fim),
       ]);
       setEventos(evs);
+      setAcoes(acs);
+      setAtrasadas(atr);
       setPendentes(pends);
       setTipos(tps);
       setUnidades(unis);
@@ -381,23 +527,28 @@ export default function CentralEventos() {
     ? unidadeAtiva
     : (unidades[0]?.id ?? null);
 
-  const filtrarPorUnidade = (linhas) =>
-    unidades.length < 2 || !unidadeAlvo
-      ? linhas
-      : linhas.filter((l) => l.unidade_id === unidadeAlvo);
+  // Com uma unidade só (ou nenhuma escolhida) não há o que recortar.
+  const recortando = unidades.length >= 2 && unidadeAlvo != null;
+  const soDaUnidade = (lista, unidadeDe) =>
+    (recortando ? lista.filter((x) => unidadeDe(x) === unidadeAlvo) : lista);
 
-  const eventosVisiveis = filtrarPorUnidade(eventos);
-  const pendentesVisiveis = filtrarPorUnidade(pendentes);
+  const eventosVisiveis = soDaUnidade(eventos, (e) => e.unidade_id);
+  const pendentesVisiveis = soDaUnidade(pendentes, (p) => p.unidade_id);
+  // Na pauta a unidade vem do evento embutido, não da própria ação.
+  const acoesVisiveis = soDaUnidade(acoes, (a) => a.evento?.unidade_id);
+  const atrasadasVisiveis = soDaUnidade(atrasadas, (a) => a.evento?.unidade_id);
 
   const marcar = async (acaoId, concluida) => {
     setSalvandoId(acaoId);
-    // Otimista: o check aparece na hora.
-    setEventos((prev) => prev.map((e) => ({
-      ...e,
-      acoes: e.acoes.map((a) => a.id === acaoId
-        ? { ...a, concluida, concluida_em: concluida ? new Date().toISOString() : null }
-        : a),
-    })));
+    /* Otimista: o check aparece na hora. Nas TRÊS listas — a mesma ação
+       aparece no card do evento e na pauta, e atualizar só uma deixaria as
+       abas discordando entre si. */
+    const aplicar = (a) => (a.id === acaoId
+      ? { ...a, concluida, concluida_em: concluida ? new Date().toISOString() : null }
+      : a);
+    setEventos((prev) => prev.map((e) => ({ ...e, acoes: e.acoes.map(aplicar) })));
+    setAcoes((prev) => prev.map(aplicar));
+    setAtrasadas((prev) => (concluida ? prev.filter((a) => a.id !== acaoId) : prev));
     try {
       await mktMarcarAcao(acaoId, concluida);
     } catch (e) {
@@ -421,8 +572,10 @@ export default function CentralEventos() {
     }
   };
 
-  const totalAtrasadas = eventosVisiveis.reduce(
-    (n, e) => n + e.acoes.filter((a) => !a.concluida && a.prazo < HOJE).length, 0);
+  /* Conta a base inteira de atrasadas, não só as do mês na tela: é aviso de
+     dívida, e escondê-la ao navegar de mês seria o mesmo erro que a tela
+     indexada por data de evento cometia. */
+  const totalAtrasadas = atrasadasVisiveis.length;
 
   const nomeUnidade = unidades.find((u) => u.id === unidadeAlvo)?.nome;
 
@@ -446,12 +599,39 @@ export default function CentralEventos() {
         </div>
       </div>
 
-      <p className="text-sm mb-6" style={{ color: C.textMuted }}>
-        O que está na agenda, o que cada evento precisa e o que está atrasado
+      <p className="text-sm mb-5" style={{ color: C.textMuted }}>
+        {aba === "pauta"
+          ? `O que vence em ${MESES[mes]}, na ordem do prazo`
+          : `Os eventos de ${MESES[mes]} e o quanto cada um já está pronto`}
+        {/* "ação" vira "ações", não "açãoões": o plural troca a palavra
+            inteira. Vinha assim do protótipo e só apareceu quando houve
+            mais de uma atrasada na tela. */}
         {totalAtrasadas > 0 && (
-          <span style={{ color: C.alert }}> — {totalAtrasadas} ação{totalAtrasadas > 1 ? "ões" : ""} vencida{totalAtrasadas > 1 ? "s" : ""} agora</span>
+          <span style={{ color: C.alert }}>
+            {" "}— {totalAtrasadas} {totalAtrasadas > 1 ? "ações vencidas" : "ação vencida"} agora
+          </span>
         )}.
       </p>
+
+      {/* Duas leituras do MESMO dado. A pauta responde "o que eu faço hoje";
+          o card, "está tudo pronto para a palestra do Valter?". A primeira é
+          o padrão porque é a pergunta diária. */}
+      <div className="flex items-center gap-1 mb-5">
+        {[["pauta", "Pauta", ListChecks], ["eventos", "Por evento", CalendarDays]].map(([k, rot, Icone]) => {
+          const on = aba === k;
+          return (
+            <button key={k} onClick={() => setAba(k)}
+              className="text-xs px-3 py-1.5 rounded-lg inline-flex items-center gap-1.5 transition-colors"
+              style={{
+                background: on ? "rgba(195,163,75,0.14)" : C.surface,
+                color: on ? C.gold : C.textMuted,
+                border: `1px solid ${on ? C.goldDim : C.bronzeLine}`,
+              }}>
+              <Icone size={13} /> {rot}
+            </button>
+          );
+        })}
+      </div>
 
       {erro && (
         <div className="flex items-start gap-2.5 rounded-xl p-3.5 mb-5 text-sm"
@@ -470,8 +650,11 @@ export default function CentralEventos() {
 
       {carregando ? (
         <div className="flex items-center justify-center gap-2 py-16 text-sm" style={{ color: C.textFaint }}>
-          <RefreshCw size={14} className="girar" /> Carregando eventos…
+          <RefreshCw size={14} className="girar" /> Carregando…
         </div>
+      ) : aba === "pauta" ? (
+        <Pauta atrasadas={atrasadasVisiveis} acoes={acoesVisiveis} mes={mes}
+          aoMarcar={marcar} salvandoId={salvandoId} />
       ) : eventosVisiveis.length === 0 ? (
         <div className="flex flex-col items-center gap-3 py-16 text-center">
           <CalendarDays size={28} style={{ color: C.textFaint }} />
