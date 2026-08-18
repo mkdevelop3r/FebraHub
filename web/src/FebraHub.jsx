@@ -6930,8 +6930,27 @@ const PERIODOS_AUDITORIA = [
   { key: "tudo", label: "Tudo", meses: null },
 ];
 
+/* Corte de amostra para classificar alguém. ESPELHA a trava que já está em
+   vw_auditoria_consultora (`count(*) >= 20`) — a regra é do banco, não daqui.
+   Existe porque a view devolve o flag por MÊS, e uma janela de trimestre
+   soma meses: 15 conversas em julho e 15 em agosto são 30, e o flag mensal
+   diria "não" nas duas linhas. Se o 20 mudar na view, muda aqui junto — o
+   jeito de não ter as duas pontas é uma view que receba a janela. */
+const MIN_AUDITORIAS = 20;
+
 // Semáforo de falha: verde < 35%, âmbar 35–60%, vermelho > 60%.
 const corFalha = (pct) => (pct > 60 ? C.down : pct >= 35 ? C.warn : C.up);
+
+/* "2026-08-01" -> "ago/2026". Diferente do `mesCurto` lá de cima, que
+   recebe "YYYY-MM" e devolve só "Ago": aqui o ano precisa aparecer, porque
+   a janela pode atravessar a virada e "Ago" sozinho ficaria ambíguo. */
+const mesAnoCurto = (iso) => {
+  if (!iso) return "—";
+  const d = new Date(`${String(iso).slice(0, 10)}T00:00:00`);
+  // toLocaleDateString com month+year devolve "ago. de 2026" em pt-BR; a
+  // barra cabe melhor no canto do card, então monto os dois pedaços.
+  return `${d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "")}/${d.getFullYear()}`;
+};
 // Score é o inverso: quanto maior, melhor. Espelha os mesmos cortes.
 const corScore = (s) => (s == null ? C.faint : s >= 65 ? C.up : s >= 40 ? C.warn : C.down);
 
@@ -7023,25 +7042,30 @@ function HubAuditoria() {
     const m = new Map();
     for (const l of gaps.data ?? []) {
       if (l.canal !== canal) continue;
+      if (!noPeriodo(l)) continue;
       if (quemAtiva != null && l.consultora !== quemAtiva) continue;
       const e = m.get(l.etapa) ?? {
         etapa: l.etapa, peso: Number(l.peso ?? 0), ordem: Number(l.ordem ?? 0),
-        avaliadas: 0, falhas: 0, porConsultora: [],
+        avaliadas: 0, falhas: 0, porConsultora: new Map(),
       };
       e.avaliadas += Number(l.avaliadas ?? 0);
       e.falhas += Number(l.falhas ?? 0);
-      if (l.consultora) e.porConsultora.push({
-        consultora: l.consultora,
-        avaliadas: Number(l.avaliadas ?? 0),
-        falhas: Number(l.falhas ?? 0),
-      });
+      /* A view emite uma linha por DIA desde a 120, então a mesma consultora
+         volta várias vezes na mesma etapa. Somar num Map, não empilhar numa
+         lista — senão o painel lateral repete o nome dela uma vez por dia. */
+      if (l.consultora) {
+        const c = e.porConsultora.get(l.consultora) ?? { consultora: l.consultora, avaliadas: 0, falhas: 0 };
+        c.avaliadas += Number(l.avaliadas ?? 0);
+        c.falhas += Number(l.falhas ?? 0);
+        e.porConsultora.set(l.consultora, c);
+      }
       m.set(l.etapa, e);
     }
     return [...m.values()]
       .filter((e) => e.avaliadas > 0)
-      .map((e) => ({ ...e, pct: (e.falhas / e.avaliadas) * 100 }))
+      .map((e) => ({ ...e, porConsultora: [...e.porConsultora.values()], pct: (e.falhas / e.avaliadas) * 100 }))
       .sort((a, b) => b.pct - a.pct || b.peso - a.peso);
-  }, [gaps.data, canal, quemAtiva]);
+  }, [gaps.data, canal, quemAtiva, periodo]);
 
   /* Pesos do canal. Deveriam vir de dim_peso_etapa, mas a RLS daquela tabela
      devolve 0 linhas para `authenticated` (ver lib/dados.js). A gaps carrega
@@ -7056,16 +7080,52 @@ function HubAuditoria() {
     return [...m.values()].sort((a, b) => a.ordem - b.ordem);
   }, [gaps.data, canal]);
 
-  const linhasPlacar = useMemo(() => (placar.data ?? [])
-    .filter((l) => l.canal === canal)
-    .filter((l) => quemAtiva == null || l.consultora === quemAtiva)
-    .sort((a, b) => Number(b.score_medio ?? 0) - Number(a.score_medio ?? 0)),
-    [placar.data, canal, quemAtiva]);
+  /* Placar. A view emite uma linha por MÊS desde a 120: sem juntar, a mesma
+     consultora aparecia uma vez por mês na tabela. Contadores somam; médias
+     são reponderadas por auditadas (média de médias mensais daria o mesmo
+     peso a um mês de 1 conversa e a um de 27); pior/melhor são min/max. */
+  const linhasPlacar = useMemo(() => {
+    const m = new Map();
+    for (const l of placar.data ?? []) {
+      if (l.canal !== canal) continue;
+      if (!noPeriodo(l)) continue;
+      if (quemAtiva != null && l.consultora !== quemAtiva) continue;
+      const a = m.get(l.consultora) ?? {
+        canal: l.canal, consultora: l.consultora, auditadas: 0,
+        somaScore: 0, somaEtapas: 0, sondagem_completa: 0, pior: null, melhor: null,
+      };
+      const n = Number(l.auditadas ?? 0);
+      a.auditadas += n;
+      a.somaScore += Number(l.score_medio ?? 0) * n;
+      a.somaEtapas += Number(l.etapas_medias ?? 0) * n;
+      a.sondagem_completa += Number(l.sondagem_completa ?? 0);
+      if (l.pior != null) a.pior = a.pior == null ? Number(l.pior) : Math.min(a.pior, Number(l.pior));
+      if (l.melhor != null) a.melhor = a.melhor == null ? Number(l.melhor) : Math.max(a.melhor, Number(l.melhor));
+      m.set(l.consultora, a);
+    }
+    return [...m.values()]
+      .map((a) => ({
+        ...a,
+        score_medio: a.auditadas ? a.somaScore / a.auditadas : null,
+        etapas_medias: a.auditadas ? a.somaEtapas / a.auditadas : null,
+        amostra_suficiente: a.auditadas >= MIN_AUDITORIAS,
+      }))
+      .sort((x, y) => Number(y.score_medio ?? 0) - Number(x.score_medio ?? 0));
+  }, [placar.data, canal, quemAtiva, periodo]);
+
+  /* Dispersão: SÓ o mês mais recente dentro da janela. As medianas da view
+     são calculadas por mês (`c.mes = j.mes`), então misturar meses colocaria
+     pontos de agosto contra o corte de julho. E uma consultora viraria um
+     ponto por mês, com os rótulos empilhados em cima uns dos outros. */
+  const mesDispersao = useMemo(() => {
+    const meses = (conf.data ?? []).filter(noPeriodo).map((l) => String(l.mes)).filter(Boolean);
+    return meses.length ? meses.reduce((a, b) => (a > b ? a : b)) : null;
+  }, [conf.data, periodo]);
 
   const pontos = useMemo(() => (conf.data ?? [])
-    .filter(noPeriodo)
+    .filter((l) => String(l.mes) === mesDispersao)
     .filter((l) => quemAtiva == null || l.consultora === quemAtiva),
-    [conf.data, periodo, quemAtiva]);
+    [conf.data, mesDispersao, quemAtiva]);
 
   const rotuloCanal = CANAIS_AUDITORIA.find((c) => c.key === canal)?.label ?? canal;
   const etapaSel = etapaAberta ? etapas.find((e) => e.etapa === etapaAberta) : null;
@@ -7130,12 +7190,11 @@ function HubAuditoria() {
                 linhas={etapas}
                 recorte={quemAtiva ?? "equipe"}
                 onEtapa={setEtapaAberta}
-                periodoIgnorado={periodo !== "tudo"}
               />
-              <PlacarConsultoras linhas={linhasPlacar} periodoIgnorado={periodo !== "tudo"} />
+              <PlacarConsultoras linhas={linhasPlacar} />
             </div>
             <div>
-              <ConformidadeVenda pontos={pontos} janela={janela.label} canalIgnorado={canal} />
+              <ConformidadeVenda pontos={pontos} mes={mesDispersao} canalIgnorado={canal} />
               <TabelaPesos linhas={pesos} rotuloCanal={rotuloCanal} />
             </div>
           </div>
@@ -7177,7 +7236,7 @@ function CanalSemDado({ canal, rotulo }) {
 /* Gráfico principal: barras horizontais, maior falha no topo. O peso vai ao
    lado do nome porque falhar 100% numa etapa de peso 5 e numa de peso 15
    custa coisas diferentes — sem o peso à vista, a ordem parece arbitrária. */
-function FalhaPorEtapa({ linhas, recorte, onEtapa, periodoIgnorado }) {
+function FalhaPorEtapa({ linhas, recorte, onEtapa }) {
   return (
     <Bloco titulo="Falha por etapa do roteiro"
       canto={recorte === "equipe" ? "equipe" : recorte}>
@@ -7194,9 +7253,6 @@ function FalhaPorEtapa({ linhas, recorte, onEtapa, periodoIgnorado }) {
             Clique numa etapa para ver o critério de acerto e falha. O denominador é
             só o que foi avaliado: etapa que não se aplica à conversa fica de fora.
           </div>
-          {periodoIgnorado && (
-            <ForaDoRecorte texto="Este bloco mostra a base inteira, não o período escolhido: a vw_auditoria_gaps agrega sem coluna de data. Preferi manter o número certo a rotulá-lo com um recorte que ele não tem." />
-          )}
         </>
       )}
     </Bloco>
@@ -7393,7 +7449,7 @@ function DrawerEtapa({ etapa, canal, onFechar }) {
    caso o gráfico não desenha linha de corte: inventar uma mediana com 3
    pessoas de 1 a 15 conversas classificaria gente que a view se recusou a
    classificar. */
-function ConformidadeVenda({ pontos, janela, canalIgnorado }) {
+function ConformidadeVenda({ pontos, mes, canalIgnorado }) {
   const L = 44, B = 30, W = 480, H = 250;
 
   const medX = pontos.find((p) => p.score_mediano != null)?.score_mediano ?? null;
@@ -7407,7 +7463,9 @@ function ConformidadeVenda({ pontos, janela, canalIgnorado }) {
   const semVenda = pontos.filter((p) => p.receita == null);
 
   return (
-    <Bloco titulo="Conformidade × venda real" canto={janela}>
+    // O canto nomeia o MÊS, não a janela: este bloco é sempre de um mês só,
+    // e rotulá-lo "trimestre" prometeria um recorte que ele não faz.
+    <Bloco titulo="Conformidade × venda real" canto={mes ? mesAnoCurto(mes) : null}>
       {!pontos.length ? (
         <div style={{ fontSize: 12.5, color: C.faint, padding: "18px 0" }}>
           Sem consultora com auditoria e venda no período.
@@ -7479,7 +7537,7 @@ function ConformidadeVenda({ pontos, janela, canalIgnorado }) {
    coluna de posição fica com um traço. A linha continua visível — esconder
    quem tem pouca amostra deixaria a gestão achando que a pessoa não foi
    auditada. */
-function PlacarConsultoras({ linhas, periodoIgnorado }) {
+function PlacarConsultoras({ linhas }) {
   const th = {
     fontSize: 10, fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase",
     color: C.dim, padding: "0 0 8px", textAlign: "right", whiteSpace: "nowrap",
@@ -7537,9 +7595,6 @@ function PlacarConsultoras({ linhas, periodoIgnorado }) {
             Posição só para quem tem 20 auditorias ou mais. Score e etapas cumpridas
             são medidas distintas e ficam em colunas separadas de propósito.
           </div>
-          {periodoIgnorado && (
-            <ForaDoRecorte texto="Números de toda a base: a vw_auditoria_consultora agrega sem coluna de data e não acompanha o filtro de período." />
-          )}
         </>
       )}
     </Bloco>
