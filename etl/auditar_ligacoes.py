@@ -10,8 +10,13 @@ Fluxo:
     4. o script calcula o score e a bandeira "ligação completa"
 
 Uso:
-    python auditar_ligacoes.py            # últimos 7 dias
-    python auditar_ligacoes.py 14         # últimos 14 dias
+    python auditar_ligacoes.py                    # janela padrão: 7 dias
+    python auditar_ligacoes.py 14                 # últimos 14 dias
+    DIAS_JANELA=30 python auditar_ligacoes.py     # backfill pontual
+
+Precedência da janela: argumento > DIAS_JANELA > 7. O argumento continua
+valendo porque já estava documentado; a variável existe para o backfill
+manual. A rotina diária do Actions não passa nem um nem outro.
 
 Precisa no .env:
     BLACK_CRM_TOKEN=...
@@ -266,7 +271,10 @@ def calcular_score(etapas):
     return valor, faixa
 
 
-def main(dias):
+def main(dias, origem="padrão"):
+    # A origem vai junto no log: olhando o histórico do Actions depois, é o que
+    # distingue um pico de auditorias vindo das consultoras de um backfill.
+    print(f"Janela de busca: {dias} dias ({origem})")
     print(f"Buscando ligações concluídas de {MIN_DURACAO}s+ nos últimos {dias} dias...")
     ligacoes = buscar_ligacoes(dias)
     print(f"{len(ligacoes)} ligações auditáveis\n")
@@ -339,4 +347,8 @@ if __name__ == "__main__":
                                ("OPENAI_API_KEY", OPENAI_KEY)) if not v]
     if faltando:
         sys.exit("Faltou no .env: " + ", ".join(faltando))
-    main(int(sys.argv[1]) if len(sys.argv) > 1 else 7)
+    if len(sys.argv) > 1:
+        main(int(sys.argv[1]), "argumento")
+    else:
+        dias = int(os.environ.get("DIAS_JANELA", "7"))
+        main(dias, "DIAS_JANELA" if "DIAS_JANELA" in os.environ else "padrão")

@@ -5,6 +5,12 @@ Roda ANTES da auditoria por IA — conversa com áudio pendente não é auditada
 
 Uso:
     python transcrever_audios.py <conversation_id> [<conversation_id> ...]
+    python transcrever_audios.py                    # janela padrão: 7 dias
+    DIAS_JANELA=30 python transcrever_audios.py     # backfill pontual
+
+Sem IDs na linha de comando, busca as conversas recentes das consultoras de
+GGB. A janela é de 7 dias e só muda por DIAS_JANELA — para backfill manual.
+A rotina diária do Actions não define a variável e segue nos 7.
 
 Precisa de um .env na mesma pasta:
     BLACK_CRM_TOKEN=...
@@ -197,8 +203,14 @@ if __name__ == "__main__":
 
     ids = sys.argv[1:]
     if not ids:
-        print("Sem IDs — buscando conversas dos últimos 7 dias das consultoras de GGB...")
-        ids = conversas_recentes(dias=7)
+        # A janela vai pro log com a origem junto: sem isso, olhando o histórico
+        # do Actions daqui a um mês não dá pra saber se um pico de auditorias
+        # foi movimento real das consultoras ou um backfill que alguém rodou.
+        dias = int(os.environ.get("DIAS_JANELA", "7"))
+        origem = "DIAS_JANELA" if "DIAS_JANELA" in os.environ else "padrão"
+        print(f"Janela de busca: {dias} dias ({origem})")
+        print("Sem IDs — buscando conversas recentes das consultoras de GGB...")
+        ids = conversas_recentes(dias=dias)
         if not ids:
             sys.exit("Nenhuma conversa recente encontrada.")
         print(f"{len(ids)} conversas encontradas.")
