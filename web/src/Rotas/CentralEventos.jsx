@@ -73,6 +73,13 @@ const fmtDia = (iso) => {
   const [, m, d] = iso.split("-");
   return `${d}/${m}`;
 };
+/* "2026-09-02" -> "2 set". Na pauta há duas datas por linha (o prazo, que é o
+   grupo, e a do evento); escrevendo o mês por extenso a do evento deixa de
+   parecer mais um "02/09" solto e vira texto. */
+const fmtDiaMes = (iso) => {
+  const d = new Date(iso + "T00:00:00");
+  return `${d.getDate()} ${MESES_CURTO[d.getMonth()]}`;
+};
 const fmtDataHora = (iso) => {
   if (!iso) return null;
   const d = new Date(iso);
@@ -349,14 +356,18 @@ function FilaPendentes({ pendentes, tipos, aoClassificar }) {
    Existe porque prazo e data do evento divergem: 45 das 98 ações vencem em
    mês diferente do evento. Indexar a tela pela data do evento fazia agosto
    aparecer vazio tendo 27 ações a vencer. */
-function LinhaPauta({ acao, aoMarcar, salvando, mostraPrazo }) {
+function LinhaPauta({ acao, aoMarcar, salvando, mostraPrazo, primeira }) {
   const atrasada = !acao.concluida && acao.prazo < HOJE;
   const automatica = acao.conclusao === "automatica";
   const ev = acao.evento;
   const corMarca = acao.concluida ? C.positive : atrasada ? C.alert : C.textFaint;
 
   return (
-    <div className="flex items-baseline gap-3 py-2.5 pr-1" style={{ borderTop: `1px solid ${C.hair}` }}>
+    /* A primeira linha do dia não desenha o próprio filete: a borda do grupo
+       já está ali, e as duas juntas faziam a divisão entre dias parecer igual
+       à divisão entre linhas. */
+    <div className="flex items-baseline gap-3 py-2.5 pr-1"
+      style={primeira ? undefined : { borderTop: `1px solid ${C.hair}` }}>
       <button
         onClick={() => !automatica && aoMarcar(acao.id, !acao.concluida)}
         disabled={automatica || salvando}
@@ -373,38 +384,51 @@ function LinhaPauta({ acao, aoMarcar, salvando, mostraPrazo }) {
             : <Circle size={17} />}
       </button>
 
+      {/* QUEM VARIA É QUEM MANDA. Existem 8 nomes de ação no sistema todo, e
+          os quatro principais aparecem uma vez por evento — "Card de
+          divulgação" é o nome do template, idêntico nos 16. Dar a manchete a
+          ele fazia vinte linhas dizerem a mesma coisa; o nome do EVENTO é o
+          que distingue uma da outra, então é ele que vem primeiro. */}
       <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-2 flex-wrap">
-          <span className="text-[14.5px] truncate" style={{
-            color: acao.concluida ? C.textFaint : C.text,
-            textDecorationLine: acao.concluida ? "line-through" : "none",
-            textDecorationColor: C.textFaint,
-          }}>
-            {acao.nome}
+        <div className="flex items-baseline gap-2.5">
+          <span className="text-[14.5px] truncate flex-1 min-w-0" title={ev?.nome}
+            style={{
+              color: acao.concluida ? C.textFaint : C.text,
+              textDecorationLine: acao.concluida ? "line-through" : "none",
+              textDecorationColor: C.textFaint,
+            }}>
+            {ev?.nome ?? "Evento sem nome"}
           </span>
-          {/* Área responsável como etiqueta, não como prosa: é a coluna de
-              departamento da ordem do dia — quem pega, num relance. */}
-          {acao.responsavel && (
-            <span style={{ ...etiqueta, color: automatica ? C.goldDim : C.textMuted }}>
-              {automatica ? `${acao.responsavel} · auto` : acao.responsavel}
+          {/* A data do evento fica colada nele, na mesma linha: solta numa
+              coluna à direita virava um segundo número sem legenda, brigando
+              com o prazo que já é o grupo. */}
+          {ev && (
+            <span className="shrink-0 tabular-nums" title="Data do evento"
+              style={{ fontFamily: FONT_DISPLAY, fontSize: 11, color: C.textFaint }}>
+              {fmtDiaMes(ev.data_evento)}
             </span>
           )}
         </div>
-        {ev && (
-          <p className="text-[11.5px] truncate mt-0.5" style={{ color: C.textFaint }}>
-            {ev.nome}
-          </p>
-        )}
-      </div>
 
-      {/* À direita, o alvo: para quando é o evento. Na pauta o prazo já é o
-          agrupamento — menos no bloco de atrasadas, que mistura datas. */}
-      <span className="shrink-0 tabular-nums text-right" style={{
-        fontFamily: FONT_DISPLAY, fontSize: 11.5,
-        color: atrasada ? C.alert : C.textFaint,
-      }}>
-        {mostraPrazo ? fmtDia(acao.prazo) : ev ? fmtDia(ev.data_evento) : "—"}
-      </span>
+        <div className="flex items-baseline gap-2 mt-0.5">
+          <span className="text-[12.5px] truncate" style={{ color: acao.concluida ? C.textFaint : C.textMuted }}>
+            {acao.nome}
+          </span>
+          {acao.responsavel && (
+            <span style={{ ...etiqueta, color: automatica ? C.goldDim : C.textFaint }}>
+              {automatica ? `${acao.responsavel} · auto` : acao.responsavel}
+            </span>
+          )}
+          {/* No bloco de atrasadas as datas se misturam, então cada linha
+              precisa dizer de quando é o próprio prazo. */}
+          {mostraPrazo && (
+            <span className="ml-auto shrink-0 tabular-nums" title="Prazo vencido"
+              style={{ fontFamily: FONT_DISPLAY, fontSize: 11, color: C.alert }}>
+              venceu {fmtDiaMes(acao.prazo)}
+            </span>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -443,10 +467,10 @@ function GrupoPauta({ dia, titulo, acoes, tom, aoMarcar, salvandoId }) {
         )}
       </div>
 
-      <div className="flex-1 min-w-0 pb-1"
+      <div className="flex-1 min-w-0 pb-2.5"
         style={alerta ? { borderLeft: `2px solid ${C.alert}`, paddingLeft: 14, marginLeft: -8 } : undefined}>
-        {acoes.map((a) => (
-          <LinhaPauta key={a.id} acao={a} aoMarcar={aoMarcar}
+        {acoes.map((a, i) => (
+          <LinhaPauta key={a.id} acao={a} aoMarcar={aoMarcar} primeira={i === 0}
             salvando={salvandoId === a.id} mostraPrazo={alerta} />
         ))}
       </div>
