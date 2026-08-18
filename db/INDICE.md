@@ -137,4 +137,4 @@ Ordem de aplicação e o que cada uma faz. Gerado a partir do cabeçalho de cada
 | 118 | `118_inscritos_sem_triplicar.sql` | FebraHub · Migration 118 — vw_turma_inscritos: join → exists. Definição VÁLIDA da view (39 turmas de CIS Global triplicavam) |
 | 119 | `119_auditoria_gate.sql` | FebraHub · Migration 119 — Auditoria: `pode_ver('auditoria')` nas 4 views + policy em `dim_peso_etapa`. **NÃO APLICADA** — hoje qualquer autenticado lê o placar inteiro |
 | 120–126 | — | migrations da Central de Eventos que já estavam na árvore (fundação, seed, funções, sync, regras, cruzamento). Não indexadas por mim: não fui eu que escrevi |
-| 127 | `127_central_eventos_acesso.sql` | FebraHub · Migration 127 — Central de Eventos: policies em `mkt_tipos_evento` e `mkt_unidades` + vínculo perfil↔unidade. **NÃO APLICADA** — sem isso ninguém enxerga os 16 eventos ativos |
+| 127 | `127_central_eventos_acesso.sql` | FebraHub · Migration 127 — Central de Eventos: policies em `mkt_tipos_evento` e `mkt_unidades` + vínculo perfil↔unidade e gestor_marketing do Bruno (APLICADA) |
