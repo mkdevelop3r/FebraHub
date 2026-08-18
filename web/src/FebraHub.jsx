@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect, createContext, useContext } from 
 import { BrowserRouter, Routes, Route, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import Avaliacao from "./Rotas/Avaliacao.jsx";
+import CentralEventos from "./Rotas/CentralEventos.jsx";
 import {
   TrendingUp, Wallet, Megaphone, GraduationCap, ShoppingBag, CalendarDays,
   LayoutDashboard, Lock, Mail, AlertTriangle, Package, LogOut, Power,
@@ -86,6 +87,10 @@ const HUBS = [
   { key: "comercial",  nome: "Comercial",  Icone: TrendingUp,    desc: "Pódio de consultoras e placar da semana" },
   { key: "financeiro", nome: "Financeiro", Icone: Wallet,        desc: "Receita por curso e cobertura" },
   { key: "marketing",  nome: "Marketing",  Icone: Megaphone,     desc: "Origem de leads e campanhas" },
+  /* Operação do Marketing, como a Central Pedagógica é a do Pedagógico:
+     `setor` existe porque a chave não é o próprio setor. */
+  { key: "central-eventos", setor: "marketing", nome: "Central de Eventos", Icone: CalendarDays,
+    desc: "Agenda, checklist de divulgação e o que está atrasado" },
   { key: "pedagogico", nome: "Pedagógico", Icone: GraduationCap, desc: "Turmas, matrículas e conclusão" },
   /* A Central é operação, não setor: quem enxerga é quem tem o setor
      'pedagogico'. `setor` existe só por isso — nos outros, a chave já é o
@@ -7711,6 +7716,7 @@ function Shell({ perfil }) {
       case "pedagogico": return <HubPedagogico />;
       case "central":    return <CentralPedagogica />;
       case "auditoria":  return <HubAuditoria />;
+      case "central-eventos": return <CentralEventos />;
       case "eventos":    return <HubEventos />;
       case "loja":       return <HubLoja />;
       case "estoque":    return <SemFonte hub={hub} />;
@@ -7844,6 +7850,10 @@ function Shell({ perfil }) {
       <main className="rolagem" style={{ flex: 1, minWidth: 0, height: "100vh", overflowY: "auto" }}>
         <div className="subir" style={{ padding: "26px 34px 60px", maxWidth: 1320, margin: "0 auto" }}>
 
+          {/* A Central de Eventos traz o próprio cabeçalho — com o seletor de
+              mês e o botão de atualizar dentro dele. Renderizar o do Shell
+              junto duplicaria o título na tela. */}
+          {tela !== "central-eventos" && (
           <div style={{
             display: "flex", alignItems: "flex-end", justifyContent: "space-between",
             gap: 20, flexWrap: "wrap", marginBottom: 24,
@@ -7881,6 +7891,7 @@ function Shell({ perfil }) {
               </div>
             </div>
           </div>
+          )}
 
           {conteudo()}
         </div>

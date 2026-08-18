@@ -840,6 +840,127 @@ export const useConformidadeVenda = () =>
   useView("vw_conformidade_venda", { ordem: ["mes", "consultora"] });
 
 /* ============================================================
+   CENTRAL DE EVENTOS — operação do Marketing
+   ============================================================
+   Funções, não hooks: a página herdou do protótipo um `carregar()`
+   imperativo com atualização otimista e rollback, e é ele que dá o check
+   instantâneo na ação. Envelopar isso em useQuery obrigaria a reescrever a
+   parte aprovada. O que importa da convenção — acesso ao banco morando
+   aqui, e não espalhado em componente — está mantido.
+
+   ESCRITA SÓ POR RPC. As três tabelas têm RLS e nenhum update direto é
+   permitido: `mkt_marcar_acao` recusa ação automática e grava
+   concluida_em/concluida_por por trigger; `mkt_classificar_evento` exige
+   gestor_marketing. Os erros das duas voltam como exceção do Postgres e
+   sobem como `error.message` — a tela mostra o texto do banco, que é onde
+   a regra vive.
+
+   NENHUMA delas filtra por unidade. Quem decide o que cada perfil enxerga
+   é a policy (`p.gestor_marketing or p.unidade_id = e.unidade_id`);
+   repetir isso no cliente seria inventar uma segunda régua de permissão,
+   que cedo ou tarde discorda da primeira. */
+
+const erroSupabase = (error) => {
+  if (!error) return;
+  throw new Error(error.message || String(error));
+};
+
+export async function mktUnidadesAtivas() {
+  const { data, error } = await supabase
+    .from("mkt_unidades")
+    .select("id, nome, slug")
+    .eq("ativa", true)
+    .order("nome");
+  erroSupabase(error);
+  return data ?? [];
+}
+
+/* Só os tipos que geram checklist entram na fila de classificação —
+   classificar como um tipo sem checklist não produziria ação nenhuma, e o
+   botão prometeria um efeito que não acontece. */
+export async function mktTiposComChecklist() {
+  const { data, error } = await supabase
+    .from("mkt_tipos_evento")
+    .select("id, nome")
+    .eq("ativo", true)
+    .eq("gera_checklist", true)
+    .order("nome");
+  erroSupabase(error);
+  return data ?? [];
+}
+
+// PostgREST devolve embedding 1:1 ora como objeto, ora como lista de um.
+const primeiro = (x) => (Array.isArray(x) ? (x[0] ?? null) : (x ?? null));
+
+export async function mktEventosDoMes(inicio, fim) {
+  const { data, error } = await supabase
+    .from("mkt_eventos")
+    .select(
+      "id, nome, codigo, data_evento, status, unidade_id," +
+      "tipo:mkt_tipos_evento(nome)," +
+      "resultados:mkt_resultados_evento(inscritos,presentes,vendas_pitch,vendas_pos)," +
+      "acoes:mkt_acoes_evento(id,nome,responsavel,prazo,conclusao,concluida,concluida_em)"
+    )
+    .eq("status", "ativo")
+    .gte("data_evento", inicio)
+    .lt("data_evento", fim)
+    .order("data_evento")
+    .order("prazo", { referencedTable: "mkt_acoes_evento", ascending: true });
+  erroSupabase(error);
+  return (data ?? []).map((e) => ({
+    ...e,
+    /* `mkt_tipos_evento` está com RLS ligada e SEM policy: o embedding volta
+       nulo mesmo para quem enxerga o evento. Daí o "—" em vez de quebrar. */
+    tipo: primeiro(e.tipo)?.nome ?? "—",
+    resultados: primeiro(e.resultados),
+    acoes: e.acoes ?? [],
+  }));
+}
+
+/* Data do primeiro evento ativo A PARTIR de uma data. Serve ao estado vazio:
+   hoje (18/08/2026) não há nenhum ativo em agosto — os 16 estão em setembro,
+   outubro e dezembro. Abrir no mês corrente e mostrar "nenhum evento" sem
+   mais nada faria a tela parecer quebrada quando ela está certa. */
+export async function mktProximoEventoAtivo(deData) {
+  const { data, error } = await supabase
+    .from("mkt_eventos")
+    .select("data_evento")
+    .eq("status", "ativo")
+    .gte("data_evento", deData)
+    .order("data_evento")
+    .limit(1);
+  erroSupabase(error);
+  return data?.[0]?.data_evento ?? null;
+}
+
+export async function mktPendentes() {
+  const { data, error } = await supabase
+    .from("mkt_eventos")
+    .select("id, nome, data_evento, unidade_id")
+    .eq("status", "pendente_classificacao")
+    .order("data_evento");
+  erroSupabase(error);
+  return data ?? [];
+}
+
+export async function mktMarcarAcao(acaoId, concluida) {
+  const { error } = await supabase.rpc("mkt_marcar_acao", {
+    p_acao_id: acaoId,
+    p_concluida: concluida,
+  });
+  erroSupabase(error);
+}
+
+// tipo nulo = "nada necessário": o evento sai da fila sem ganhar checklist.
+export async function mktClassificarEvento(eventoId, tipoId) {
+  const { error } = await supabase.rpc("mkt_classificar_evento", {
+    p_evento_id: eventoId,
+    p_tipo_evento_id: tipoId ?? null,
+  });
+  erroSupabase(error);
+}
+
+/* ============================================================
    AGREGAÇÃO — as views vem agrupadas por mes.
    O KPI compara o ultimo mes fechado com o anterior.
    ============================================================ */
