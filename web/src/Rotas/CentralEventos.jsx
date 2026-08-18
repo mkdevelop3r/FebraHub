@@ -151,7 +151,30 @@ function CodigoEvento({ codigo }) {
   );
 }
 
-/* ============ CHECKLIST ============ */
+/* ============ CHECKLIST ============
+   O CÍRCULO É A LINGUAGEM DE ESTADO da tela inteira: vazio = falta fazer,
+   verde = feito. Ação automática usa os MESMOS dois ícones — quem diz que
+   ela é automática é o selo AUTO, não o ícone de estado.
+
+   Isto já custou caro: o raio ⚡ ocupava o lugar do círculo nas automáticas
+   pendentes, e as 11 que ainda esperam campanha ficavam com a mesma cara das
+   5 que já estão no ar. O time lia "já está rodando". O raio sobrevive só
+   colado ao selo, onde é adjetivo e não veredito. */
+const TituloAuto = "Marcada pelo sistema quando a campanha entra no ar — não dá para marcar à mão";
+
+function SeloAuto() {
+  return (
+    <span className="inline-flex items-center gap-0.5 ml-1.5 align-middle"
+      style={{ ...etiqueta, color: C.goldDim }} title={TituloAuto}>
+      <Zap size={9} /> auto
+    </span>
+  );
+}
+
+/* Estado da automática por extenso. "aguardando campanha" some da leitura de
+   pendência; "tráfego ativo" diz o que de fato aconteceu, melhor que um ✓. */
+const textoAuto = (concluida) => (concluida ? "tráfego ativo" : "aguardando campanha");
+
 function LinhaAcao({ acao, aoMarcar, salvando }) {
   const atrasada = !acao.concluida && acao.prazo < HOJE;
   // Ação automática não é clicável: quem marca é o sistema, quando a
@@ -168,11 +191,9 @@ function LinhaAcao({ acao, aoMarcar, salvando }) {
         aria-label={acao.concluida ? "Desmarcar" : "Concluir"}
         className="shrink-0 transition-transform hover:scale-110"
         style={{ color: cor, cursor: automatica ? "not-allowed" : "pointer", opacity: salvando ? 0.5 : 1 }}
-        title={automatica ? "Ação automática: o sistema marca quando a campanha estiver rodando" : ""}
+        title={automatica ? TituloAuto : ""}
       >
-        {acao.concluida ? <CircleCheck size={18} />
-          : automatica ? <Zap size={16} />
-            : <Circle size={18} />}
+        {acao.concluida ? <CircleCheck size={18} /> : <Circle size={18} />}
       </button>
 
       <div className="flex-1 min-w-0">
@@ -185,7 +206,7 @@ function LinhaAcao({ acao, aoMarcar, salvando }) {
           textDecorationColor: C.textFaint,
         }}>
           {acao.nome}
-          {automatica && <span className="text-[10px] ml-1.5 uppercase tracking-wide" style={{ color: C.goldDim }}>auto</span>}
+          {automatica && <SeloAuto />}
         </p>
         <p className="text-[11px]" style={{ color: C.textFaint }}>
           {acao.responsavel || "Sem responsável"}
@@ -193,8 +214,13 @@ function LinhaAcao({ acao, aoMarcar, salvando }) {
         </p>
       </div>
 
-      <span className="text-xs tabular-nums shrink-0" style={{ color: cor }}>
-        {acao.concluida ? "✓" : atrasada ? `${-diasAte(acao.prazo)}d atrasada` : `até ${fmtDia(acao.prazo)}`}
+      <span className="text-xs tabular-nums shrink-0"
+        style={{ color: automatica && !acao.concluida ? C.textFaint : cor }}>
+        {automatica
+          ? textoAuto(acao.concluida)
+          : acao.concluida ? "✓"
+            : atrasada ? `${-diasAte(acao.prazo)}d atrasada`
+              : `até ${fmtDia(acao.prazo)}`}
       </span>
     </div>
   );
@@ -377,11 +403,10 @@ function LinhaPauta({ acao, aoMarcar, salvando, mostraPrazo, primeira }) {
           color: corMarca, cursor: automatica ? "not-allowed" : "pointer",
           opacity: salvando ? 0.4 : 1, transform: "translateY(3px)",
         }}
-        title={automatica ? "Ação automática: o sistema marca quando a campanha entrar no ar" : ""}
+        title={automatica ? TituloAuto : ""}
       >
-        {acao.concluida ? <CircleCheck size={17} />
-          : automatica ? <Zap size={15} />
-            : <Circle size={17} />}
+        {/* Mesmos dois ícones das manuais — ver o comentário em LinhaAcao. */}
+        {acao.concluida ? <CircleCheck size={17} /> : <Circle size={17} />}
       </button>
 
       {/* QUEM VARIA É QUEM MANDA. Existem 8 nomes de ação no sistema todo, e
@@ -415,13 +440,18 @@ function LinhaPauta({ acao, aoMarcar, salvando, mostraPrazo, primeira }) {
             {acao.nome}
           </span>
           {acao.responsavel && (
-            <span style={{ ...etiqueta, color: automatica ? C.goldDim : C.textFaint }}>
-              {automatica ? `${acao.responsavel} · auto` : acao.responsavel}
-            </span>
+            <span style={{ ...etiqueta, color: C.textFaint }}>{acao.responsavel}</span>
           )}
-          {/* No bloco de atrasadas as datas se misturam, então cada linha
-              precisa dizer de quando é o próprio prazo. */}
-          {mostraPrazo && (
+          {automatica && <SeloAuto />}
+
+          {/* À direita: o estado da automática por extenso, ou — no bloco de
+              atrasadas, onde as datas se misturam — de quando é o prazo. */}
+          {automatica ? (
+            <span className="ml-auto shrink-0" title={TituloAuto}
+              style={{ fontFamily: FONT_DISPLAY, fontSize: 11, color: acao.concluida ? C.positive : C.textFaint }}>
+              {textoAuto(acao.concluida)}
+            </span>
+          ) : mostraPrazo && (
             <span className="ml-auto shrink-0 tabular-nums" title="Prazo vencido"
               style={{ fontFamily: FONT_DISPLAY, fontSize: 11, color: C.alert }}>
               venceu {fmtDiaMes(acao.prazo)}
