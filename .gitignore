@@ -6,6 +6,9 @@
 !.env.example
 *.key
 secrets/
+# Chave de service account do Google (etl/service_account.json): tem
+# private_key dentro, e quem tem ela lê as planilhas todas.
+service_account*.json
 
 # Node
 node_modules/
