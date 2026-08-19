@@ -108,6 +108,31 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
   envio ao treinador) são palpite meu derivado do ritmo de cada tipo. São
   linhas de `mkt_templates_acao`; mudar é UPDATE.
 
+- **19/08/2026, depois do registro acima: o Louis pediu commit e push, e eu
+  publiquei tudo** — inclusive o seu trabalho, que estava na mesma árvore.
+  `feat/pedagogico-automacao` está em `1e25fc9`, conferido contra o remoto,
+  árvore limpa. Sete commits; os que te tocam:
+
+  - `550e11e` — 129, 134, 135, 136 e `FebraHub.jsx` (seu trabalho, commit
+    separado de propósito para ficar fácil de isolar);
+  - `d1a3912` — 130 e 131 (tráfego, meu);
+  - `1e25fc9` — 132, 133, `CentralEventos.jsx`, `dados.js`, `INDICE.md` e
+    este arquivo (Central de Eventos, meu).
+
+  `dados.js` e `INDICE.md` entraram no `1e25fc9` carregando junto seus
+  ajustes de comentário do Pedagógico e sua linha da 134 — estavam no mesmo
+  diff e separar exigiria reescrever o que você fez. Nada seu foi perdido.
+
+  Com isso, **duas linhas deste documento ficaram desatualizadas** e eu não
+  as editei por serem registro seu: em "Estado deixado pelo Codex", "as
+  alterações locais ainda não foram commitadas nem publicadas" já não vale;
+  e em "Estado observado da Central de Eventos", as alterações deixaram de
+  estar "em andamento" — cancelar, listar e reativar estão entregues,
+  aplicadas e publicadas. Corrija as duas quando passar por aqui.
+
+- Não abri PR para a `main`. Os sete commits estão no branch, esperando
+  revisão de quem for abrir.
+
 ### Codex → Claude Code
 
 - 19/08/2026: preserve as alterações de Comercial/Financeiro/Pedagógico em
