@@ -189,7 +189,9 @@ export const useFinanceiroQualidadePeriodo = () =>
 export const useFinanceiroPagamentos = () => useView("vw_financeiro_pagamentos");
 export const useFinanceiroReceitaCategoria = () => useView("vw_financeiro_receita_categoria_total");
 export const useFinanceiroCaixaHorizonte = () => useView("vw_financeiro_caixa_horizonte");
-export const useFinanceiroFormasPagamento = () => useView("vw_financeiro_formas_pagamento");
+// Série diária; o Hub Financeiro reagrega conforme Ano/Mês/7 dias.
+export const useFinanceiroFormasPagamento = () =>
+  useView("vw_financeiro_formas_pagamento_periodo", { ordem: ["data", "forma"] });
 // Views que a Dulce vai criar (evolução mensal + caixa CisPay). Enquanto
 // não existirem, o useView devolve [] e o card mostra estado vazio honesto.
 export const useFinanceiroReceitaMensal = () => useView("vw_financeiro_receita_mensal");
@@ -197,7 +199,9 @@ export const useFinanceiroCaixaMensal = () => useView("vw_financeiro_caixa_mensa
 
 /* Conta Azul: inadimplência, a receber e despesa. NUNCA somar com a
    receita (Salesforce) — são fontes e unidades diferentes. */
-export const useFinanceiroInadimpOrigem = () => useView("vw_financeiro_inadimplencia_origem");
+// Parcelas ainda vencidas, na granularidade diária da data de vencimento.
+export const useFinanceiroInadimpOrigem = () =>
+  useView("vw_financeiro_inadimplencia_origem_periodo", { ordem: ["data", "origem"] });
 export const useFinanceiroAReceberHorizonte = () => useView("vw_financeiro_a_receber_horizonte");
 export const useFinanceiroDespesaCategoria = () => useView("vw_financeiro_despesa_categoria");
 export const useFinanceiroAPagarHorizonte = () => useView("vw_financeiro_a_pagar_horizonte");
@@ -409,16 +413,16 @@ export const useMarketingAtribuicao = () =>
 // KPIs de recompra (fidelização): uma linha agregada — alunos únicos,
 // matrículas, cursos por aluno, taxa de recompra.
 export const usePedagogicoKpis = () => useView("vw_pedagogico_kpis");
-// KPIs de presença: comparecimento geral + cobertura (turmas credenciadas).
+// KPIs de presença: comparecimento geral + turmas mensuráveis em fato_presenca.
 export const usePedagogicoPresencaKpis = () => useView("vw_pedagogico_presenca_kpis");
-// Taxa de comparecimento por TRIMESTRE (série). `matriculas` é o tamanho da
-// amostra — o front de-enfatiza trimestres com poucas (<~30) matrículas.
+// Taxa de comparecimento por trimestre da TURMA. `matriculas` é o tamanho da
+// amostra; a view agrega por turma antes de somar (presença tem uma linha/dia).
 export const usePedagogicoPresencaTempo = () =>
   useView("vw_pedagogico_presenca_tempo", { ordem: ["periodo"] });
 // Cursos que mais fidelizam (taxa_recompra por curso). `alunos` = amostra.
 export const usePedagogicoRecompraCurso = () =>
   useView("vw_pedagogico_recompra_curso", { ordem: ["curso"] });
-// Cursos com mais falta (taxa_comparecimento por curso; piores no topo no front).
+// Cursos com mais falta, exclusivamente sobre fato_presenca.
 export const usePedagogicoPresencaCurso = () =>
   useView("vw_pedagogico_presenca_curso", { ordem: ["curso"] });
 // Painel de Maestros: os clientes VIP (compraram MAESTRIA). `_completo` já
@@ -997,6 +1001,57 @@ export async function mktClassificarEvento(eventoId, tipoId) {
     p_tipo_evento_id: tipoId ?? null,
   });
   erroSupabase(error);
+}
+
+/* ---------- Cancelamento (132) ----------
+   Cancelar não apaga: o evento vira status='cancelado' e sai das quatro
+   consultas acima, que filtram 'ativo'. As ações continuam na tabela, e
+   `mktReativarEvento` devolve tudo — inclusive o que já estava marcado.
+
+   Apagar da agenda do Google também cai aqui: um trigger converte o DELETE
+   em cancelamento com o motivo "Apagado da agenda do Google". Quer dizer
+   que esta lista tem duas origens, e o motivo é o que as distingue. */
+export async function mktCanceladosDoMes(inicio, fim) {
+  const { data, error } = await supabase
+    .from("mkt_eventos")
+    .select("id, nome, codigo, data_evento, unidade_id, cancelado_motivo, cancelado_em")
+    .eq("status", "cancelado")
+    .gte("data_evento", inicio)
+    .lt("data_evento", fim)
+    .order("data_evento");
+  erroSupabase(error);
+  return data ?? [];
+}
+
+/* `cancelado_por` fica gravado, mas NÃO vem para a tela: a policy de
+   `perfis` só libera a própria linha, então o embedding devolveria o nome
+   para quem cancelou e null para todos os outros — pior que não mostrar.
+   Quem precisa auditar tem a coluna no banco. */
+export async function mktCancelarEvento(eventoId, motivo) {
+  const { error } = await supabase.rpc("mkt_cancelar_evento", {
+    p_evento_id: eventoId,
+    p_motivo: motivo,
+  });
+  erroSupabase(error);
+}
+
+export async function mktReativarEvento(eventoId) {
+  const { error } = await supabase.rpc("mkt_reativar_evento", { p_evento_id: eventoId });
+  erroSupabase(error);
+}
+
+/* Cancelar e reativar são só do gestor — a RPC recusa qualquer outro com a
+   mensagem do banco. O front lê a flag para não OFERECER o que vai ser
+   negado; a permissão continua sendo decidida lá, não aqui. Sem sessão ou
+   sem perfil, o padrão é false: na dúvida, não oferece. */
+export async function mktSouGestor() {
+  const { data: sessao } = await supabase.auth.getUser();
+  const uid = sessao?.user?.id;
+  if (!uid) return false;
+  const { data, error } = await supabase
+    .from("perfis").select("gestor_marketing").eq("id", uid).maybeSingle();
+  if (error) return false;
+  return Boolean(data?.gestor_marketing);
 }
 
 /* ============================================================

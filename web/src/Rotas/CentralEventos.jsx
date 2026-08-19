@@ -6,11 +6,12 @@
    dentro do Shell, como os outros hubs; a navegação é por estado
    (`tela === "central-eventos"`), não por rota.
 
-   ESCRITA SÓ POR RPC — `mkt_marcar_acao` e `mkt_classificar_evento`, ambas
-   em lib/dados.js. Nenhum update direto: as tabelas têm RLS e as regras
-   (ação automática não se marca à mão, classificar exige gestor_marketing)
-   vivem no banco. Quando o banco recusa, o texto dele aparece no aviso de
-   erro da própria página — nunca em alert() nem só no console.
+   ESCRITA SÓ POR RPC — `mkt_marcar_acao`, `mkt_classificar_evento`,
+   `mkt_cancelar_evento` e `mkt_reativar_evento`, todas em lib/dados.js.
+   Nenhum update direto: as tabelas têm RLS e as regras (ação automática não
+   se marca à mão; classificar e cancelar exigem gestor_marketing; cancelar
+   exige motivo) vivem no banco. Quando o banco recusa, o texto dele aparece
+   no aviso de erro da própria página — nunca em alert() nem só no console.
 
    DESENHO: "ordem do dia". O time é designer, audiovisual, social media e
    tráfego — gente de produção —, e a rotina espelha uma call sheet: régua de
@@ -23,12 +24,13 @@ import { useState, useEffect, useCallback } from "react";
 import {
   CalendarDays, ChevronLeft, ChevronRight, CircleCheck, Circle,
   AlertTriangle, Copy, Check, Users, UserCheck, Zap, HelpCircle,
-  RefreshCw, X, ListChecks,
+  RefreshCw, X, ListChecks, Ban, Undo2,
 } from "lucide-react";
 import {
   mktUnidadesAtivas, mktTiposComChecklist, mktEventosDoMes,
   mktPendentes, mktMarcarAcao, mktClassificarEvento, mktProximoEventoAtivo,
   mktAcoesDoPeriodo, mktAcoesAtrasadas,
+  mktCanceladosDoMes, mktCancelarEvento, mktReativarEvento, mktSouGestor,
 } from "../lib/dados";
 
 /* ============ DESIGN TOKENS ============
@@ -226,8 +228,91 @@ function LinhaAcao({ acao, aoMarcar, salvando }) {
   );
 }
 
+/* ============ CANCELAR ============
+   Fica DENTRO do card aberto, no rodapé, e só para gestor. Cancelar é raro
+   e irreversível na cabeça de quem clica — botão no cabeçalho, ao lado da
+   seta de abrir, seria clicado sem querer.
+
+   O motivo não é confirmação, é o dado: o banco recusa cancelamento sem
+   texto (132). Por isso não há "tem certeza?" — a pergunta é "por quê?", e
+   respondê-la já é a confirmação. */
+function FormCancelamento({ evento, aoCancelar }) {
+  const [aberto, setAberto] = useState(false);
+  const [motivo, setMotivo] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const valido = motivo.trim().length >= 3;
+
+  const confirmar = async () => {
+    setSalvando(true);
+    try {
+      await aoCancelar(evento.id, motivo.trim());
+      // Sucesso: o card some da lista no recarregamento. Não mexemos em
+      // estado depois — o componente já não existe.
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  if (!aberto) {
+    return (
+      <div className="flex justify-end pt-2.5 mt-1" style={{ borderTop: `1px solid ${C.hair}` }}>
+        <button onClick={() => setAberto(true)}
+          className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md transition-colors"
+          style={{ ...etiqueta, color: C.textFaint }}
+          title="Cancelar este evento — pede o motivo">
+          <Ban size={11} /> Cancelar evento
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg p-3 mt-2 subir"
+      style={{ background: "rgba(194,102,90,0.06)", border: `1px solid ${C.alert}` }}>
+      <p className="text-[12.5px] mb-2" style={{ color: C.text }}>
+        Cancelar <b>{evento.nome}</b>? O evento sai da pauta e o checklist para
+        de cobrar — nada é apagado, e dá para reativar depois.
+      </p>
+      <label className="block mb-1" style={{ ...etiqueta, color: C.textFaint }}>
+        Por quê?
+      </label>
+      <textarea
+        value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={2} autoFocus
+        placeholder="Ex.: treinador remarcou para outubro"
+        className="w-full rounded-md px-2.5 py-2 text-[13px] resize-y"
+        style={{ background: C.void, color: C.text, border: `1px solid ${C.bronzeLine}`, outline: "none" }}
+      />
+      <div className="flex items-center gap-2 mt-2.5">
+        <button onClick={confirmar} disabled={!valido || salvando}
+          className="px-3 py-1.5 rounded-md transition-colors"
+          style={{
+            ...etiqueta,
+            background: valido ? "rgba(194,102,90,0.16)" : "transparent",
+            color: valido ? C.alert : C.textFaint,
+            border: `1px solid ${valido ? C.alert : C.bronzeLine}`,
+            cursor: valido && !salvando ? "pointer" : "not-allowed",
+            opacity: salvando ? 0.5 : 1,
+          }}>
+          {salvando ? "Cancelando…" : "Confirmar cancelamento"}
+        </button>
+        <button onClick={() => { setAberto(false); setMotivo(""); }} disabled={salvando}
+          style={{ ...etiqueta, color: C.textMuted }}>
+          Voltar
+        </button>
+        {/* O mínimo do banco é 3 caracteres. Dizer isso antes do clique
+            evita a viagem de ida e volta até a mensagem de erro. */}
+        {!valido && motivo.length > 0 && (
+          <span className="text-[11px]" style={{ color: C.textFaint }}>
+            escreva o motivo
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ============ CARD DE EVENTO ============ */
-function EventoCard({ evento, aberto, aoAbrir, aoMarcar, salvandoId }) {
+function EventoCard({ evento, aberto, aoAbrir, aoMarcar, salvandoId, podeCancelar, aoCancelar }) {
   const total = evento.acoes.length;
   const feitas = evento.acoes.filter((a) => a.concluida).length;
   const atrasadas = evento.acoes.filter((a) => !a.concluida && a.prazo < HOJE).length;
@@ -282,6 +367,7 @@ function EventoCard({ evento, aberto, aoAbrir, aoMarcar, salvandoId }) {
               <LinhaAcao key={a.id} acao={a} aoMarcar={aoMarcar} salvando={salvandoId === a.id} />
             ))}
           </div>
+          {podeCancelar && <FormCancelamento evento={evento} aoCancelar={aoCancelar} />}
         </div>
       )}
     </div>
@@ -300,30 +386,42 @@ function FilaPendentes({ pendentes, tipos, aoClassificar }) {
   if (!expandida) {
     return (
       <button onClick={() => setExpandida(true)}
-        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 mb-5 rounded-xl text-left"
+        className="w-full flex items-center gap-3 px-4 py-3.5 mb-4 rounded-xl text-left"
         style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
         <HelpCircle size={14} style={{ color: C.gold }} className="shrink-0" />
-        <span className="text-[13px]" style={{ color: C.text }}>
+        {/* Três textos de pesos diferentes numa linha só: a contagem (o que
+            importa), a explicação (por que importa) e a ação. Colados, viram
+            uma frase comprida sem hierarquia — o vão entre eles é o que
+            separa "10 eventos esperando" de "sem tipo, não geram checklist".
+            `shrink-0` na contagem para a explicação ceder primeiro quando a
+            largura aperta; quem some é o acessório, nunca o número. */}
+        <span className="text-[13px] shrink-0" style={{ color: C.text }}>
           {pendentes.length} evento{pendentes.length > 1 ? "s" : ""} esperando classificação
         </span>
-        <span className="text-[11.5px] hidden sm:inline" style={{ color: C.textFaint }}>
+        <span className="text-[11.5px] hidden sm:inline truncate" style={{ color: C.textFaint }}>
           — sem tipo, não geram checklist
         </span>
-        <span className="ml-auto shrink-0" style={{ ...etiqueta, color: C.gold }}>Ver fila</span>
+        <span className="ml-auto shrink-0 pl-3" style={{ ...etiqueta, color: C.gold }}>Ver fila</span>
       </button>
     );
   }
 
   return (
-    <div className="rounded-xl p-4 mb-5"
+    <div className="rounded-xl p-5 mb-4"
       style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
-      <div className="flex items-center gap-2 mb-3">
-        <HelpCircle size={14} style={{ color: C.gold }} />
+      {/* "Fechar" é texto de 9.5px encostado na borda da caixa: sem área
+          própria, ele é difícil de acertar com o mouse e visualmente parece
+          grudado no canto. Ganha padding (a área clicável) e o `-mr-1`
+          devolve o alinhamento — a borda direita do TEXTO continua na mesma
+          coluna do resto do painel, que é o que o olho segue. */}
+      <div className="flex items-center gap-2.5 mb-4">
+        <HelpCircle size={14} style={{ color: C.gold }} className="shrink-0" />
         <p className="text-[13px]" style={{ color: C.text }}>
           {pendentes.length} evento{pendentes.length > 1 ? "s" : ""} esperando classificação
         </p>
         <button onClick={() => { setExpandida(false); setAberto(null); }}
-          className="ml-auto" style={{ ...etiqueta, color: C.textMuted }}>
+          className="ml-auto shrink-0 px-2 py-1 -mr-1 rounded-md"
+          style={{ ...etiqueta, color: C.textMuted }}>
           Fechar
         </button>
       </div>
@@ -367,6 +465,101 @@ function FilaPendentes({ pendentes, tipos, aoClassificar }) {
                 </button>
               </div>
             )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ============ CANCELADOS ============
+   Vem fechado, como a fila de classificação: é consulta, não trabalho. Mas
+   PRECISA existir — cancelar tira o evento das quatro consultas da tela, e
+   sem esta lista o motivo que o gestor escreveu ficaria só no banco, onde
+   ninguém do time olha.
+
+   Também é o único lugar onde aparece o que o Google apagou. O sync não
+   avisa ninguém; a linha com "Apagado da agenda do Google" é o aviso. */
+const MOTIVO_AGENDA = "Apagado da agenda do Google";
+
+function PainelCancelados({ cancelados, mes, podeReativar, aoReativar }) {
+  const [expandida, setExpandida] = useState(false);
+  const [reativando, setReativando] = useState(null);
+  if (!cancelados.length) return null;
+
+  const daAgenda = cancelados.filter((c) => c.cancelado_motivo === MOTIVO_AGENDA).length;
+
+  if (!expandida) {
+    return (
+      <button onClick={() => setExpandida(true)}
+        className="w-full flex items-center gap-3 px-4 py-3.5 mb-4 rounded-xl text-left"
+        style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
+        <Ban size={14} style={{ color: C.textFaint }} className="shrink-0" />
+        <span className="text-[13px] shrink-0" style={{ color: C.textMuted }}>
+          {cancelados.length} evento{cancelados.length > 1 ? "s" : ""} cancelado
+          {cancelados.length > 1 ? "s" : ""} em {MESES[mes]}
+        </span>
+        {daAgenda > 0 && (
+          <span className="text-[11.5px] hidden sm:inline truncate" style={{ color: C.textFaint }}>
+            — {daAgenda} apagado{daAgenda > 1 ? "s" : ""} da agenda
+          </span>
+        )}
+        <span className="ml-auto shrink-0 pl-3" style={{ ...etiqueta, color: C.textMuted }}>Ver</span>
+      </button>
+    );
+  }
+
+  const reativar = async (id) => {
+    setReativando(id);
+    try { await aoReativar(id); } finally { setReativando(null); }
+  };
+
+  return (
+    <div className="rounded-xl p-5 mb-4"
+      style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
+      <div className="flex items-center gap-2.5 mb-4">
+        <Ban size={14} style={{ color: C.textFaint }} className="shrink-0" />
+        <p className="text-[13px]" style={{ color: C.textMuted }}>
+          Cancelados em {MESES[mes]}
+        </p>
+        <button onClick={() => setExpandida(false)}
+          className="ml-auto shrink-0 px-2 py-1 -mr-1 rounded-md"
+          style={{ ...etiqueta, color: C.textMuted }}>
+          Fechar
+        </button>
+      </div>
+      <div className="flex flex-col gap-2">
+        {cancelados.map((c) => (
+          <div key={c.id} className="rounded-lg p-3"
+            style={{ background: C.surface, border: `1px solid ${C.hair}` }}>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline gap-2 flex-wrap">
+                  <p className="text-sm truncate" style={{ color: C.textMuted }}>{c.nome}</p>
+                  <span className="tabular-nums shrink-0"
+                    style={{ fontFamily: FONT_DISPLAY, fontSize: 11, color: C.textFaint }}>
+                    {fmtDiaMes(c.data_evento)}
+                  </span>
+                </div>
+                {/* O motivo é a razão de a tela existir: vem inteiro, sem
+                    truncar, mesmo que ocupe três linhas. */}
+                <p className="text-[12.5px] mt-1" style={{ color: C.text }}>
+                  {c.cancelado_motivo}
+                </p>
+                <p className="text-[11px] mt-0.5" style={{ color: C.textFaint }}>
+                  {c.cancelado_motivo === MOTIVO_AGENDA ? "sumiu da agenda" : "cancelado"}
+                  {c.cancelado_em && ` em ${fmtDataHora(c.cancelado_em)}`}
+                </p>
+              </div>
+              {podeReativar && (
+                <button onClick={() => reativar(c.id)} disabled={reativando === c.id}
+                  className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md"
+                  style={{ ...etiqueta, color: C.gold, background: `${C.gold}14`,
+                    border: `1px solid ${C.gold}33`, opacity: reativando === c.id ? 0.5 : 1 }}>
+                  <Undo2 size={11} /> {reativando === c.id ? "Reativando…" : "Reativar"}
+                </button>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -614,6 +807,10 @@ export default function CentralEventos() {
   const [acoes, setAcoes] = useState([]);
   const [atrasadas, setAtrasadas] = useState([]);
   const [pendentes, setPendentes] = useState([]);
+  const [cancelados, setCancelados] = useState([]);
+  /* Só o gestor cancela/reativa (132). A flag decide o que a tela OFERECE;
+     quem decide o que ela PODE é a RPC, que recusa qualquer outro. */
+  const [souGestor, setSouGestor] = useState(false);
   const [tipos, setTipos] = useState([]);
   const [unidades, setUnidades] = useState([]);
   const [unidadeAtiva, setUnidadeAtiva] = useState(null);
@@ -629,14 +826,17 @@ export default function CentralEventos() {
     try {
       const ini = `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
       const fim = mes === 11 ? `${ano + 1}-01-01` : `${ano}-${String(mes + 2).padStart(2, "0")}-01`;
-      const [evs, acs, atr, pends, tps, unis, prox] = await Promise.all([
+      const [evs, acs, atr, pends, canc, gestor, tps, unis, prox] = await Promise.all([
         mktEventosDoMes(ini, fim), mktAcoesDoPeriodo(ini, fim), mktAcoesAtrasadas(HOJE),
-        mktPendentes(), mktTiposComChecklist(), mktUnidadesAtivas(), mktProximoEventoAtivo(fim),
+        mktPendentes(), mktCanceladosDoMes(ini, fim), mktSouGestor(),
+        mktTiposComChecklist(), mktUnidadesAtivas(), mktProximoEventoAtivo(fim),
       ]);
       setEventos(evs);
       setAcoes(acs);
       setAtrasadas(atr);
       setPendentes(pends);
+      setCancelados(canc);
+      setSouGestor(gestor);
       setTipos(tps);
       setUnidades(unis);
       setProximo(prox);
@@ -663,6 +863,7 @@ export default function CentralEventos() {
 
   const eventosVisiveis = soDaUnidade(eventos, (e) => e.unidade_id);
   const pendentesVisiveis = soDaUnidade(pendentes, (p) => p.unidade_id);
+  const canceladosVisiveis = soDaUnidade(cancelados, (c) => c.unidade_id);
   // Na pauta a unidade vem do evento embutido, não da própria ação.
   const acoesVisiveis = soDaUnidade(acoes, (a) => a.evento?.unidade_id);
   const atrasadasVisiveis = soDaUnidade(atrasadas, (a) => a.evento?.unidade_id);
@@ -701,6 +902,30 @@ export default function CentralEventos() {
     }
   };
 
+  /* Cancelar e reativar NÃO são otimistas, ao contrário do check: os dois
+     mexem em qual lista o evento habita (some da pauta, aparece nos
+     cancelados, volta). Adiantar isso no cliente significaria recriar aqui
+     a regra de status que a 132 escreveu no banco — duas réguas que cedo ou
+     tarde discordam. Recarrega e pronto; é um clique raro. */
+  const cancelar = async (eventoId, motivo) => {
+    try {
+      await mktCancelarEvento(eventoId, motivo);
+      setAberto(null);
+      await carregar();
+    } catch (e) {
+      setErro(`Não foi possível cancelar: ${e.message}`);
+    }
+  };
+
+  const reativar = async (eventoId) => {
+    try {
+      await mktReativarEvento(eventoId);
+      await carregar();
+    } catch (e) {
+      setErro(`Não foi possível reativar: ${e.message}`);
+    }
+  };
+
   /* Conta a base inteira de atrasadas, não só as do mês na tela: é aviso de
      dívida, e escondê-la ao navegar de mês seria o mesmo erro que a tela
      indexada por data de evento cometia. */
@@ -710,12 +935,24 @@ export default function CentralEventos() {
 
   return (
     <div className="subir">
-      <div className="flex items-end justify-between gap-4 mb-2 flex-wrap">
+      {/* ESPAÇO NO TOPO. São CINCO faixas empilhadas antes do primeiro card —
+          etiqueta, título, subtítulo, abas e a barra da fila — e as duas
+          últimas ainda carregam filete próprio. Com 8px (e depois com 24px)
+          o conjunto lia como um bloco só, e os dois filetes pareciam um
+          engano de renderização.
+
+          A régua: cada faixa abre embaixo de si um vão proporcional ao seu
+          peso, e a passagem de CABEÇALHO para TRABALHO (abas -> conteúdo) é
+          a maior de todas — é ali que a leitura muda de assunto. */}
+      <div className="flex items-end justify-between gap-x-4 gap-y-3 mb-5 flex-wrap">
         <div>
-          <p className="text-xs uppercase tracking-widest mb-2" style={{ color: C.gold }}>
+          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: C.gold }}>
             Marketing{nomeUnidade ? ` · ${nomeUnidade}` : ""}
           </p>
-          <h2 className="text-2xl md:text-3xl" style={{ color: C.text, fontFamily: FONT_DISPLAY }}>
+          {/* leading-tight: sem controlar a entrelinha, o título de 30px
+              carrega o espaço interno da fonte e o vão de baixo fica menor
+              do que o número da margem promete. */}
+          <h2 className="text-2xl md:text-3xl leading-tight" style={{ color: C.text, fontFamily: FONT_DISPLAY }}>
             Central de Eventos
           </h2>
         </div>
@@ -728,7 +965,7 @@ export default function CentralEventos() {
         </div>
       </div>
 
-      <p className="text-sm mb-5" style={{ color: C.textMuted }}>
+      <p className="text-sm leading-relaxed mb-8" style={{ color: C.textMuted }}>
         {aba === "pauta"
           ? `O que vence em ${MESES[mes]}, na ordem do prazo`
           : `Os eventos de ${MESES[mes]} e o quanto cada um já está pronto`}
@@ -748,12 +985,12 @@ export default function CentralEventos() {
       {/* Abas como guias sublinhadas, não pílulas: pílula dourada some no meio
           das outras pílulas douradas da tela. A linha embaixo diz onde você
           está sem gastar mais uma cor. */}
-      <div className="flex items-center gap-6 mb-5" style={{ borderBottom: `1px solid ${C.bronzeLine}` }}>
+      <div className="flex items-center gap-7 mb-9" style={{ borderBottom: `1px solid ${C.bronzeLine}` }}>
         {[["pauta", "Pauta", ListChecks], ["eventos", "Por evento", CalendarDays]].map(([k, rot, Icone]) => {
           const on = aba === k;
           return (
             <button key={k} onClick={() => setAba(k)}
-              className="inline-flex items-center gap-2 pb-2.5 -mb-px"
+              className="inline-flex items-center gap-2 pb-3.5 -mb-px"
               style={{
                 color: on ? C.text : C.textMuted,
                 borderBottom: `2px solid ${on ? C.gold : "transparent"}`,
@@ -766,7 +1003,7 @@ export default function CentralEventos() {
       </div>
 
       {erro && (
-        <div className="flex items-start gap-2.5 rounded-xl p-3.5 mb-5 text-sm"
+        <div className="flex items-start gap-2.5 rounded-xl p-3.5 mb-6 text-sm"
           style={{ background: "rgba(194,102,90,0.1)", border: `1px solid ${C.alert}`, color: C.text }}>
           <AlertTriangle size={15} style={{ color: C.alert, marginTop: 1 }} className="shrink-0" />
           <span className="min-w-0 break-words">{erro}</span>
@@ -779,6 +1016,11 @@ export default function CentralEventos() {
       <AbasUnidade unidades={unidades} ativa={unidadeAlvo} aoMudar={setUnidadeAtiva} />
 
       <FilaPendentes pendentes={pendentesVisiveis} tipos={tipos} aoClassificar={classificar} />
+
+      {/* Depois da fila: a fila pede decisão, os cancelados são só registro.
+          Aparece nas duas abas — cancelar é do evento, não da pauta. */}
+      <PainelCancelados cancelados={canceladosVisiveis} mes={mes}
+        podeReativar={souGestor} aoReativar={reativar} />
 
       {carregando ? (
         <div className="flex items-center justify-center gap-2 py-16 text-sm" style={{ color: C.textFaint }}>
@@ -820,7 +1062,9 @@ export default function CentralEventos() {
               aberto={aberto === e.id}
               aoAbrir={() => setAberto(aberto === e.id ? null : e.id)}
               aoMarcar={marcar}
-              salvandoId={salvandoId} />
+              salvandoId={salvandoId}
+              podeCancelar={souGestor}
+              aoCancelar={cancelar} />
           ))}
         </div>
       )}
