@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useEffect, createContext, useContext } from 
 import { BrowserRouter, Routes, Route, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import Avaliacao from "./Rotas/Avaliacao.jsx";
+import CentralEventos from "./Rotas/CentralEventos.jsx";
 import {
   TrendingUp, Wallet, Megaphone, GraduationCap, ShoppingBag, CalendarDays,
   LayoutDashboard, Lock, Mail, AlertTriangle, Package, LogOut, Power,
@@ -86,6 +87,10 @@ const HUBS = [
   { key: "comercial",  nome: "Comercial",  Icone: TrendingUp,    desc: "Pódio de consultoras e placar da semana" },
   { key: "financeiro", nome: "Financeiro", Icone: Wallet,        desc: "Receita por curso e cobertura" },
   { key: "marketing",  nome: "Marketing",  Icone: Megaphone,     desc: "Origem de leads e campanhas" },
+  /* Operação do Marketing, como a Central Pedagógica é a do Pedagógico:
+     `setor` existe porque a chave não é o próprio setor. */
+  { key: "central-eventos", setor: "marketing", nome: "Central de Eventos", Icone: CalendarDays,
+    desc: "Agenda, checklist de divulgação e o que está atrasado" },
   { key: "pedagogico", nome: "Pedagógico", Icone: GraduationCap, desc: "Turmas, matrículas e conclusão" },
   /* A Central é operação, não setor: quem enxerga é quem tem o setor
      'pedagogico'. `setor` existe só por isso — nos outros, a chave já é o
@@ -1271,11 +1276,16 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
 // Rótulo curto de barra: "2,1 mi" / "550 mil" — adapta à ordem de grandeza.
 const compacto = (v) =>
   new Intl.NumberFormat("pt-BR", { notation: "compact", maximumFractionDigits: 1 }).format(v ?? 0);
-const mesCurto = (ym) => {
-  const d = new Date(ym + "-01T00:00:00");
-  const s = d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "");
-  return s.charAt(0).toUpperCase() + s.slice(1);
+const mesCurto = (ym, comAno = false) => {
+  const chave = String(ym ?? "").slice(0, 7);
+  const d = new Date(`${chave}-01T00:00:00`);
+  if (Number.isNaN(d.getTime())) return chave || "—";
+  const mes = d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "");
+  const rotulo = mes.charAt(0).toUpperCase() + mes.slice(1);
+  return comAno ? `${rotulo}/${String(d.getFullYear()).slice(2)}` : rotulo;
 };
+const ordenarMeses = (serie) => [...(serie ?? [])]
+  .sort((a, b) => String(a.mes ?? "").slice(0, 7).localeCompare(String(b.mes ?? "").slice(0, 7)));
 const AZUL_ANTERIOR = "#6BA8E5";
 
 /* Evolução do faturamento: barras do período + linha do MESMO PERÍODO do
@@ -1331,7 +1341,7 @@ function BarrasEvolucao({ serie, anoAnterior }) {
 
         {serie.map((s, i) => (
           <text key={s.mes} x={cx(i)} y={H - 9} fontSize="10.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>
-            {mesCurto(s.mes)}
+            {mesCurto(s.mes, true)}
           </text>
         ))}
       </svg>
@@ -1339,7 +1349,7 @@ function BarrasEvolucao({ serie, anoAnterior }) {
       <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6, lineHeight: 1.5 }}>
         Último mês tracejado = <b style={{ color: C.muted }}>parcial</b> (em andamento).
         {temAnterior
-          ? <> Linha azul = mesmo período de {anoAnterior} — <b style={{ color: C.muted }}>não é meta</b>.</>
+          ? <> Linha azul = mesmos meses de {anoAnterior} — <b style={{ color: C.muted }}>não é meta</b>.</>
           : <> Sem histórico de {anoAnterior} nesta categoria para comparar.</>}
       </div>
     </>
@@ -1420,7 +1430,7 @@ function MatriculasVsFaturamento({ serie }) {
 
         {serie.map((s, i) => (
           <text key={s.mes} x={cx(i)} y={H - 7} fontSize="9.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>
-            {mesCurto(s.mes)}
+            {mesCurto(s.mes, true)}
           </text>
         ))}
       </svg>
@@ -1978,9 +1988,9 @@ function HubComercial() {
     };
   }, [linhasFluxo, inicio, fim, canonPorMes, ehGeral, curto]);
 
-  /* Evolução: últimos 12 meses da categoria + o mesmo mês do ano anterior.
-     Não responde ao filtro de período — é série histórica, como nos outros
-     hubs. O mês corrente é parcial. */
+  /* Evolução do ano corrente contra o ano anterior, mês a mês. Em agosto/26,
+     por exemplo, mostra jan–ago/26 nas barras e jan–ago/25 na linha. Isso
+     evita que uma janela móvel misture dois anos em cada uma das séries. */
   const evolucao = useMemo(() => {
     // No Geral, as barras vêm da mesma fonte do card — senão o gráfico
     // contaria por pagamento e mostraria outro número que o KPI acima.
@@ -1995,8 +2005,8 @@ function HubComercial() {
     const h = new Date();
     const chave = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
     const atual = chave(h);
-    return Array.from({ length: 12 }, (_, k) => {
-      const d = new Date(h.getFullYear(), h.getMonth() - (11 - k), 1);
+    return Array.from({ length: h.getMonth() + 1 }, (_, k) => {
+      const d = new Date(h.getFullYear(), k, 1);
       const m = chave(d);
       const mAnt = `${d.getFullYear() - 1}-${m.slice(5)}`;
       return { mes: m, valor: porMes.get(m) ?? 0, anterior: porMes.get(mAnt) ?? 0, parcial: m === atual };
@@ -2026,7 +2036,7 @@ function HubComercial() {
     }
     const h = new Date();
     const atual = `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, "0")}`;
-    return [...m.values()].sort((a, b) => a.mes.localeCompare(b.mes))
+    return ordenarMeses([...m.values()])
       .map((x) => ({
         ...x,
         faturamento: (ehGeral && canonPorMes.has(x.mes)) ? canonPorMes.get(x.mes) : x.faturamento,
@@ -2206,7 +2216,7 @@ function HubComercial() {
       {/* Evolução à esquerda, consultoras à direita — cabe numa tela de TV. */}
       <div className="gridCom">
         <div>
-        <Bloco titulo="Evolução do faturamento" canto={`${rotuloCat(categoria)} · 12 meses`}>
+        <Bloco titulo="Evolução do faturamento" canto={`${rotuloCat(categoria)} · ${new Date().getFullYear()} vs. ${anoAnterior}`}>
           <Estado
             carregando={carregFluxo}
             erro={erroFluxo}
@@ -2216,10 +2226,10 @@ function HubComercial() {
           >
             <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4, fontSize: 10.5, color: C.muted, fontWeight: 600 }}>
               <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <span style={{ width: 9, height: 9, borderRadius: 3, background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` }} /> Período
+                <span style={{ width: 9, height: 9, borderRadius: 3, background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})` }} /> {new Date().getFullYear()}
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <span style={{ width: 13, height: 0, borderTop: `2px dashed ${AZUL_ANTERIOR}` }} /> Mesmo período {anoAnterior}
+                <span style={{ width: 13, height: 0, borderTop: `2px dashed ${AZUL_ANTERIOR}` }} /> {anoAnterior} · mesmos meses
               </span>
             </div>
             <BarrasEvolucao serie={evolucao} anoAnterior={anoAnterior} />
@@ -2456,14 +2466,15 @@ function HubFinanceiro() {
     [caixaHor.data]
   );
 
-  // Formas de pagamento. Contrato confirmado da view: { forma, receita }.
+  // Formas de pagamento: a view é diária e este agrupamento respeita o
+  // intervalo global usado pelos demais fluxos do Financeiro.
   const formas = useMemo(() => {
-    return (fpag.data ?? [])
+    return somarPor(noPeriodo(fpag.data, { inicio, fim }), "forma", ["receita"])
       .map((r) => ({ rotulo: r.forma ?? "—", valor: Number(r.receita ?? 0) }))
       .filter((x) => x.valor > 0)
       .sort((a, b) => b.valor - a.valor)
       .map((f, i) => ({ ...f, cor: PALETA_FORMAS[i % PALETA_FORMAS.length] }));
-  }, [fpag.data]);
+  }, [fpag.data, inicio, fim]);
 
   // Evolução mensal da receita (Salesforce). Mês corrente sai parcial.
   const evolucao = useMemo(() => serieMensal(recMensal.data, "receita"), [recMensal.data]);
@@ -2473,13 +2484,18 @@ function HubFinanceiro() {
 
   /* ---- Inadimplência (Conta Azul) ---- */
   const vencidos = useMemo(
-    () => (inadOrig.data ?? [])
-      .map((r) => ({ rotulo: String(r.origem ?? "—"), valor: Number(r.valor_vencido ?? 0) }))
+    () => somarPor(noPeriodo(inadOrig.data, { inicio, fim }), "origem", ["valor_vencido", "parcelas_vencidas"])
+      .map((r) => ({
+        rotulo: String(r.origem ?? "—"),
+        valor: Number(r.valor_vencido ?? 0),
+        parcelas: Number(r.parcelas_vencidas ?? 0),
+      }))
       .filter((r) => r.valor > 0)
       .sort((a, b) => b.valor - a.valor),
-    [inadOrig.data]
+    [inadOrig.data, inicio, fim]
   );
   const vencidoTot = vencidos.reduce((s, r) => s + r.valor, 0);
+  const parcelasVencidas = vencidos.reduce((s, r) => s + r.parcelas, 0);
   const aReceber30_90 = useMemo(() => porHorizonte(aReceberHor.data, "a_receber"), [aReceberHor.data]);
   const aReceberTot = aReceber30_90.reduce((s, r) => s + r.valor, 0);
 
@@ -2613,7 +2629,7 @@ function HubFinanceiro() {
           )}
         </Bloco>
 
-        <Bloco titulo="Formas de pagamento" canto="acumulado" altura={ALTURA_PAINEL}>
+        <Bloco titulo="Formas de pagamento" canto={rotulo} altura={ALTURA_PAINEL}>
           <Estado carregando={fpag.isLoading} erro={fpag.error} vazio={!formas.length}>
             <Donut segmentos={formas} size={118} centroSize={17} centroValor={formas[0] ? abreviaForma(formas[0].rotulo) : "—"} centroLabel={`${leaderPct}% líder`} centroCor={C.gold} />
           </Estado>
@@ -2621,11 +2637,13 @@ function HubFinanceiro() {
       </div>
 
       {/* ============ INADIMPLÊNCIA ============ */}
-      <SecaoTitulo titulo="Inadimplência acumulada"
-        canto={`${inad.parcelas ? `${numero(inad.parcelas)} parcelas · ${moeda(inad.valor)}${inad.pct != null ? ` · ${inad.pct.toFixed(1).replace(".", ",")}% da carteira` : ""} · ` : ""}posição atual · não muda com o período · nunca somado à receita`} />
+      <SecaoTitulo titulo="Inadimplência por vencimento"
+        canto={`${numero(parcelasVencidas)} parcelas · ${moeda(vencidoTot)} · vencimento em ${rotulo}`} />
       <div className="finRow2">
-        <Bloco titulo="Vencidos por origem" canto={vencidoTot ? moeda(vencidoTot) + " vencido" : null} sem altura={ALTURA_PAINEL}>
-          <Estado carregando={inadOrig.isLoading} erro={inadOrig.error} vazio={!vencidos.length}>
+        <Bloco titulo="Vencidos por origem" canto={vencidoTot ? `${moeda(vencidoTot)} · ${rotulo}` : rotulo} sem altura={ALTURA_PAINEL}>
+          <Estado carregando={inadOrig.isLoading} erro={inadOrig.error} vazio={!vencidos.length}
+            vazioTitulo={`Sem vencidos em ${rotulo}`}
+            vazioDica="Nenhuma parcela que venceu neste período continua inadimplente hoje. Troque o período para consultar vencimentos anteriores.">
             <Lista linhas={vencidos} total={vencidoTot} />
           </Estado>
         </Bloco>
@@ -3556,43 +3574,46 @@ const pctTaxa = (v) => {
 const fmtPct = (v, casas = 0) => (v == null ? "—"
   : `${pctTaxa(v).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas })}%`);
 
-/* Rótulo de trimestre defensivo: `periodo` pode vir "2024-Q3", "2024-T3",
-   "2024-3" ou "2024-07" (mês). YYYY-MM vira o trimestre do mês; o resto usa o
-   dígito 1–4 do fim. Sem casar, mostra o texto cru — nunca inventa. */
+/* Rótulo de trimestre defensivo: datas do Postgres chegam como YYYY-MM-DD;
+   também aceitamos "2024-Q3", "2024-T3", "2024-3" e "2024-07". */
 const rotuloTri = (p) => {
   const s = String(p ?? "").trim();
-  const mm = s.match(/^(\d{4})-(\d{2})$/);
+  const mm = s.match(/^(\d{4})-(\d{2})(?:-\d{2})?$/);
   if (mm) return `T${Math.floor((Number(mm[2]) - 1) / 3) + 1}/${mm[1].slice(2)}`;
   const q = s.match(/(\d{4}).*?([1-4])\s*$/);
   if (q) return `T${q[2]}/${q[1].slice(2)}`;
   return s || "—";
 };
 
-/* Linha da taxa de comparecimento por trimestre. Pontos com amostra pequena
-   (poucas matrículas) saem VAZADOS e cinza e NÃO entram na linha nem no
-   domínio Y — o início de 2022 e trimestres esparsos não distorcem a leitura.
-   Não reusa LinhaEvolucao: ali a série é mensal e a área liga buracos; aqui a
-   amostra pequena é espalhada. */
-function LinhaPresenca({ serie }) {
-  if (serie.length < 2) return <Estado vazio vazioTitulo="Série insuficiente" vazioDica="Poucos trimestres com presença medida para desenhar a linha." />;
+/* Colunas da taxa de comparecimento por trimestre. Amostras pequenas ficam
+   vazadas e cinza para preservar a leitura sem esconder o dado. */
+function ColunasPresenca({ serie }) {
+  const [detalhe, setDetalhe] = useState(null);
+  if (serie.length < 2) return <Estado vazio vazioTitulo="Série insuficiente" vazioDica="Poucos trimestres com presença medida para desenhar o gráfico." />;
   const W = 720, H = 196, padL = 40, padR = 14, padT = 20, padB = 30;
   const plotW = W - padL - padR, plotH = H - padT - padB, plotBottom = padT + plotH;
   const n = serie.length;
   const base = (serie.some((p) => !p.pequena) ? serie.filter((p) => !p.pequena) : serie).map((p) => p.taxa);
   let vMax = Math.min(100, Math.ceil((Math.max(...base) + 6) / 5) * 5);
-  let vMin = Math.max(0, Math.floor((Math.min(...base) - 6) / 5) * 5);
-  if (vMax <= vMin) vMax = Math.min(100, vMin + 10);
-  const x = (i) => padL + (i / (n - 1)) * plotW;
-  const y = (v) => Math.max(padT, Math.min(plotBottom, plotBottom - ((v - vMin) / (vMax - vMin || 1)) * plotH));
-  const confIdx = serie.map((_, i) => i).filter((i) => !serie[i].pequena);
-  const linha = confIdx.map((i) => `${x(i)},${y(serie[i].taxa)}`).join(" ");
-  const yticks = [vMin, Math.round((vMin + vMax) / 2), vMax];
+  if (vMax <= 0) vMax = 10;
+  const passoX = plotW / n;
+  const largura = Math.max(8, Math.min(30, passoX * 0.52));
+  const x = (i) => padL + i * passoX + (passoX - largura) / 2;
+  const y = (v) => Math.max(padT, Math.min(plotBottom, plotBottom - (v / vMax) * plotH));
+  const yticks = [0, Math.round(vMax / 2), vMax];
   const passo = Math.max(1, Math.round((n - 1) / 5));
   const xi = [];
   for (let i = 0; i < n; i += passo) xi.push(i);
   if (xi.at(-1) !== n - 1) xi.push(n - 1);
+  const mostrarDetalhe = (event, p) => setDetalhe({
+    p,
+    x: event.clientX,
+    y: event.clientY,
+    esquerda: event.clientX > window.innerWidth - 240,
+  });
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+    <div onMouseLeave={() => setDetalhe(null)}>
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Taxa de comparecimento por trimestre" style={{ width: "100%", height: "auto", display: "block" }}>
       {yticks.map((v, i) => {
         const yy = y(v);
         return (
@@ -3602,14 +3623,63 @@ function LinhaPresenca({ serie }) {
           </g>
         );
       })}
-      {confIdx.length > 1 && <polyline points={linha} fill="none" stroke={C.up} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />}
-      {serie.map((p, i) => (p.pequena
-        ? <circle key={i} cx={x(i)} cy={y(p.taxa)} r="2.6" fill="none" stroke={C.faint} strokeWidth="1.2" />
-        : <circle key={i} cx={x(i)} cy={y(p.taxa)} r="2.8" fill={C.up} />))}
+      {serie.map((p, i) => {
+        const topo = y(p.taxa);
+        return (
+          <g key={p.rotulo + i}>
+            <rect
+              x={x(i)} y={topo} width={largura} height={Math.max(1, plotBottom - topo)} rx="1"
+              fill={p.pequena ? "transparent" : (detalhe?.p === p ? C.bright : C.up)}
+              fillOpacity={p.pequena ? 1 : (detalhe?.p === p ? 0.9 : 0.68)}
+              stroke={p.pequena ? C.faint : "none"}
+              strokeWidth={p.pequena ? 1 : 0}
+              style={{ cursor: "crosshair", transition: "fill .12s ease, fill-opacity .12s ease" }}
+              onMouseEnter={(e) => mostrarDetalhe(e, p)}
+              onMouseMove={(e) => mostrarDetalhe(e, p)}
+            />
+          </g>
+        );
+      })}
       {xi.map((i) => (
-        <text key={i} x={x(i)} y={H - 9} fontSize="10" textAnchor="middle" fill={C.faint} fontFamily={SANS}>{serie[i].rotulo}</text>
+        <text key={i} x={x(i) + largura / 2} y={H - 9} fontSize="10" textAnchor="middle" fill={C.faint} fontFamily={SANS}>{serie[i].rotulo}</text>
       ))}
     </svg>
+    {detalhe && (
+      <div style={{
+        position: "fixed",
+        left: detalhe.x + (detalhe.esquerda ? -14 : 14),
+        top: detalhe.y + 14,
+        transform: detalhe.esquerda ? "translateX(-100%)" : undefined,
+        zIndex: 80,
+        pointerEvents: "none",
+        minWidth: 190,
+        background: "#15151a",
+        border: `1px solid ${C.cardLine}`,
+        borderRadius: 8,
+        padding: "10px 11px",
+        boxShadow: "0 12px 32px rgba(0,0,0,.55)",
+      }}>
+        <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".45px", textTransform: "uppercase", color: C.muted, marginBottom: 8 }}>
+          {detalhe.p.rotulo}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 18 }}>
+          <span style={{ fontSize: 11, color: C.faint }}>Comparecimento</span>
+          <span style={{ fontFamily: GROTESK, fontSize: 15, fontWeight: 700, color: C.up }}>
+            {detalhe.p.taxa.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 18, marginTop: 5 }}>
+          <span style={{ fontSize: 11, color: C.faint }}>Matrículas</span>
+          <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: C.bright }}>{numero(detalhe.p.amostra)}</span>
+        </div>
+        {detalhe.p.pequena && (
+          <div style={{ borderTop: `1px solid ${C.hair}`, marginTop: 8, paddingTop: 7, fontSize: 10, color: C.warn }}>
+            Amostra pequena · menos de 30 matrículas
+          </div>
+        )}
+      </div>
+    )}
+    </div>
   );
 }
 
@@ -4669,8 +4739,8 @@ function SecaoAvaliacaoEventos({ notificar }) {
 
 /* Hub Pedagógico / Sucesso do Cliente. Foco em SAÚDE: acompanhamento, não
    fila de tarefas. Tudo vem do Salesforce; conclusão, notas e NPS não são
-   medidos (não existem na fonte). Presença cobre só as turmas com
-   credenciamento confiável. */
+   medidos (não existem na fonte). Comparecimento usa apenas fato_presenca e
+   turmas cuja cobertura torna a ausência mensurável. */
 function HubPedagogico() {
   const kpis = usePedagogicoKpis();
   const presKpis = usePedagogicoPresencaKpis();
@@ -4698,12 +4768,13 @@ function HubPedagogico() {
     (presTempo.data ?? [])
       .filter((r) => r.periodo != null)
       .map((r) => ({
+        periodo: r.periodo,
         rotulo: rotuloTri(r.periodo),
         taxa: pctTaxa(r.taxa_comparecimento),
         amostra: Number(r.matriculas ?? 0),
         pequena: Number(r.matriculas ?? 0) < 30,
       }))
-      .sort((a, b) => String(a.rotulo).localeCompare(String(b.rotulo))),
+      .sort((a, b) => String(a.periodo).localeCompare(String(b.periodo))),
     [presTempo.data]);
   const temPequena = serieTri.some((p) => p.pequena);
 
@@ -4757,7 +4828,7 @@ function HubPedagogico() {
       <div className="pedKpis" style={{ marginBottom: 12 }}>
         <ChipKpi compacto hero Icone={Repeat} label="Recompra (grade)" valor={fmtPct(k.taxa_recompra, 1)} nota="cursos CIS + GGB" />
         <ChipKpi compacto Icone={UserCheck} label="Comparecimento" valor={fmtPct(pk.taxa_comparecimento_geral)}
-          sub={pk.turmas_cobertas ? `${numero(pk.turmas_cobertas)} turmas credenciadas` : "turmas credenciadas"} />
+          sub={pk.turmas_cobertas ? `${numero(pk.turmas_cobertas)} turmas mensuráveis` : "fonte de presença"} />
         <ChipKpi compacto Icone={Users} label="Alunos únicos" valor={k.alunos_unicos != null ? numero(k.alunos_unicos) : "—"} nota="na base" />
         <ChipKpi compacto Icone={BookOpen} label="Cursos por aluno" valor={cursosPorAluno} nota="média" />
       </div>
@@ -4766,11 +4837,11 @@ function HubPedagogico() {
       <Bloco titulo="Comparecimento no tempo" canto="taxa por trimestre">
         <Estado carregando={presTempo.isLoading} erro={presTempo.error} vazio={serieTri.length < 2}
           vazioTitulo="Sem série de presença" vazioDica="Aparece com o setor pedagógico conectado.">
-          <LinhaPresenca serie={serieTri} />
+          <ColunasPresenca serie={serieTri} />
           {temPequena && (
             <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 10.5, color: C.faint, marginTop: 4 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", border: `1.2px solid ${C.faint}`, flexShrink: 0 }} />
-              trimestres com menos de 30 matrículas — amostra pequena, fora da linha
+              <span style={{ width: 8, height: 8, borderRadius: 2, border: `1.2px solid ${C.faint}`, flexShrink: 0 }} />
+              colunas vazadas: trimestres com menos de 30 matrículas — amostra pequena
             </div>
           )}
         </Estado>
@@ -4831,7 +4902,7 @@ function HubPedagogico() {
             curso seguem sem medição, e juntar as três numa frase só faria o
             aviso mentir do outro lado. */}
         <b style={{ color: C.muted }}>Transparência.</b> A presença cobre {pk.turmas_cobertas ? numero(pk.turmas_cobertas) : "—"} turmas
-        com credenciamento confiável; as demais ficam de fora do comparecimento. O NPS de <b style={{ color: C.muted }}>evento</b> é
+        mensuráveis na fonte de presença; turmas sem cobertura suficiente ficam de fora do comparecimento. O NPS de <b style={{ color: C.muted }}>evento</b> é
         medido pela avaliação por QR code — o resultado fica na Central Pedagógica. Conclusão de curso e nota do aluno
         continuam sem medição: não estão no Salesforce.
       </div>
@@ -7711,6 +7782,7 @@ function Shell({ perfil }) {
       case "pedagogico": return <HubPedagogico />;
       case "central":    return <CentralPedagogica />;
       case "auditoria":  return <HubAuditoria />;
+      case "central-eventos": return <CentralEventos />;
       case "eventos":    return <HubEventos />;
       case "loja":       return <HubLoja />;
       case "estoque":    return <SemFonte hub={hub} />;
@@ -7844,6 +7916,10 @@ function Shell({ perfil }) {
       <main className="rolagem" style={{ flex: 1, minWidth: 0, height: "100vh", overflowY: "auto" }}>
         <div className="subir" style={{ padding: "26px 34px 60px", maxWidth: 1320, margin: "0 auto" }}>
 
+          {/* A Central de Eventos traz o próprio cabeçalho — com o seletor de
+              mês e o botão de atualizar dentro dele. Renderizar o do Shell
+              junto duplicaria o título na tela. */}
+          {tela !== "central-eventos" && (
           <div style={{
             display: "flex", alignItems: "flex-end", justifyContent: "space-between",
             gap: 20, flexWrap: "wrap", marginBottom: 24,
@@ -7881,6 +7957,7 @@ function Shell({ perfil }) {
               </div>
             </div>
           </div>
+          )}
 
           {conteudo()}
         </div>

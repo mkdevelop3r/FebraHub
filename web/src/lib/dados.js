@@ -189,7 +189,9 @@ export const useFinanceiroQualidadePeriodo = () =>
 export const useFinanceiroPagamentos = () => useView("vw_financeiro_pagamentos");
 export const useFinanceiroReceitaCategoria = () => useView("vw_financeiro_receita_categoria_total");
 export const useFinanceiroCaixaHorizonte = () => useView("vw_financeiro_caixa_horizonte");
-export const useFinanceiroFormasPagamento = () => useView("vw_financeiro_formas_pagamento");
+// Série diária; o Hub Financeiro reagrega conforme Ano/Mês/7 dias.
+export const useFinanceiroFormasPagamento = () =>
+  useView("vw_financeiro_formas_pagamento_periodo", { ordem: ["data", "forma"] });
 // Views que a Dulce vai criar (evolução mensal + caixa CisPay). Enquanto
 // não existirem, o useView devolve [] e o card mostra estado vazio honesto.
 export const useFinanceiroReceitaMensal = () => useView("vw_financeiro_receita_mensal");
@@ -197,7 +199,9 @@ export const useFinanceiroCaixaMensal = () => useView("vw_financeiro_caixa_mensa
 
 /* Conta Azul: inadimplência, a receber e despesa. NUNCA somar com a
    receita (Salesforce) — são fontes e unidades diferentes. */
-export const useFinanceiroInadimpOrigem = () => useView("vw_financeiro_inadimplencia_origem");
+// Parcelas ainda vencidas, na granularidade diária da data de vencimento.
+export const useFinanceiroInadimpOrigem = () =>
+  useView("vw_financeiro_inadimplencia_origem_periodo", { ordem: ["data", "origem"] });
 export const useFinanceiroAReceberHorizonte = () => useView("vw_financeiro_a_receber_horizonte");
 export const useFinanceiroDespesaCategoria = () => useView("vw_financeiro_despesa_categoria");
 export const useFinanceiroAPagarHorizonte = () => useView("vw_financeiro_a_pagar_horizonte");
@@ -409,16 +413,16 @@ export const useMarketingAtribuicao = () =>
 // KPIs de recompra (fidelização): uma linha agregada — alunos únicos,
 // matrículas, cursos por aluno, taxa de recompra.
 export const usePedagogicoKpis = () => useView("vw_pedagogico_kpis");
-// KPIs de presença: comparecimento geral + cobertura (turmas credenciadas).
+// KPIs de presença: comparecimento geral + turmas mensuráveis em fato_presenca.
 export const usePedagogicoPresencaKpis = () => useView("vw_pedagogico_presenca_kpis");
-// Taxa de comparecimento por TRIMESTRE (série). `matriculas` é o tamanho da
-// amostra — o front de-enfatiza trimestres com poucas (<~30) matrículas.
+// Taxa de comparecimento por trimestre da TURMA. `matriculas` é o tamanho da
+// amostra; a view agrega por turma antes de somar (presença tem uma linha/dia).
 export const usePedagogicoPresencaTempo = () =>
   useView("vw_pedagogico_presenca_tempo", { ordem: ["periodo"] });
 // Cursos que mais fidelizam (taxa_recompra por curso). `alunos` = amostra.
 export const usePedagogicoRecompraCurso = () =>
   useView("vw_pedagogico_recompra_curso", { ordem: ["curso"] });
-// Cursos com mais falta (taxa_comparecimento por curso; piores no topo no front).
+// Cursos com mais falta, exclusivamente sobre fato_presenca.
 export const usePedagogicoPresencaCurso = () =>
   useView("vw_pedagogico_presenca_curso", { ordem: ["curso"] });
 // Painel de Maestros: os clientes VIP (compraram MAESTRIA). `_completo` já
@@ -838,6 +842,217 @@ export const useAuditoriaConsultora = () =>
   useView("vw_auditoria_consultora", { ordem: ["canal", "consultora"] });
 export const useConformidadeVenda = () =>
   useView("vw_conformidade_venda", { ordem: ["mes", "consultora"] });
+
+/* ============================================================
+   CENTRAL DE EVENTOS — operação do Marketing
+   ============================================================
+   Funções, não hooks: a página herdou do protótipo um `carregar()`
+   imperativo com atualização otimista e rollback, e é ele que dá o check
+   instantâneo na ação. Envelopar isso em useQuery obrigaria a reescrever a
+   parte aprovada. O que importa da convenção — acesso ao banco morando
+   aqui, e não espalhado em componente — está mantido.
+
+   ESCRITA SÓ POR RPC. As três tabelas têm RLS e nenhum update direto é
+   permitido: `mkt_marcar_acao` recusa ação automática e grava
+   concluida_em/concluida_por por trigger; `mkt_classificar_evento` exige
+   gestor_marketing. Os erros das duas voltam como exceção do Postgres e
+   sobem como `error.message` — a tela mostra o texto do banco, que é onde
+   a regra vive.
+
+   NENHUMA delas filtra por unidade. Quem decide o que cada perfil enxerga
+   é a policy (`p.gestor_marketing or p.unidade_id = e.unidade_id`);
+   repetir isso no cliente seria inventar uma segunda régua de permissão,
+   que cedo ou tarde discorda da primeira. */
+
+const erroSupabase = (error) => {
+  if (!error) return;
+  throw new Error(error.message || String(error));
+};
+
+export async function mktUnidadesAtivas() {
+  const { data, error } = await supabase
+    .from("mkt_unidades")
+    .select("id, nome, slug")
+    .eq("ativa", true)
+    .order("nome");
+  erroSupabase(error);
+  return data ?? [];
+}
+
+/* Só os tipos que geram checklist entram na fila de classificação —
+   classificar como um tipo sem checklist não produziria ação nenhuma, e o
+   botão prometeria um efeito que não acontece. */
+export async function mktTiposComChecklist() {
+  const { data, error } = await supabase
+    .from("mkt_tipos_evento")
+    .select("id, nome")
+    .eq("ativo", true)
+    .eq("gera_checklist", true)
+    .order("nome");
+  erroSupabase(error);
+  return data ?? [];
+}
+
+// PostgREST devolve embedding 1:1 ora como objeto, ora como lista de um.
+const primeiro = (x) => (Array.isArray(x) ? (x[0] ?? null) : (x ?? null));
+
+export async function mktEventosDoMes(inicio, fim) {
+  const { data, error } = await supabase
+    .from("mkt_eventos")
+    .select(
+      "id, nome, codigo, data_evento, status, unidade_id," +
+      "tipo:mkt_tipos_evento(nome)," +
+      "resultados:mkt_resultados_evento(inscritos,presentes,vendas_pitch,vendas_pos)," +
+      "acoes:mkt_acoes_evento(id,nome,responsavel,prazo,conclusao,concluida,concluida_em)"
+    )
+    .eq("status", "ativo")
+    .gte("data_evento", inicio)
+    .lt("data_evento", fim)
+    .order("data_evento")
+    .order("prazo", { referencedTable: "mkt_acoes_evento", ascending: true });
+  erroSupabase(error);
+  return (data ?? []).map((e) => ({
+    ...e,
+    /* `mkt_tipos_evento` está com RLS ligada e SEM policy: o embedding volta
+       nulo mesmo para quem enxerga o evento. Daí o "—" em vez de quebrar. */
+    tipo: primeiro(e.tipo)?.nome ?? "—",
+    resultados: primeiro(e.resultados),
+    acoes: e.acoes ?? [],
+  }));
+}
+
+/* Data do primeiro evento ativo A PARTIR de uma data. Serve ao estado vazio:
+   hoje (18/08/2026) não há nenhum ativo em agosto — os 16 estão em setembro,
+   outubro e dezembro. Abrir no mês corrente e mostrar "nenhum evento" sem
+   mais nada faria a tela parecer quebrada quando ela está certa. */
+export async function mktProximoEventoAtivo(deData) {
+  const { data, error } = await supabase
+    .from("mkt_eventos")
+    .select("data_evento")
+    .eq("status", "ativo")
+    .gte("data_evento", deData)
+    .order("data_evento")
+    .limit(1);
+  erroSupabase(error);
+  return data?.[0]?.data_evento ?? null;
+}
+
+/* ---------- Pauta: ações por PRAZO ----------
+   O inverso de mktEventosDoMes. Existe porque prazo e data do evento são
+   coisas diferentes: medido em 18/08/2026, 45 das 98 ações vencem num mês
+   diferente do evento (média de 11,4 dias antes, até 20). Agosto tinha 27
+   ações a vencer e ZERO eventos — uma tela indexada por data de evento
+   mostrava o mês em branco enquanto havia 27 coisas para fazer.
+
+   `!inner` é obrigatório: sem ele o PostgREST não deixa filtrar por coluna
+   da tabela embutida, e `evento.status` seria ignorado silenciosamente. */
+const SELECT_ACAO =
+  "id, nome, responsavel, prazo, conclusao, concluida, concluida_em," +
+  "evento:mkt_eventos!inner(id, nome, codigo, data_evento, unidade_id)";
+
+export async function mktAcoesDoPeriodo(inicio, fim) {
+  const { data, error } = await supabase
+    .from("mkt_acoes_evento")
+    .select(SELECT_ACAO)
+    .eq("evento.status", "ativo")
+    .gte("prazo", inicio)
+    .lt("prazo", fim)
+    .order("prazo");
+  erroSupabase(error);
+  return (data ?? []).map((a) => ({ ...a, evento: primeiro(a.evento) }));
+}
+
+/* Atrasadas ignoram a janela de propósito: dívida vencida não some da vista
+   porque a pessoa navegou para outro mês. */
+export async function mktAcoesAtrasadas(hoje) {
+  const { data, error } = await supabase
+    .from("mkt_acoes_evento")
+    .select(SELECT_ACAO)
+    .eq("evento.status", "ativo")
+    .eq("concluida", false)
+    .lt("prazo", hoje)
+    .order("prazo");
+  erroSupabase(error);
+  return (data ?? []).map((a) => ({ ...a, evento: primeiro(a.evento) }));
+}
+
+export async function mktPendentes() {
+  const { data, error } = await supabase
+    .from("mkt_eventos")
+    .select("id, nome, data_evento, unidade_id")
+    .eq("status", "pendente_classificacao")
+    .order("data_evento");
+  erroSupabase(error);
+  return data ?? [];
+}
+
+export async function mktMarcarAcao(acaoId, concluida) {
+  const { error } = await supabase.rpc("mkt_marcar_acao", {
+    p_acao_id: acaoId,
+    p_concluida: concluida,
+  });
+  erroSupabase(error);
+}
+
+// tipo nulo = "nada necessário": o evento sai da fila sem ganhar checklist.
+export async function mktClassificarEvento(eventoId, tipoId) {
+  const { error } = await supabase.rpc("mkt_classificar_evento", {
+    p_evento_id: eventoId,
+    p_tipo_evento_id: tipoId ?? null,
+  });
+  erroSupabase(error);
+}
+
+/* ---------- Cancelamento (132) ----------
+   Cancelar não apaga: o evento vira status='cancelado' e sai das quatro
+   consultas acima, que filtram 'ativo'. As ações continuam na tabela, e
+   `mktReativarEvento` devolve tudo — inclusive o que já estava marcado.
+
+   Apagar da agenda do Google também cai aqui: um trigger converte o DELETE
+   em cancelamento com o motivo "Apagado da agenda do Google". Quer dizer
+   que esta lista tem duas origens, e o motivo é o que as distingue. */
+export async function mktCanceladosDoMes(inicio, fim) {
+  const { data, error } = await supabase
+    .from("mkt_eventos")
+    .select("id, nome, codigo, data_evento, unidade_id, cancelado_motivo, cancelado_em")
+    .eq("status", "cancelado")
+    .gte("data_evento", inicio)
+    .lt("data_evento", fim)
+    .order("data_evento");
+  erroSupabase(error);
+  return data ?? [];
+}
+
+/* `cancelado_por` fica gravado, mas NÃO vem para a tela: a policy de
+   `perfis` só libera a própria linha, então o embedding devolveria o nome
+   para quem cancelou e null para todos os outros — pior que não mostrar.
+   Quem precisa auditar tem a coluna no banco. */
+export async function mktCancelarEvento(eventoId, motivo) {
+  const { error } = await supabase.rpc("mkt_cancelar_evento", {
+    p_evento_id: eventoId,
+    p_motivo: motivo,
+  });
+  erroSupabase(error);
+}
+
+export async function mktReativarEvento(eventoId) {
+  const { error } = await supabase.rpc("mkt_reativar_evento", { p_evento_id: eventoId });
+  erroSupabase(error);
+}
+
+/* Cancelar e reativar são só do gestor — a RPC recusa qualquer outro com a
+   mensagem do banco. O front lê a flag para não OFERECER o que vai ser
+   negado; a permissão continua sendo decidida lá, não aqui. Sem sessão ou
+   sem perfil, o padrão é false: na dúvida, não oferece. */
+export async function mktSouGestor() {
+  const { data: sessao } = await supabase.auth.getUser();
+  const uid = sessao?.user?.id;
+  if (!uid) return false;
+  const { data, error } = await supabase
+    .from("perfis").select("gestor_marketing").eq("id", uid).maybeSingle();
+  if (error) return false;
+  return Boolean(data?.gestor_marketing);
+}
 
 /* ============================================================
    AGREGAÇÃO — as views vem agrupadas por mes.
