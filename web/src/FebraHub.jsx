@@ -5480,6 +5480,68 @@ function SemFonte({ hub }) {
 
 /* ============ LOGIN ============ */
 
+/* Fundo em vídeo (5,3s, loop): pontos de luz viram rede, a rede vira
+   gráfico, e tudo se desfaz no lugar até voltar ao campo de pontos do
+   primeiro frame — por isso o loop não tem emenda. Três regras que ele
+   obedece:
+
+   1. NUNCA atrapalha o login. Nasce invisível e só aparece quando o arquivo
+      carrega. Sem arquivo, com erro de rede ou com autoplay barrado pelo
+      navegador, a tela fica exatamente como era — o gradiente continua sendo
+      o fundo de verdade, o vídeo é ganho por cima.
+   2. Contraste antes de estética: o véu escuro segura a legibilidade do
+      formulário em qualquer frame. Tela de entrada não pode piscar de
+      claro-escuro enquanto alguém digita a senha.
+   3. `prefers-reduced-motion` corta o vídeo inteiro. Não é capricho de
+      configuração — é acessibilidade, e movimento em loop atrás de texto é
+      exatamente o caso que a preferência existe para atender.
+
+   O nome "FebraHub" NÃO está no vídeo, de propósito: modelo de vídeo escreve
+   texto mal, e o nome da empresa deformado na tela de entrada seria o pior
+   lugar possível para esse defeito. No vídeo não há letra nenhuma; o nome é
+   o <div> de sempre, desenhado por cima com a fonte do produto. Trocar o
+   vídeo não mexe no nome, e vice-versa.
+
+   Cor: ouro sobre preto, os mesmos tokens do resto do produto. O master, os
+   prompts de geração e o comando de ffmpeg que fecha o loop estão fora do
+   repositório, em FebraHub-assets/login-bg/ — binário não versiona bem. */
+const VIDEO_FUNDO = "/login-bg.mp4";
+
+function FundoLogin() {
+  const [visivel, setVisivel] = useState(false);
+  const [falhou, setFalhou] = useState(false);
+
+  const menosMovimento =
+    typeof window !== "undefined" &&
+    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+
+  if (menosMovimento || falhou) return null;
+
+  return (
+    <>
+      <video
+        src={VIDEO_FUNDO}
+        autoPlay muted loop playsInline preload="auto"
+        aria-hidden="true"
+        onCanPlay={() => setVisivel(true)}
+        onError={() => setFalhou(true)}
+        style={{
+          position: "fixed", inset: 0, width: "100%", height: "100%",
+          objectFit: "cover", zIndex: 0, pointerEvents: "none",
+          opacity: visivel ? 1 : 0, transition: "opacity 1.2s ease",
+        }}
+      />
+      {/* Véu: mais dela no centro, onde fica o formulário, e menos nas
+          bordas, onde o vídeo pode aparecer. */}
+      <div aria-hidden="true" style={{
+        position: "fixed", inset: 0, zIndex: 1, pointerEvents: "none",
+        background:
+          `radial-gradient(760px 520px at 50% 50%, ${C.void}E6, ${C.void}A6 55%, ${C.void}66 100%)`,
+      }} />
+    </>
+  );
+}
+
 function Login() {
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
@@ -5502,11 +5564,14 @@ function Login() {
 
   return (
     <div style={{
+      position: "relative", overflow: "hidden",
       minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: 24,
       background: `radial-gradient(1200px 600px at 78% -10%, ${C.gold}12, transparent 60%), ${C.void}`,
       fontFamily: SANS, color: C.text,
     }}>
-      <div style={{ width: "100%", maxWidth: 380, animation: "subir .5s ease" }}>
+      <FundoLogin />
+      {/* zIndex 2: acima do vídeo (0) e do véu (1). */}
+      <div style={{ position: "relative", zIndex: 2, width: "100%", maxWidth: 380, animation: "subir .5s ease" }}>
 
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 30 }}>
           <img
