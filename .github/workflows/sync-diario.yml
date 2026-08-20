@@ -52,9 +52,12 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          CISPAY_TOKEN: ${{ secrets.CISPAY_TOKEN }}
+          # O script lê CISPAY_API_KEY; o secret mantém o nome histórico.
+          CISPAY_API_KEY: ${{ secrets.CISPAY_TOKEN }}
           CISPAY_BASE_URL: ${{ secrets.CISPAY_BASE_URL }}
-        run: python etl/cispay_sync.py
+        run: |
+          python etl/cispay_sync.py --sync --meses 24
+          python etl/cispay_sync.py --verificar-atual
         continue-on-error: true
 
       - name: Status — CisPay

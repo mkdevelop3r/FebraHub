@@ -412,11 +412,54 @@ def sincronizar_extrato() -> None:
     print("OK.")
 
 
+def verificar_atual() -> None:
+    """Diagnóstico seguro da atualização da CisPay.
+
+    Consulta o mês corrente nos dois endpoints e imprime apenas contagens e
+    intervalos de datas. Não registra nomes, documentos, valores ou payloads.
+    """
+    mes_atual = meses(1)[0]
+    print(f"DIAGNOSTICO CISPAY · mes={mes_atual}")
+
+    for subseller in SUBSELLERS:
+        agendamentos = [montar(reg) for reg in buscar(mes_atual, subseller)]
+        datas_venda = sorted(
+            str(item["data_venda"]) for item in agendamentos if item.get("data_venda")
+        )
+        datas_liquidacao = sorted(
+            str(item["data_liquidacao"])
+            for item in agendamentos
+            if item.get("data_liquidacao")
+        )
+        print(
+            "schedules-ex"
+            f" · subseller=...{subseller[-8:]}"
+            f" · registros={len(agendamentos)}"
+            f" · venda={datas_venda[0] if datas_venda else '-'}..{datas_venda[-1] if datas_venda else '-'}"
+            f" · liquidacao={datas_liquidacao[0] if datas_liquidacao else '-'}..{datas_liquidacao[-1] if datas_liquidacao else '-'}"
+        )
+
+        extrato = [achatar(item) for item in buscar_extrato(subseller)]
+        datas_extrato = sorted(
+            str(data)
+            for item in extrato
+            for data in [resolver(item, ["payment_date", "entry_date", "date"])]
+            if not vazio(data)
+        )
+        print(
+            "checking-account"
+            f" · subseller=...{subseller[-8:]}"
+            f" · registros={len(extrato)}"
+            f" · lancamentos={datas_extrato[0] if datas_extrato else '-'}..{datas_extrato[-1] if datas_extrato else '-'}"
+        )
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--diagnostico", action="store_true")
     ap.add_argument("--sync", action="store_true")
     ap.add_argument("--extrato", action="store_true")
+    ap.add_argument("--verificar-atual", action="store_true")
     ap.add_argument("--meses", type=int, default=24)
     a = ap.parse_args()
 
@@ -426,5 +469,7 @@ if __name__ == "__main__":
         sincronizar(a.meses)
     elif a.extrato:
         sincronizar_extrato()
+    elif a.verificar_atual:
+        verificar_atual()
     else:
         ap.print_help()
