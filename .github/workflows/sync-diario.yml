@@ -57,6 +57,8 @@ jobs:
           CISPAY_BASE_URL: ${{ secrets.CISPAY_BASE_URL }}
         run: |
           python etl/cispay_sync.py --sync --meses 24
+          # Persiste o checking-account: dinheiro efetivamente movimentado.
+          python etl/cispay_sync.py --extrato
           python etl/cispay_sync.py --verificar-atual
         continue-on-error: true
 
