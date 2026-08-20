@@ -147,3 +147,4 @@ Ordem de aplicação e o que cada uma faz. Gerado a partir do cabeçalho de cada
 | 134 | `134_formas_pagamento_periodo.sql` | FebraHub · Migration 134 — Formas de pagamento com granularidade diária para responder aos filtros Ano/Mês/7 dias |
 | 135 | `135_formas_pagamento_compatibilidade.sql` | FebraHub · Migration 135 — Preserva a view acumulada para o front publicado e separa a nova view diária filtrável |
 | 136 | `136_inadimplencia_periodo.sql` | FebraHub · Migration 136 — Inadimplência filtrável por Ano/Mês/7 dias conforme a data de vencimento |
+| 137 | `137_comercial_matriculas_reais.sql` | FebraHub · Migration 137 — Total de matrículas passa a contar alunos aprovados, não vendas deduplicadas |

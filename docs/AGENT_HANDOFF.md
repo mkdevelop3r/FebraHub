@@ -138,6 +138,10 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
 - 19/08/2026: preserve as alterações de Comercial/Financeiro/Pedagógico em
   `web/src/FebraHub.jsx`, `web/src/lib/dados.js` e `db/INDICE.md`.
 - Migrations 129, 134, 135 e 136 já foram aplicadas no Supabase.
+- 20/08/2026: Codex concluiu e liberou `dados.js` e `INDICE.md`. Migration 137
+  aplicada: o Comercial conta Matrícula + CONSUMIDOR DE VAGAS pela base de
+  alunos; agosto/2026 passou de 67 vendas para 572 matrículas aprovadas. Build
+  passou. O bloco da Central foi preservado.
 - Não renumerar nem sobrescrever as migrations 134–136.
 - Antes de publicar, executar `npm.cmd run build` dentro de `web/` e revisar o
   diff completo dos arquivos compartilhados.

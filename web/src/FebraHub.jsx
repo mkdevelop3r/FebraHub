@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, createContext, useContext } from "react";
+import { Component, useState, useMemo, useRef, useEffect, createContext, useContext } from "react";
 import { BrowserRouter, Routes, Route, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import Avaliacao from "./Rotas/Avaliacao.jsx";
@@ -12,14 +12,14 @@ import {
   Users, Target, Construction, Percent, Filter, ChevronUp,
   Boxes, PackageX, Repeat, UserCheck, BookOpen, ShieldCheck,
   Check, Pencil, Star, Plus, PhoneCall, Send, Link2, ClipboardList, ClipboardCheck,
-  Search, MoreHorizontal,
+  Search, MoreHorizontal, Gauge,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
   useComercialRankingHistorico, useComercialSymplaJennifer, useComercialCarinhas,
   useComercialVerdesDetalhe,
   useComercialMatriculasFaturamento, useComercialCursosPorConsultora,
-  useComercialRankingGeralConsolidado, useComercialGeralMensal, useFaturamentoMensal,
+  useComercialRankingGeralConsolidado, useComercialGeralMensal, useComercialMatriculasPeriodo, useFaturamentoMensal,
   useFinanceiroPagamentos, useFinanceiroQualidadePeriodo,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
   useFinanceiroReceitaMensal, useFinanceiroCaixaMensal,
@@ -638,6 +638,9 @@ function ToggleVisao({ valor, onChange }) {
 
 /* Card do pódio. O 1º lugar ganha moldura dourada, coroa e número maior —
    a Beatriz está muito à frente e o card precisa dizer isso de relance. */
+const nomeConsultoraExibicao = (nome) =>
+  /^larissa\s+imaculada\b/i.test(String(nome ?? "")) ? "Larissa Lima" : nome;
+
 function CardPodio({ c, pos }) {
   const primeiro = pos === 1;
   const ex = c.atual === false; // ex-consultor: sem foto, marcado discreto
@@ -664,7 +667,7 @@ function CardPodio({ c, pos }) {
         </span>
       </div>
       <div style={{ fontSize: primeiro ? 12.5 : 11.5, fontWeight: 700, color: ex ? C.muted : C.bright, lineHeight: 1.25 }}>
-        {c.consultora}
+        {nomeConsultoraExibicao(c.consultora)}
       </div>
       {ex && (
         <span style={{
@@ -742,6 +745,74 @@ function CardComCursos({ c, pos, cursos }) {
    é o ponto: deixa a classificação AUDITÁVEL (pedido do financeiro). O
    link_salesforce abre a oportunidade em nova aba. Painel lateral (drawer)
    com scroll interno — cabe numa TV sem empurrar o resto. */
+function LinhaConsultoraCursos({ c, cursos, max }) {
+  const [ancora, setAncora] = useState(null);
+  const ref = useRef(null);
+  const tem = cursos && cursos.length > 0;
+  const abrir = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (r) setAncora({ x: r.left + Math.min(r.width * 0.48, 210), y: r.bottom + 5 });
+  };
+  const fechar = () => setAncora(null);
+  const nome = nomeConsultoraExibicao(c.consultora);
+  return (
+    <div ref={ref} onMouseEnter={tem ? abrir : undefined} onMouseLeave={tem ? fechar : undefined}
+      onClick={tem ? () => (ancora ? fechar() : abrir()) : undefined}
+      style={{ display: "grid", gridTemplateColumns: "1fr 105px", gap: 12, alignItems: "center",
+        padding: "7px 16px", borderBottom: `1px solid ${C.hair}`, cursor: tem ? "pointer" : "default" }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 7, marginBottom: 5, minWidth: 0 }}>
+          <span title={c.consultora} style={{ fontSize: 11.5, fontWeight: 600,
+            color: c.atual === false ? C.faint : C.bright, fontStyle: c.atual === false ? "italic" : "normal",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {nome}
+          </span>
+          <span style={{ fontSize: 9.5, fontWeight: 700, color: C.muted, whiteSpace: "nowrap", flexShrink: 0 }}>
+            {numero(c.vendas)} venda{c.vendas === 1 ? "" : "s"}
+          </span>
+        </div>
+        <div style={{ height: 3, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
+          <div style={{ width: `${(Math.abs(c.receita) / max) * 100}%`, height: "100%", borderRadius: 3,
+            background: c.atual === false ? C.faint : `linear-gradient(90deg, ${C.goldBase}, ${C.gold})` }} />
+        </div>
+      </div>
+      <span style={{ fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, textAlign: "right",
+        color: c.atual === false ? C.faint : C.text }}>{moeda(c.receita)}</span>
+      {tem && ancora && (
+        <div style={{ position: "fixed", left: ancora.x, top: ancora.y, transform: "translateX(-50%)", zIndex: 60,
+          pointerEvents: "none", background: "#15151a", border: `1px solid ${C.cardLine}`, borderRadius: 10,
+          padding: "9px 11px", minWidth: 220, maxWidth: 300, boxShadow: "0 12px 32px rgba(0,0,0,.55)" }}>
+          <div style={{ fontSize: 9, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gold, marginBottom: 5 }}>
+            Cursos vendidos · {nome}
+          </div>
+          {cursos.map((cu) => (
+            <div key={cu.curso} style={{ display: "flex", alignItems: "baseline", gap: 8, marginTop: 4 }}>
+              <span title={cu.curso} style={{ fontSize: 11, color: C.bright, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {cu.curso_curto ?? cu.curso}
+              </span>
+              <span style={{ fontSize: 9.5, color: C.faint, flexShrink: 0 }}>{numero(cu.vendas)}×</span>
+              <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700, color: C.gold, flexShrink: 0 }}>{moeda(cu.receita)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ListaConsultorasCursos({ linhas, cursosPorConsultora, top = 4 }) {
+  const [aberto, setAberto] = useState(false);
+  const max = Math.max(...linhas.map((c) => Math.abs(c.receita)), 1);
+  const visiveis = !aberto && linhas.length > top ? linhas.slice(0, top) : linhas;
+  return (
+    <div>
+      {visiveis.map((c) => <LinhaConsultoraCursos key={c.consultor_id ?? c.consultora} c={c} max={max}
+        cursos={cursosPorConsultora.get(c.consultora)} />)}
+      {linhas.length > top && <VerTodas aberto={aberto} resto={linhas.length - top} onClick={() => setAberto((v) => !v)} />}
+    </div>
+  );
+}
+
 function PainelVerdes({ consultora, rotulo, linhas, carregando, erro, onFechar }) {
   return (
     <>
@@ -971,9 +1042,9 @@ function Lista({ linhas, formatar = moeda, total, top }) {
 
 /* Chip de KPI compacto — faixa horizontal do design: ícone + label +
    valor + delta/nota. `hero` deixa o card dourado (o número-âncora). */
-function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto, sub }) {
+function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto, sub, className, deltaBrilha }) {
   return (
-    <div style={{
+    <div className={className} style={{
       display: "flex", alignItems: "center", gap: compacto ? 9 : 12, minHeight: compacto ? 56 : 78,
       background: "rgba(255,255,255,.03)",
       border: `1px solid ${hero ? `${C.gold}38` : C.cardLine}`,
@@ -995,12 +1066,126 @@ function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto
             {unidade && <span style={{ fontSize: compacto ? 11 : 12, color: C.muted, fontWeight: 600 }}> {unidade}</span>}
           </span>
           {delta != null
-            ? <span style={{ fontSize: compacto ? 10 : 11, fontWeight: 800, color: up ? C.up : C.down }}>{up ? "▲" : "▼"} {String(delta).replace(/[+-]/, "")}</span>
+            ? <span className={deltaBrilha ? (up ? "deltaBrilhaUp" : "deltaBrilhaDown") : undefined}
+                style={{ fontSize: compacto ? 10 : 11, fontWeight: 800, color: up ? C.up : C.down }}>
+                {up ? "▲" : "▼"} {String(delta).replace(/[+-]/, "")}
+              </span>
             : nota && <span style={{ fontSize: compacto ? 9.5 : 11, fontWeight: 800, color: C.muted }}>{nota}</span>}
         </div>
         {/* Linha secundária opcional (ex.: líquido abaixo do bruto). Sem
             `sub`, o chip renderiza igual a antes. */}
         {sub && <div style={{ fontSize: compacto ? 9.5 : 10.5, color: C.faint, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+/* Metas mensais totais do Comercial. A mínima é sempre 90% da básica;
+   metas individuais das consultoras não entram neste KPI. */
+const METAS_COMERCIAL = {
+  "2025-01": { basica: 880000, master: 1100000 },
+  "2025-03": { basica: 890171.25, master: 1186895 },
+  "2025-04": { basica: 960000, master: 1250000 },
+  "2025-05": { basica: 900000, master: 1200000 },
+  "2025-06": { basica: 960000, master: 1200000 },
+  "2025-07": { basica: 920000, master: 1150000 },
+  "2025-08": { basica: 1400000, master: 1798198 },
+  "2025-10": { basica: 960000, master: 1200000 },
+  "2025-11": { basica: 815000, master: 1000000 },
+  "2025-12": { basica: 815000, master: 1000000 },
+  "2026-01": { basica: 815000, master: 1000000 },
+  "2026-02": { basica: 708800, master: 886000 },
+  "2026-03": { basica: 800000, master: 1000000 },
+  "2026-04": { basica: 800000, master: 1000000 },
+  "2026-05": { basica: 1049000, master: 1500000 },
+  "2026-06": { basica: 708800, master: 886000 },
+  "2026-07": { basica: 724500, master: 896000 },
+  "2026-08": { basica: 810365.4, master: 1013000 },
+};
+
+class LimiteErroMeta extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { falhou: false, mensagem: "" };
+  }
+  static getDerivedStateFromError(erro) {
+    return { falhou: true, mensagem: String(erro?.message ?? erro ?? "erro desconhecido") };
+  }
+  componentDidCatch(erro) { console.error("Falha no velocímetro da meta comercial", erro); }
+  render() {
+    return this.state.falhou
+      ? <ChipKpi compacto className="kpiTopoComercial" Icone={Gauge} label="% da meta" valor="—" nota="meta temporariamente indisponível" />
+      : this.props.children;
+  }
+}
+
+function VelocimetroMeta({ realizado, meta, disponivel = true }) {
+  if (!disponivel || !meta) {
+    return <ChipKpi compacto className="kpiTopoComercial" Icone={Gauge} label="% da meta" valor="—"
+      nota={!disponivel ? "disponível no Geral · Mês" : "meta não cadastrada"} />;
+  }
+
+  const valorRealizado = Number(realizado);
+  const basica = Number(meta.basica);
+  const master = Number(meta.master);
+  if (![valorRealizado, basica, master].every(Number.isFinite) || basica <= 0 || master <= 0) {
+    return <ChipKpi compacto className="kpiTopoComercial" Icone={Gauge} label="% da meta" valor="—" nota="dados da meta inválidos" />;
+  }
+
+  const minima = basica * 0.9;
+  const alvo = valorRealizado < minima
+    ? { nome: "mínima", valor: minima }
+    : valorRealizado < basica
+      ? { nome: "básica", valor: basica }
+      : { nome: "master", valor: master };
+  const percentual = (valorRealizado / alvo.valor) * 100;
+  const ponteiro = Math.max(0, Math.min(percentual, 100));
+  const angulo = -180 + ponteiro * 1.8;
+  const cor = percentual >= 100 ? C.up : percentual >= 75 ? "#B9D532" : percentual >= 45 ? "#F0B84B" : C.down;
+  const diferenca = Math.max(alvo.valor - valorRealizado, 0);
+  const mensagem = valorRealizado >= master
+    ? `Master superada em ${moeda(valorRealizado - master)}`
+    : `Faltam ${moeda(diferenca)} para a ${alvo.nome}`;
+
+  return (
+    <div className="kpiTopoComercial" title={`${moeda(valorRealizado)} de ${moeda(alvo.valor)} · meta ${alvo.nome}`} style={{
+      minHeight: 72, padding: "7px 10px 6px", borderRadius: 10,
+      background: "rgba(255,255,255,.03)", border: `1px solid ${C.cardLine}`,
+      display: "flex", flexDirection: "column", justifyContent: "space-between", minWidth: 0,
+      "--cor-meta": cor, animation: "metaBrilho 2.4s ease-in-out infinite",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: C.muted, fontWeight: 700 }}>
+        <Gauge size={13} /> % da meta · {alvo.nome}
+      </div>
+      <div style={{ position: "relative", width: 120, height: 39, overflow: "hidden", margin: "-1px auto 0" }}>
+        <div aria-hidden="true" style={{
+          position: "absolute", width: 120, height: 120, left: 0, top: 0, borderRadius: "50%",
+          background: "conic-gradient(from 270deg, #E0565B 0deg, #F0B84B 85deg, #B9D532 135deg, #39B97A 180deg, transparent 180deg)",
+        }} />
+        <div style={{ position: "absolute", width: 92, height: 92, left: 14, top: 14, borderRadius: "50%", background: C.void }} />
+        <div style={{
+          position: "absolute", width: 39, height: 8, left: 60, top: 34,
+          background: "#D9DEE1", clipPath: "polygon(0 8%, 100% 40%, 100% 60%, 0 92%)",
+          transformOrigin: "0 50%", "--angulo-meta": `${angulo}deg`,
+          animation: "metaPonteiro 1s cubic-bezier(.2,.8,.25,1) both",
+          filter: "drop-shadow(0 1px 2px rgba(0,0,0,.65))",
+        }} />
+        <div style={{
+          position: "absolute", width: 14, height: 14, left: 53, top: 31, borderRadius: "50%",
+          background: "#D9DEE1", border: `2px solid ${C.void}`, boxShadow: "0 1px 3px rgba(0,0,0,.7)",
+        }}>
+          <span style={{
+            position: "absolute", width: 4, height: 4, left: 3, top: 3, borderRadius: "50%", background: C.void,
+          }} />
+        </div>
+        <div style={{ position: "absolute", left: 0, right: 0, bottom: -1, textAlign: "center" }}>
+          <span style={{ fontFamily: GROTESK, fontSize: 18, lineHeight: 1, fontWeight: 800, color: cor }}>
+            {percentual.toFixed(1).replace(".", ",")}%
+          </span>
+        </div>
+      </div>
+      <div style={{ fontSize: 9, color: valorRealizado >= master ? C.up : C.muted, fontWeight: 700, textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+        {mensagem}
       </div>
     </div>
   );
@@ -1287,11 +1472,14 @@ const mesCurto = (ym, comAno = false) => {
 const ordenarMeses = (serie) => [...(serie ?? [])]
   .sort((a, b) => String(a.mes ?? "").slice(0, 7).localeCompare(String(b.mes ?? "").slice(0, 7)));
 const AZUL_ANTERIOR = "#6BA8E5";
+const COR_VARIACAO_ALTA = "#B7F34A";
+const COR_VARIACAO_QUEDA = "#FF6B5F";
 
 /* Evolução do faturamento: barras do período + linha do MESMO PERÍODO do
    ano anterior. A linha é comparação histórica, não meta — não existe meta
    no banco, e pintar uma referência como meta seria inventar cobrança. */
-function BarrasEvolucao({ serie, anoAnterior }) {
+function BarrasEvolucao({ serie, anoAnterior, onSelecionarMes }) {
+  const [detalheIdx, setDetalheIdx] = useState(null);
   if (!serie.length) return null;
   const W = 720, H = 250, padL = 10, padR = 10, padT = 34, padB = 28;
   const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
@@ -1304,6 +1492,7 @@ function BarrasEvolucao({ serie, anoAnterior }) {
 
   return (
     <>
+      <div style={{ position: "relative" }} onMouseLeave={() => setDetalheIdx(null)}>
       <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
         <defs>
           <linearGradient id="gradBarEvol" x1="0" y1="0" x2="0" y2="1">
@@ -1324,10 +1513,6 @@ function BarrasEvolucao({ serie, anoAnterior }) {
               strokeDasharray={s.parcial ? "4 3" : undefined}
               strokeWidth={s.parcial ? 1 : 0}
             />
-            <text x={cx(i)} y={y(s.valor) - 6} fontSize="10" fontWeight="700" textAnchor="middle"
-              fill={s.parcial ? C.faint : C.bright} fontFamily={GROTESK}>
-              {compacto(s.valor)}
-            </text>
           </g>
         ))}
 
@@ -1335,16 +1520,107 @@ function BarrasEvolucao({ serie, anoAnterior }) {
           <>
             <polyline points={ptsAnt.map((p) => p.join(",")).join(" ")} fill="none"
               stroke={AZUL_ANTERIOR} strokeWidth="1.6" strokeDasharray="5 4" strokeLinecap="round" />
-            {ptsAnt.map(([x0, y0], i) => <circle key={i} cx={x0} cy={y0} r="2" fill={AZUL_ANTERIOR} />)}
+            {ptsAnt.map(([x0, y0], i) => {
+              const anterior = Number(serie[i].anterior ?? 0);
+              if (anterior <= 0) return null;
+              const pct = ((Number(serie[i].valor ?? 0) - anterior) / anterior) * 100;
+              const subiu = pct > 0, caiu = pct < 0;
+              const cor = subiu ? COR_VARIACAO_ALTA : caiu ? COR_VARIACAO_QUEDA : C.faint;
+              // O selo respeita uma distância mínima do valor monetário.
+              const valorY = y(Number(serie[i].valor ?? 0)) - 6;
+              const acima = valorY - 27;
+              const abaixo = valorY + 27;
+              const cabeAcima = acima - 8 >= 2;
+              const cabeAbaixo = abaixo + 8 <= base - 2;
+              const cy = cabeAcima && (!cabeAbaixo || Math.abs(acima - y0) >= Math.abs(abaixo - y0))
+                ? acima
+                : Math.min(base - 10, abaixo);
+              const texto = `${Math.abs(pct).toLocaleString("pt-BR", { maximumFractionDigits: 0 })}%`;
+              const largura = Math.max(42, 25 + texto.length * 5.5);
+              const bx = Math.max(2, Math.min(W - largura - 2, x0 - largura / 2));
+              const by = cy - 8;
+              return (
+                <g key={serie[i].mes}>
+                  <circle cx={x0} cy={y0} r="2" fill={AZUL_ANTERIOR} />
+                  <rect x={bx} y={by} width={largura} height="16" rx="5"
+                    fill="#111217" fillOpacity="0.96" stroke={cor} strokeWidth="1" />
+                  {subiu
+                    ? <polygon points={`${bx + 6},${cy + 3} ${bx + 14},${cy + 3} ${bx + 10},${cy - 4}`} fill={cor} />
+                    : caiu
+                      ? <polygon points={`${bx + 6},${cy - 4} ${bx + 14},${cy - 4} ${bx + 10},${cy + 3}`} fill={cor} />
+                      : <rect x={bx + 6} y={cy - 1} width="8" height="2" fill={cor} />}
+                  <text x={bx + 18} y={cy + 3} fontSize="9.5" fontWeight="900" fill={cor} fontFamily={GROTESK}>
+                    {texto}
+                  </text>
+                </g>
+              );
+            })}
           </>
         )}
+
+        {/* Valores são a última camada de dados: nenhuma linha pode cruzá-los. */}
+        {serie.map((s, i) => (
+          <text key={`valor-${s.mes}`} x={cx(i)} y={y(s.valor) - 6} fontSize="10" fontWeight="700" textAnchor="middle"
+            fill={s.parcial ? C.faint : C.bright} fontFamily={GROTESK}
+            stroke={C.void} strokeWidth="4" paintOrder="stroke" strokeLinejoin="round">
+            {compacto(s.valor)}
+          </text>
+        ))}
 
         {serie.map((s, i) => (
           <text key={s.mes} x={cx(i)} y={H - 9} fontSize="10.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>
             {mesCurto(s.mes, true)}
           </text>
         ))}
+
+        {/* Faixas invisíveis ampliam a área de interação sem alterar nenhuma
+            camada visual já pronta do gráfico. */}
+        {serie.map((s, i) => (
+          <rect key={`hit-${s.mes}`} x={padL + slot * i} y="0" width={slot} height={H}
+            fill="transparent" style={{ cursor: "pointer", outline: "none" }}
+            onMouseEnter={() => setDetalheIdx(i)}
+            onClick={() => onSelecionarMes?.(s.mes)}
+            aria-label={`Detalhes de ${mesCurto(s.mes, true)}`} />
+        ))}
       </svg>
+      {detalheIdx != null && (() => {
+        const s = serie[detalheIdx];
+        const anterior = Number(s.anterior ?? 0);
+        const atual = Number(s.valor ?? 0);
+        const variacao = anterior > 0 ? ((atual - anterior) / anterior) * 100 : null;
+        const diferenca = atual - anterior;
+        const borda = variacao == null ? C.gold : variacao >= 0 ? COR_VARIACAO_ALTA : COR_VARIACAO_QUEDA;
+        return (
+          <div style={{
+            position: "absolute", zIndex: 8, top: 6,
+            left: `${(cx(detalheIdx) / W) * 100}%`,
+            transform: detalheIdx === 0 ? "translateX(0)" : detalheIdx === n - 1 ? "translateX(-100%)" : "translateX(-50%)",
+            minWidth: 190, padding: "9px 11px", pointerEvents: "none",
+            background: "rgba(15,15,18,.97)", border: `1px solid ${borda}66`, borderRadius: 9,
+            boxShadow: "0 10px 28px rgba(0,0,0,.48)",
+          }}>
+            <div style={{ fontSize: 10, fontWeight: 800, color: C.gold, marginBottom: 6 }}>
+              {mesCurto(s.mes, true)} {s.parcial ? "· parcial" : "· fechado"}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 14, fontSize: 10.5, color: C.muted }}>
+              <span>Faturamento {String(s.mes).slice(0, 4)}</span>
+              <b style={{ color: C.bright }}>{moeda(atual)}</b>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 14, marginTop: 4, fontSize: 10.5, color: C.muted }}>
+              <span>Mesmo mês {anoAnterior}</span>
+              <b style={{ color: AZUL_ANTERIOR }}>{anterior > 0 ? moeda(anterior) : "sem base"}</b>
+            </div>
+            {variacao != null && (
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 14, marginTop: 6, paddingTop: 6,
+                borderTop: `1px solid ${C.hair}`, fontSize: 10.5, fontWeight: 800, color: variacao >= 0 ? COR_VARIACAO_ALTA : COR_VARIACAO_QUEDA }}>
+                <span>{variacao >= 0 ? "Acima" : "Abaixo"} do ano anterior</span>
+                <span>{variacao >= 0 ? "+" : "−"}{moeda(Math.abs(diferenca))} · {Math.abs(variacao).toFixed(0)}%</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+      </div>
 
       <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6, lineHeight: 1.5 }}>
         Último mês tracejado = <b style={{ color: C.muted }}>parcial</b> (em andamento).
@@ -1427,6 +1703,7 @@ function MatriculasVsFaturamento({ serie }) {
           <circle key={i} cx={x0} cy={y0} r="2.2"
             fill={serie[i].parcial ? C.void : C.up} stroke={C.up} strokeWidth={serie[i].parcial ? 1.2 : 0} />
         ))}
+
 
         {serie.map((s, i) => (
           <text key={s.mes} x={cx(i)} y={H - 7} fontSize="9.5" textAnchor="middle" fill={C.faint} fontFamily={SANS}>
@@ -1885,7 +2162,7 @@ function HubExecutivo({ onIr }) {
 /* ============ HUBS SETORIAIS ============ */
 
 function HubComercial() {
-  const { inicio, fim, rotulo, modo } = usePeriodo();
+  const { inicio, fim, rotulo, modo, ano, mesIdx, setMesAno, escolherModo } = usePeriodo();
   const { categoria } = useCategoria();
   const [visao, setVisao] = useState("periodo");
   const rankCat = useComercialRankingHistorico();
@@ -1896,6 +2173,7 @@ function HubComercial() {
   const cursos = useComercialCursosPorConsultora();
   const geralCons = useComercialRankingGeralConsolidado();
   const geralMensal = useComercialGeralMensal();
+  const matriculasPeriodo = useComercialMatriculasPeriodo();
   const fatMensal = useFaturamentoMensal();
 
   // Consultora com o detalhe de verdes aberto (null = fechado).
@@ -1970,7 +2248,6 @@ function HubComercial() {
      é aluno, e vem com 0. YoY compara o MESMO recorte um ano atrás. */
   const kpi = useMemo(() => {
     const somaB = (ls) => ls.reduce((s, r) => s + Number(r.valor_bruto ?? 0), 0);
-    const somaM = (ls) => ls.reduce((s, r) => s + Number(r.conta_matricula ?? 0), 0);
     const dentro = recorte(linhasFluxo, { inicio, fim }, "data");
     const menosUmAno = (d) => `${Number(d.slice(0, 4)) - 1}${d.slice(4)}`;
     const faixaAnt = { inicio: menosUmAno(inicio), fim: menosUmAno(fim) };
@@ -1979,14 +2256,27 @@ function HubComercial() {
     // nas categorias e nos recortes curtos, do somatório por aprovação.
     const bruto = somaCanonica({ inicio, fim }) ?? somaB(dentro);
     const brutoAnt = somaCanonica(faixaAnt) ?? somaB(antes);
-    const matriculas = somaM(dentro);
+    const matsBase = (matriculasPeriodo.data ?? []).filter((r) =>
+      ehGeral || String(r.categoria) === categoria);
+    const matriculas = noPeriodo(matsBase, { inicio, fim })
+      .reduce((s, r) => s + Number(r.matriculas ?? 0), 0);
     return {
       receita: bruto,
       matriculas,
       ticket: matriculas ? bruto / matriculas : null,
       yoy: brutoAnt > 0 ? ((bruto - brutoAnt) / brutoAnt) * 100 : null,
     };
-  }, [linhasFluxo, inicio, fim, canonPorMes, ehGeral, curto]);
+  }, [linhasFluxo, matriculasPeriodo.data, categoria, inicio, fim, canonPorMes, ehGeral, curto]);
+
+  const metaComercialMes = modo === "mes" ? METAS_COMERCIAL[chaveMes(ano, mesIdx)] : null;
+  const filtrarPeloMes = (mes) => {
+    const chave = String(mes ?? "").slice(0, 7);
+    const novoAno = Number(chave.slice(0, 4));
+    const novoMes = Number(chave.slice(5, 7)) - 1;
+    if (!Number.isInteger(novoAno) || !Number.isInteger(novoMes) || novoMes < 0 || novoMes > 11) return;
+    setMesAno(novoAno, novoMes);
+    escolherModo("mes");
+  };
 
   /* Evolução do ano corrente contra o ano anterior, mês a mês. Em agosto/26,
      por exemplo, mostra jan–ago/26 nas barras e jan–ago/25 na linha. Isso
@@ -2021,28 +2311,36 @@ function HubComercial() {
      no Geral, o R$ vem da fonte canônica pra bater com o card. */
   const matFat = useMemo(() => {
     if (ehSympla) return [];
-    const origem = ehGeral
-      ? (geralMensal.data ?? [])
-      : (matfat.data ?? []).filter((r) => String(r.categoria) === categoria);
+    const origem = linhasFluxo;
     const dentro = recorte(origem, { inicio, fim }, "data");
     const m = new Map();
+    const matsBase = (matriculasPeriodo.data ?? []).filter((r) =>
+      ehGeral || String(r.categoria) === categoria);
+    for (const r of noPeriodo(matsBase, { inicio, fim })) {
+      const k = String(r.data ?? "").slice(0, 7);
+      if (!k) continue;
+      const a = m.get(k) ?? { mes: k, matriculas: 0, faturamento: 0 };
+      a.matriculas += Number(r.matriculas ?? 0);
+      m.set(k, a);
+    }
     for (const r of dentro) {
       const k = String(r.data_aprovacao ?? r.data ?? r.mes ?? "").slice(0, 7);
       if (!k) continue;
       const a = m.get(k) ?? { mes: k, matriculas: 0, faturamento: 0 };
-      a.matriculas += Number(r.conta_matricula ?? 0); // soma conta_matricula, não conta linha
       a.faturamento += Number(r.valor_bruto ?? 0);     // Comercial = bruto
       m.set(k, a);
     }
     const h = new Date();
     const atual = `${h.getFullYear()}-${String(h.getMonth() + 1).padStart(2, "0")}`;
     return ordenarMeses([...m.values()])
-      .map((x) => ({
-        ...x,
-        faturamento: (ehGeral && canonPorMes.has(x.mes)) ? canonPorMes.get(x.mes) : x.faturamento,
-        parcial: x.mes === atual,
-      }));
-  }, [matfat.data, geralMensal.data, categoria, inicio, fim, ehSympla, ehGeral, canonPorMes]);
+      .map((x) => {
+        return {
+          ...x,
+          faturamento: (ehGeral && canonPorMes.has(x.mes)) ? canonPorMes.get(x.mes) : x.faturamento,
+          parcial: x.mes === atual,
+        };
+      });
+  }, [linhasFluxo, matriculasPeriodo.data, categoria, inicio, fim, ehSympla, ehGeral, canonPorMes]);
 
   /* Top 5 cursos por consultora — em TODAS as categorias (menos Sympla, que
      é evento). No Geral, junta os cursos de todas as categorias que a
@@ -2072,6 +2370,28 @@ function HubComercial() {
     }
     return out;
   }, [cursos.data, ehSympla, ehGeral, categoria, geral, inicio, fim]);
+
+  /* Produto campeão do período: uma linha da view representa uma venda.
+     Ordena primeiro por quantidade e usa faturamento bruto como desempate. */
+  const maisVendido = useMemo(() => {
+    if (ehSympla) return null;
+    const origem = ehGeral
+      ? (cursos.data ?? [])
+      : (cursos.data ?? []).filter((r) => String(r.categoria) === categoria);
+    const agrupado = new Map();
+    for (const r of recorte(origem, { inicio, fim }, "data")) {
+      const chave = String(r.curso ?? "").trim();
+      if (!chave) continue;
+      const atual = agrupado.get(chave) ?? {
+        nome: r.curso_curto ?? r.curso, vendas: 0, receita: 0,
+      };
+      atual.vendas += 1;
+      atual.receita += Number(r.valor_bruto ?? 0);
+      agrupado.set(chave, atual);
+    }
+    return [...agrupado.values()]
+      .sort((a, b) => b.vendas - a.vendas || b.receita - a.receita)[0] ?? null;
+  }, [cursos.data, ehSympla, ehGeral, categoria, inicio, fim]);
 
   /* Pódio. Sympla vem de outra view (agregada, sem data): uma consultora só,
      medida em receita líquida/eventos/ingressos. */
@@ -2192,25 +2512,30 @@ function HubComercial() {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))", gap: 8, marginBottom: 10 }}>
         {/* Só o bruto vendido: o líquido (após repasses) vive no Financeiro,
             que é onde a informação faz sentido. */}
-        <ChipKpi compacto hero Icone={Wallet}
+        <ChipKpi compacto hero className="kpiTopoComercial" Icone={Wallet}
           label={ehSympla ? "Receita · Sympla" : "Faturamento bruto · valor vendido"}
           valor={ehSympla ? moeda(podio[0]?.receita ?? 0) : moeda(kpi.receita)}
           nota={ehSympla ? "líquida · todos os tempos" : `${rotulo} · por aprovação`} />
-        <ChipKpi compacto Icone={Receipt} label={ehSympla ? "Ingressos" : "Total de matrículas"}
+        <ChipKpi compacto className="kpiTopoComercial" Icone={Receipt} label={ehSympla ? "Ingressos" : "Total de matrículas"}
           valor={ehSympla ? numero(sympla.data?.[0]?.ingressos ?? 0) : numero(kpi.matriculas)}
-          nota={ehSympla ? `${numero(sympla.data?.[0]?.eventos ?? 0)} eventos` : rotulo} />
-        <ChipKpi compacto Icone={TrendingUp} label="Ticket médio"
+          nota={ehSympla ? `${numero(sympla.data?.[0]?.eventos ?? 0)} eventos` : `${rotulo} · alunos aprovados`} />
+        <ChipKpi compacto className="kpiTopoComercial" Icone={TrendingUp} label="Ticket médio"
           valor={ehSympla ? "—" : (kpi.ticket != null ? moeda(kpi.ticket) : "—")}
           nota={ehSympla ? "não medível no Sympla" : "receita ÷ matrículas"} />
-        <ChipKpi compacto Icone={TrendingUp} label="vs. ano anterior"
+        <ChipKpi compacto className="kpiTopoComercial" deltaBrilha Icone={TrendingUp} label="vs. ano anterior"
           valor={kpi.yoy != null ? `${kpi.yoy >= 0 ? "+" : ""}${kpi.yoy.toFixed(0)}%` : "—"}
           delta={kpi.yoy != null ? `${Math.abs(kpi.yoy).toFixed(0)}%` : null}
           up={kpi.yoy >= 0}
           nota={kpi.yoy == null ? `sem base de ${anoAnterior}` : `vs. ${anoAnterior}`} />
         {/* Não existe meta no banco — chip fica honesto em vez de inventar. */}
-        <ChipKpi compacto Icone={Clock} label="% da meta" valor="—" nota="EM BREVE · sem metas" />
+        <LimiteErroMeta key={`${modo}-${ano}-${mesIdx}-${categoria}`}>
+          <VelocimetroMeta realizado={kpi.receita} meta={metaComercialMes}
+            disponivel={ehGeral && modo === "mes"} />
+        </LimiteErroMeta>
         {/* A ponte lead→venda não é confiável — não dá pra medir conversão. */}
-        <ChipKpi compacto Icone={Clock} label="Taxa de conversão" valor="—" nota="EM BREVE · não medível" />
+        <ChipKpi compacto className="kpiTopoComercial" Icone={Crown} label="Mais vendido"
+          valor={maisVendido?.nome ?? "—"}
+          nota={maisVendido ? `${numero(maisVendido.vendas)} venda${maisVendido.vendas === 1 ? "" : "s"} · ${rotulo}` : "sem vendas no período"} />
       </div>
 
       {/* Evolução à esquerda, consultoras à direita — cabe numa tela de TV. */}
@@ -2232,7 +2557,7 @@ function HubComercial() {
                 <span style={{ width: 13, height: 0, borderTop: `2px dashed ${AZUL_ANTERIOR}` }} /> {anoAnterior} · mesmos meses
               </span>
             </div>
-            <BarrasEvolucao serie={evolucao} anoAnterior={anoAnterior} />
+            <BarrasEvolucao serie={evolucao} anoAnterior={anoAnterior} onSelecionarMes={filtrarPeloMes} />
           </Estado>
         </Bloco>
 
@@ -2283,10 +2608,8 @@ function HubComercial() {
               </div>
               {podio.length > 3 && (
                 <div style={{ marginTop: 8 }}>
-                  <Lista
-                    linhas={podio.slice(3).map((c) => ({ rotulo: c.consultora, valor: c.receita, orfa: c.atual === false }))}
-                    top={4}
-                  />
+                  <ListaConsultorasCursos linhas={podio.slice(3)}
+                    cursosPorConsultora={cursosPorConsultora} top={4} />
                 </div>
               )}
             </Estado>
@@ -7789,6 +8112,7 @@ function Shell({ perfil }) {
   const [modo, setModo] = useState("ano");
   const [ano, setAno] = useState(() => new Date().getFullYear());
   const [mesIdx, setMesIdx] = useState(() => new Date().getMonth());
+  const [transicaoPeriodo, setTransicaoPeriodo] = useState(0);
   const [geral, setGeral] = useState(false); // "Geral": todo o histórico, sem recorte de ano
   const { minMes, maxMes, anos } = useRangeDatas();
 
@@ -7798,6 +8122,10 @@ function Shell({ perfil }) {
   const [catEscolhida, setCategoria] = useState(null);
   const categoria = catEscolhida && categorias.includes(catEscolhida) ? catEscolhida : categorias[0];
   const ctxCategoria = useMemo(() => ({ categoria, setCategoria, categorias }), [categoria, categorias]);
+
+  useEffect(() => {
+    setTransicaoPeriodo((v) => v + 1);
+  }, [modo, ano, mesIdx]);
 
   const ctxPeriodo = useMemo(() => {
     const dentro = (k) => k >= minMes && k <= maxMes;
@@ -7898,8 +8226,55 @@ function Shell({ perfil }) {
         .rolagem::-webkit-scrollbar-thumb { background: rgba(255,255,255,.09); border-radius: 20px; }
         @keyframes girar { to { transform: rotate(360deg); } }
         @keyframes subir { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+        @keyframes metaPonteiro {
+          from { transform: rotate(-180deg); }
+          to { transform: rotate(var(--angulo-meta)); }
+        }
+        @keyframes metaBrilho {
+          0%, 100% {
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--cor-meta) 30%, transparent),
+                        0 0 15px color-mix(in srgb, var(--cor-meta) 28%, transparent);
+          }
+          50% {
+            box-shadow: 0 0 0 1px color-mix(in srgb, var(--cor-meta) 52%, transparent),
+                        0 0 21px color-mix(in srgb, var(--cor-meta) 46%, transparent);
+          }
+        }
+        @keyframes periodoEntrarA {
+          from { opacity: .82; transform: translateY(2px); filter: blur(.35px); }
+          to { opacity: 1; transform: translateY(0); filter: blur(0); }
+        }
+        @keyframes periodoEntrarB {
+          from { opacity: .82; transform: translateY(2px); filter: blur(.35px); }
+          to { opacity: 1; transform: translateY(0); filter: blur(0); }
+        }
+        .trocaPeriodoA { animation: periodoEntrarA .3s ease-out; }
+        .trocaPeriodoB { animation: periodoEntrarB .3s ease-out; }
+        @keyframes deltaBrilhoUp {
+          0%, 100% { text-shadow: 0 0 3px color-mix(in srgb, ${C.up} 35%, transparent); }
+          50% { text-shadow: 0 0 9px ${C.up}, 0 0 15px color-mix(in srgb, ${C.up} 55%, transparent); }
+        }
+        @keyframes deltaBrilhoDown {
+          0%, 100% { text-shadow: 0 0 3px color-mix(in srgb, ${C.down} 35%, transparent); }
+          50% { text-shadow: 0 0 9px ${C.down}, 0 0 15px color-mix(in srgb, ${C.down} 55%, transparent); }
+        }
+        .deltaBrilhaUp { animation: deltaBrilhoUp 2.1s ease-in-out infinite; }
+        .deltaBrilhaDown { animation: deltaBrilhoDown 2.1s ease-in-out infinite; }
+        @media (prefers-reduced-motion: reduce) {
+          [style*="metaPonteiro"], [style*="metaBrilho"], .trocaPeriodoA, .trocaPeriodoB,
+          .deltaBrilhaUp, .deltaBrilhaDown { animation-duration: .01ms !important; }
+        }
         .girar { animation: girar 1s linear infinite; }
         .subir { animation: subir .4s ease; }
+        .kpiTopoComercial { position: relative; isolation: isolate; overflow: hidden; transition: border-color .22s ease; }
+        .kpiTopoComercial::after {
+          content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit;
+          opacity: 0; transition: opacity .22s ease;
+          background: transparent;
+          box-shadow: inset 0 0 0 1px ${C.gold}52, inset 0 0 11px ${C.gold}20;
+        }
+        .kpiTopoComercial:hover { border-color: ${C.gold}55 !important; }
+        .kpiTopoComercial:hover::after { opacity: 1; }
         /* Painéis do Hub Financeiro (design portado): 1 coluna no mobile,
            proporções do design (5:4:3 e 7:5) em telas largas. */
         .finRow1 { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
@@ -8024,7 +8399,9 @@ function Shell({ perfil }) {
           </div>
           )}
 
-          {conteudo()}
+          <div className={transicaoPeriodo % 2 ? "trocaPeriodoA" : "trocaPeriodoB"}>
+            {conteudo()}
+          </div>
         </div>
       </main>
     </div>
