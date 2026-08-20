@@ -162,6 +162,11 @@ export const useComercialRankingGeralConsolidado = () =>
 export const useComercialGeralMensal = () =>
   useView("vw_comercial_geral_mensal", { ordem: ["data", "valor"], retry: 2 });
 
+// Matrículas aprovadas de quem estuda (Matrícula + CONSUMIDOR DE VAGAS),
+// separadas da fonte financeira, que tem uma linha por venda.
+export const useComercialMatriculasPeriodo = () =>
+  useView("vw_comercial_matriculas_periodo", { ordem: ["data", "categoria"] });
+
 /* Sympla: já agregado e sem dimensão de data — só a Jennifer, porque o
    dado do Sympla não tem vínculo de consultora. */
 export const useComercialSymplaJennifer = () => useView("vw_comercial_sympla_jennifer");
