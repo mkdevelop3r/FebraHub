@@ -88,17 +88,6 @@ const fmtDataHora = (iso) => {
   const d = new Date(iso);
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")} às ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
-/* R$ curto para caber no canto do card, onde há duas linhas de ~20
-   caracteres. "R$ 87.899" cabe; "R$ 101.399,00" não, e quebrar a linha por
-   causa dos centavos seria trocar informação por pontuação. Acima de 100
-   mil vira "R$ 101 mil" — nessa faixa a unidade não muda decisão nenhuma. */
-const fmtDinheiroCurto = (v) => {
-  if (v == null) return null;
-  const n = Number(v);
-  if (n >= 100000) return `R$ ${Math.round(n / 1000)} mil`;
-  return `R$ ${Math.round(n).toLocaleString("pt-BR")}`;
-};
-
 const diasAte = (iso) => Math.ceil((new Date(iso) - new Date(HOJE)) / 86400000);
 
 /* Cabeçalho de cada grupo da pauta. "Hoje" e "Amanhã" por nome porque é
@@ -502,7 +491,11 @@ function EventoCard({ evento, publico, aberto, aoAbrir, aoMarcar, salvandoId, po
             lugares diferentes conforme o evento:
 
               Sympla       inscritos e presentes, do próprio ingresso;
-              Salesforce   vendas e receita (migration 145).
+              Salesforce   vendas (migration 145).
+
+            Sem valor em espécie, por escolha do Louis. A view calcula
+            `receita` e ela continua lá para quem precisar; a Central
+            responde quantas, não quanto.
 
             O treinamento mostra SÓ venda, por escolha do Louis. A view
             também sabe quantas pessoas ocupam cadeira — `inscritos`, que
@@ -518,11 +511,6 @@ function EventoCard({ evento, publico, aberto, aoAbrir, aoMarcar, salvandoId, po
               title="Matrículas vendidas para esta turma. Quem consome vaga comprada antes ocupa cadeira e não entra aqui.">
               <Ticket size={12} style={{ color: C.positive }} /> {publico.vendas} venda{publico.vendas === 1 ? "" : "s"}
             </span>
-            {publico.receita > 0 && (
-              <span className="tabular-nums" style={{ color: C.textFaint }}>
-                {fmtDinheiroCurto(publico.receita)}
-              </span>
-            )}
           </div>
         ) : r ? (
           <div className="hidden sm:flex flex-col items-end gap-1 shrink-0 text-xs" style={{ color: C.textMuted }}>
@@ -1020,10 +1008,20 @@ function AbasUnidade({ unidades, ativa, aoMudar }) {
    aparece com zero: aparece fora da lista. Zero e "não sei" são coisas
    diferentes, e a Central tem os dois casos — palestra sem link do Sympla
    e treinamento sem turma casada. */
+/* O número de cada linha depende da fonte, e a diferença é real: no Sympla
+   a pergunta que tem resposta é quantos se INSCREVERAM; no Salesforce, o
+   card mostra VENDA, e o sino tinha de dizer o mesmo — dois lugares com
+   números diferentes para o mesmo evento confundem mais do que informam.
+
+   Consequência assumida: o total soma coisas de naturezas diferentes,
+   inscrição e venda. Ele serve para dar ordem de grandeza do mês, não para
+   virar métrica — por isso a legenda embaixo nomeia cada metade. */
+const numeroDoPublico = (p) => (p.fonte === "salesforce" ? p.vendas : p.inscritos) ?? 0;
+
 function Sino({ pendentes, atrasadas, publico, mes }) {
   const [aberto, setAberto] = useState(false);
   const total = pendentes.length;
-  const totalPessoas = publico.reduce((s, p) => s + (p.inscritos ?? 0), 0);
+  const totalPessoas = publico.reduce((s, p) => s + numeroDoPublico(p), 0);
 
   return (
     <div className="relative">
@@ -1147,7 +1145,7 @@ function Sino({ pendentes, atrasadas, publico, mes }) {
             {/* ---- público ---- */}
             <div className="px-6 pt-3.5 pb-2.5 flex items-baseline justify-between gap-3"
               style={{ borderTop: `1px solid ${C.hair}`, borderBottom: `1px solid ${C.hair}` }}>
-              <span style={{ ...etiqueta, color: C.gold }}>Inscritos no mês</span>
+              <span style={{ ...etiqueta, color: C.gold }}>Inscritos e vendas</span>
               <span className="tabular-nums" style={{ fontFamily: FONT_DISPLAY, fontSize: 13, color: C.text }}>
                 {totalPessoas}
               </span>
@@ -1169,7 +1167,7 @@ function Sino({ pendentes, atrasadas, publico, mes }) {
                     </span>
                     <span className="shrink-0 tabular-nums"
                       style={{ fontFamily: FONT_DISPLAY, fontSize: 12.5, color: C.text }}>
-                      {p.inscritos}
+                      {numeroDoPublico(p)}
                     </span>
                   </div>
                 ))}
@@ -1177,9 +1175,9 @@ function Sino({ pendentes, atrasadas, publico, mes }) {
                     pergunta por caminhos diferentes, e a diferença importa:
                     ingresso vendido não é matrícula aprovada. */}
                 <p className="text-[10.5px] pt-2" style={{ color: C.textFaint }}>
-                  <span style={{ color: C.gold }}>●</span> ingresso no Sympla
+                  <span style={{ color: C.gold }}>●</span> inscritos no Sympla
                   {"   "}
-                  <span style={{ color: C.positive }}>●</span> matrícula no Salesforce
+                  <span style={{ color: C.positive }}>●</span> vendas no Salesforce
                 </p>
               </div>
             )}

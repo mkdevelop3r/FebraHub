@@ -506,8 +506,22 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
   palavra, não pela posição: "inscritos/presentes" no Sympla, "na
   sala/vendas" no Salesforce. Quem lê o card compara eventos, não fontes.
 
-  O sino continua mostrando só pessoas. Acrescentar venda ali encheria uma
-  lista que existe para ser varrida em dois segundos.
+  Depois, o Louis pediu dois ajustes e ambos estão aplicados:
+
+  1. **O card do treinamento mostra só VENDA.** A linha "na sala"
+     (`inscritos`, que soma quem comprou agora com quem consome vaga de
+     pacote antigo) saiu — competia com a venda sem responder à pergunta
+     que o card faz. O número continua na view.
+  2. **O sino conta venda nos treinamentos**, para os dois lugares não
+     dizerem números diferentes do mesmo evento. A seção virou "Inscritos e
+     vendas" e a legenda nomeia cada metade.
+  3. **Sem valor em espécie.** `receita` continua calculada na view e
+     deixou de ser buscada pelo front — a Central responde quantas, não
+     quanto.
+
+  Consequência assumida no sino: o total soma inscrição com venda, coisas
+  de naturezas diferentes. Serve para ordem de grandeza do mês, não como
+  métrica — está escrito no código, ao lado do cálculo.
 
   Build passou.
 
