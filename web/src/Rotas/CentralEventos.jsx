@@ -24,13 +24,14 @@ import { useState, useEffect, useCallback } from "react";
 import {
   CalendarDays, ChevronLeft, ChevronRight, CircleCheck, Circle,
   AlertTriangle, Copy, Check, Users, UserCheck, Zap, HelpCircle,
-  RefreshCw, X, ListChecks, Ban, Undo2,
+  RefreshCw, X, ListChecks, Ban, Undo2, CalendarClock, Bell, Ticket,
 } from "lucide-react";
 import {
   mktUnidadesAtivas, mktTiposComChecklist, mktEventosDoMes,
   mktPendentes, mktMarcarAcao, mktClassificarEvento, mktProximoEventoAtivo,
   mktAcoesDoPeriodo, mktAcoesAtrasadas,
   mktCanceladosDoMes, mktCancelarEvento, mktReativarEvento, mktSouGestor,
+  mktPublicoDoMes,
 } from "../lib/dados";
 
 /* ============ DESIGN TOKENS ============
@@ -87,6 +88,17 @@ const fmtDataHora = (iso) => {
   const d = new Date(iso);
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")} às ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 };
+/* R$ curto para caber no canto do card, onde há duas linhas de ~20
+   caracteres. "R$ 87.899" cabe; "R$ 101.399,00" não, e quebrar a linha por
+   causa dos centavos seria trocar informação por pontuação. Acima de 100
+   mil vira "R$ 101 mil" — nessa faixa a unidade não muda decisão nenhuma. */
+const fmtDinheiroCurto = (v) => {
+  if (v == null) return null;
+  const n = Number(v);
+  if (n >= 100000) return `R$ ${Math.round(n / 1000)} mil`;
+  return `R$ ${Math.round(n).toLocaleString("pt-BR")}`;
+};
+
 const diasAte = (iso) => Math.ceil((new Date(iso) - new Date(HOJE)) / 86400000);
 
 /* Cabeçalho de cada grupo da pauta. "Hoje" e "Amanhã" por nome porque é
@@ -173,9 +185,124 @@ function SeloAuto() {
   );
 }
 
+/* Uma ação abre portão quando o catálogo diz que ela pede algo antes de
+   concluir. Fica aqui, e não dentro de cada linha, porque as duas telas
+   precisam responder a mesma pergunta — e a resposta tem de ser a mesma. */
+const precisaGate = (acao) =>
+  !!acao.pede_agendamento || (acao.confirmar_itens?.length ?? 0) > 0;
+
 /* Estado da automática por extenso. "aguardando campanha" some da leitura de
    pendência; "tráfego ativo" diz o que de fato aconteceu, melhor que um ✓. */
 const textoAuto = (concluida) => (concluida ? "tráfego ativo" : "aguardando campanha");
+
+/* ============ PORTÃO DE CONCLUSÃO ============
+   Duas ações do checklist não se concluem num clique. Elas exigem
+   responder algo antes, e este componente é o lugar único onde isso
+   acontece — nas duas telas, com o mesmo desenho:
+
+     · "Postagem programada"  pede PARA QUANDO (migration 142);
+     · "Envio para o treinador — vídeo, card e link" pede a CONFERÊNCIA
+       de link, card e vídeo, um a um (migration 143).
+
+   Os dois requisitos vêm do DADO (`pede_agendamento`, `confirmar_itens`),
+   nunca do nome da ação. Foi a escolha das duas migrations e o motivo é o
+   mesmo: comparar título dentro do componente faria renomear a ação — ou
+   passar a exigir um quarto item — virar mudança de código. Hoje é UPDATE
+   numa linha de `mkt_templates_acao`, e esta tela obedece sem saber.
+
+   Por isso o componente também não conhece "link", "card" nem "vídeo":
+   ele desenha a lista que vier.
+
+   O botão só acende quando TODOS os requisitos estão satisfeitos. É a
+   regra inteira — o banco não verifica a conferência, porque as marcações
+   não são gravadas (se a ação não conclui sem elas, "concluída" já quer
+   dizer que foram feitas). O portão existe contra desatenção de quem está
+   trabalhando, não contra má-fé.
+
+   `colorScheme: dark` no campo de data não é enfeite: sem isso o seletor
+   nativo do Chrome desenha texto escuro sobre fundo escuro e o campo fica
+   ilegível justamente nesta tela. */
+function GateConclusao({ acao, aoConfirmar, aoCancelar, salvando }) {
+  const itens = acao.confirmar_itens ?? [];
+  const pedeHora = !!acao.pede_agendamento;
+
+  const [conferidos, setConferidos] = useState([]);
+  const [quando, setQuando] = useState("");
+
+  const alternar = (item) => setConferidos((v) =>
+    v.includes(item) ? v.filter((x) => x !== item) : [...v, item]);
+
+  const pronto = itens.every((i) => conferidos.includes(i)) && (!pedeHora || !!quando);
+
+  const botao = {
+    fontSize: 11.5, fontWeight: 700, borderRadius: 8, padding: "6px 12px",
+    fontFamily: FONT_DISPLAY, whiteSpace: "nowrap",
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2.5 rounded-lg px-3 py-2.5"
+      style={{ background: C.void, border: `1px solid ${C.goldDim}` }}>
+
+      {itens.length > 0 && (
+        <>
+          <span style={{ ...etiqueta, color: C.gold }}>Conferir</span>
+          {itens.map((item) => {
+            const on = conferidos.includes(item);
+            return (
+              <button key={item} onClick={() => alternar(item)}
+                aria-pressed={on}
+                className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 transition-colors"
+                style={{
+                  fontSize: 12.5,
+                  color: on ? C.positive : C.textMuted,
+                  background: on ? "rgba(143,174,124,0.10)" : C.surface,
+                  border: `1px solid ${on ? C.positive : C.bronzeLine}`,
+                  cursor: "pointer",
+                }}>
+                {on ? <CircleCheck size={14} /> : <Circle size={14} />}
+                {item}
+              </button>
+            );
+          })}
+        </>
+      )}
+
+      {pedeHora && (
+        <>
+          <span className="inline-flex items-center gap-1.5" style={{ ...etiqueta, color: C.gold }}>
+            <CalendarClock size={13} /> Programada para
+          </span>
+          <input
+            type="datetime-local"
+            value={quando}
+            autoFocus
+            onChange={(e) => setQuando(e.target.value)}
+            className="text-[13px] rounded-md px-2 py-1.5"
+            style={{
+              background: C.surface, color: C.text,
+              border: `1px solid ${C.bronzeLine}`, colorScheme: "dark",
+            }}
+          />
+        </>
+      )}
+
+      <button onClick={() => aoConfirmar(quando || null)} disabled={!pronto || salvando}
+        style={{
+          ...botao, background: pronto ? C.gold : "transparent",
+          color: pronto ? C.void : C.textFaint,
+          border: `1px solid ${pronto ? C.gold : C.bronzeLine}`,
+          cursor: pronto && !salvando ? "pointer" : "not-allowed",
+        }}>
+        Concluir
+      </button>
+
+      <button onClick={aoCancelar}
+        style={{ ...botao, background: "transparent", color: C.textMuted, border: "none", cursor: "pointer" }}>
+        Cancelar
+      </button>
+    </div>
+  );
+}
 
 function LinhaAcao({ acao, aoMarcar, salvando }) {
   const atrasada = !acao.concluida && acao.prazo < HOJE;
@@ -184,15 +311,27 @@ function LinhaAcao({ acao, aoMarcar, salvando }) {
   const automatica = acao.conclusao === "automatica";
   const cor = acao.concluida ? C.positive : atrasada ? C.alert : C.textMuted;
 
+  /* Concluir pode exigir responder antes — ver GateConclusao. Desmarcar
+     nunca abre portão: some o check e o banco limpa o que havia. */
+  const [agendando, setAgendando] = useState(false);
+  const temGate = !acao.concluida && precisaGate(acao);
+  const clicar = () => {
+    if (automatica) return;
+    if (temGate) { setAgendando((v) => !v); return; }
+    aoMarcar(acao.id, !acao.concluida);
+  };
+
   return (
-    <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors"
+    <div className="my-1 rounded-lg transition-colors"
       style={{ background: atrasada ? "rgba(194,102,90,0.06)" : "transparent" }}>
+      <div className="flex items-center gap-4 px-4 py-3.5">
       <button
-        onClick={() => !automatica && aoMarcar(acao.id, !acao.concluida)}
+        onClick={clicar}
         disabled={automatica || salvando}
         aria-label={acao.concluida ? "Desmarcar" : "Concluir"}
-        className="shrink-0 transition-transform hover:scale-110"
-        style={{ color: cor, cursor: automatica ? "not-allowed" : "pointer", opacity: salvando ? 0.5 : 1 }}
+        className="shrink-0 transition-transform hover:scale-105 w-8 h-8 rounded-full flex items-center justify-center"
+        style={{ color: cor, cursor: automatica ? "not-allowed" : "pointer", opacity: salvando ? 0.5 : 1,
+          background: `${cor}0D`, border: `1px solid ${cor}28` }}
         title={automatica ? TituloAuto : ""}
       >
         {acao.concluida ? <CircleCheck size={18} /> : <Circle size={18} />}
@@ -213,6 +352,12 @@ function LinhaAcao({ acao, aoMarcar, salvando }) {
         <p className="text-[11px]" style={{ color: C.textFaint }}>
           {acao.responsavel || "Sem responsável"}
           {acao.concluida && acao.concluida_em && ` · feito em ${fmtDataHora(acao.concluida_em)}`}
+          {/* O horário da publicação vem DEPOIS de "feito em", e em dourado:
+              são duas datas na mesma linha e elas respondem perguntas
+              diferentes — quando marcaram, e para quando a postagem está. */}
+          {acao.agendado_para && (
+            <span style={{ color: C.gold }}> · vai ao ar {fmtDataHora(acao.agendado_para)}</span>
+          )}
         </p>
       </div>
 
@@ -224,6 +369,15 @@ function LinhaAcao({ acao, aoMarcar, salvando }) {
             : atrasada ? `${-diasAte(acao.prazo)}d atrasada`
               : `até ${fmtDia(acao.prazo)}`}
       </span>
+      </div>
+
+      {agendando && (
+        <div className="px-4 pb-3.5">
+          <GateConclusao acao={acao} salvando={salvando}
+            aoCancelar={() => setAgendando(false)}
+            aoConfirmar={(quando) => { setAgendando(false); aoMarcar(acao.id, true, quando); }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -312,7 +466,7 @@ function FormCancelamento({ evento, aoCancelar }) {
 }
 
 /* ============ CARD DE EVENTO ============ */
-function EventoCard({ evento, aberto, aoAbrir, aoMarcar, salvandoId, podeCancelar, aoCancelar }) {
+function EventoCard({ evento, publico, aberto, aoAbrir, aoMarcar, salvandoId, podeCancelar, aoCancelar }) {
   const total = evento.acoes.length;
   const feitas = evento.acoes.filter((a) => a.concluida).length;
   const atrasadas = evento.acoes.filter((a) => !a.concluida && a.prazo < HOJE).length;
@@ -323,7 +477,7 @@ function EventoCard({ evento, aberto, aoAbrir, aoMarcar, salvandoId, podeCancela
     <div className="rounded-xl overflow-hidden transition-all"
       style={{ background: C.surface, border: `1px solid ${aberto ? C.goldDim : C.bronzeLine}` }}>
 
-      <button onClick={aoAbrir} className="w-full flex items-center gap-4 p-4 text-left">
+      <button onClick={aoAbrir} className="w-full flex items-center gap-5 p-5 text-left">
         <div className="w-12 shrink-0 text-center rounded-lg py-1.5"
           style={{ background: C.void, border: `1px solid ${C.bronzeLine}` }}>
           <p className="text-lg leading-none font-light" style={{ color: C.text, fontFamily: FONT_DISPLAY }}>
@@ -344,25 +498,51 @@ function EventoCard({ evento, aberto, aoAbrir, aoMarcar, salvandoId, podeCancela
           <BarraProntidao feitas={feitas} total={total} />
         </div>
 
-        {r && (
+        {/* O canto do card responde por número, e a resposta vem de
+            lugares diferentes conforme o evento:
+
+              Sympla       inscritos e presentes, do próprio ingresso;
+              Salesforce   vendas e receita (migration 145).
+
+            O treinamento mostra SÓ venda, por escolha do Louis. A view
+            também sabe quantas pessoas ocupam cadeira — `inscritos`, que
+            soma quem comprou agora com quem consome vaga de pacote antigo
+            — e esse número segue no sino. No card ele competia com a
+            venda sem responder à pergunta que o card faz.
+
+            `vendas` é nulo fora do Salesforce, nunca zero: no Sympla essa
+            pergunta não tem resposta, e 0 seria uma. */}
+        {publico?.fonte === "salesforce" && publico.vendas != null ? (
+          <div className="hidden sm:flex flex-col items-end gap-1 shrink-0 text-xs" style={{ color: C.textMuted }}>
+            <span className="inline-flex items-center gap-1"
+              title="Matrículas vendidas para esta turma. Quem consome vaga comprada antes ocupa cadeira e não entra aqui.">
+              <Ticket size={12} style={{ color: C.positive }} /> {publico.vendas} venda{publico.vendas === 1 ? "" : "s"}
+            </span>
+            {publico.receita > 0 && (
+              <span className="tabular-nums" style={{ color: C.textFaint }}>
+                {fmtDinheiroCurto(publico.receita)}
+              </span>
+            )}
+          </div>
+        ) : r ? (
           <div className="hidden sm:flex flex-col items-end gap-1 shrink-0 text-xs" style={{ color: C.textMuted }}>
             <span className="inline-flex items-center gap-1"><Users size={12} style={{ color: C.gold }} /> {r.inscritos ?? 0} inscritos</span>
             <span className="inline-flex items-center gap-1"><UserCheck size={12} style={{ color: C.textFaint }} /> {r.presentes ?? 0} presentes</span>
           </div>
-        )}
+        ) : null}
         <ChevronRight size={16} className="shrink-0 transition-transform" style={{ color: C.textFaint, transform: aberto ? "rotate(90deg)" : "none" }} />
       </button>
 
       {aberto && (
-        <div className="px-4 pb-4 subir">
-          <div className="flex items-center justify-between gap-2 mb-2 pt-2 flex-wrap"
+        <div className="px-5 pb-5 subir">
+          <div className="flex items-center justify-between gap-3 mb-4 pt-3 flex-wrap"
             style={{ borderTop: `1px solid ${C.bronzeLine}` }}>
             <p className="text-[11px] uppercase tracking-widest pt-2" style={{ color: C.textFaint }}>
               Checklist de divulgação
             </p>
             <div className="pt-2"><CodigoEvento codigo={evento.codigo} /></div>
           </div>
-          <div className="flex flex-col">
+          <div className="flex flex-col gap-2 py-1">
             {evento.acoes.map((a) => (
               <LinhaAcao key={a.id} acao={a} aoMarcar={aoMarcar} salvando={salvandoId === a.id} />
             ))}
@@ -386,7 +566,7 @@ function FilaPendentes({ pendentes, tipos, aoClassificar }) {
   if (!expandida) {
     return (
       <button onClick={() => setExpandida(true)}
-        className="w-full flex items-center gap-3 px-4 py-3.5 mb-4 rounded-xl text-left"
+        className="w-full flex items-center gap-4 px-5 py-4 mb-6 rounded-xl text-left"
         style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
         <HelpCircle size={14} style={{ color: C.gold }} className="shrink-0" />
         {/* Três textos de pesos diferentes numa linha só: a contagem (o que
@@ -407,7 +587,7 @@ function FilaPendentes({ pendentes, tipos, aoClassificar }) {
   }
 
   return (
-    <div className="rounded-xl p-5 mb-4"
+    <div className="rounded-xl p-6 mb-6"
       style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
       {/* "Fechar" é texto de 9.5px encostado na borda da caixa: sem área
           própria, ele é difícil de acertar com o mouse e visualmente parece
@@ -425,9 +605,9 @@ function FilaPendentes({ pendentes, tipos, aoClassificar }) {
           Fechar
         </button>
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         {pendentes.map((p) => (
-          <div key={p.id} className="rounded-lg p-3" style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
+          <div key={p.id} className="rounded-lg p-4" style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="min-w-0">
                 <p className="text-sm truncate" style={{ color: C.text }}>{p.nome}</p>
@@ -492,7 +672,7 @@ function PainelCancelados({ cancelados, mes, podeReativar, aoReativar }) {
   if (!expandida) {
     return (
       <button onClick={() => setExpandida(true)}
-        className="w-full flex items-center gap-3 px-4 py-3.5 mb-4 rounded-xl text-left"
+        className="w-full flex items-center gap-4 px-5 py-4 mb-6 rounded-xl text-left"
         style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
         <Ban size={14} style={{ color: C.textFaint }} className="shrink-0" />
         <span className="text-[13px] shrink-0" style={{ color: C.textMuted }}>
@@ -515,7 +695,7 @@ function PainelCancelados({ cancelados, mes, podeReativar, aoReativar }) {
   };
 
   return (
-    <div className="rounded-xl p-5 mb-4"
+    <div className="rounded-xl p-6 mb-6"
       style={{ background: C.surface, border: `1px solid ${C.bronzeLine}` }}>
       <div className="flex items-center gap-2.5 mb-4">
         <Ban size={14} style={{ color: C.textFaint }} className="shrink-0" />
@@ -528,9 +708,9 @@ function PainelCancelados({ cancelados, mes, podeReativar, aoReativar }) {
           Fechar
         </button>
       </div>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         {cancelados.map((c) => (
-          <div key={c.id} className="rounded-lg p-3"
+          <div key={c.id} className="rounded-lg p-4"
             style={{ background: C.surface, border: `1px solid ${C.hair}` }}>
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div className="min-w-0 flex-1">
@@ -581,25 +761,36 @@ function LinhaPauta({ acao, aoMarcar, salvando, mostraPrazo, primeira }) {
   const ev = acao.evento;
   const corMarca = acao.concluida ? C.positive : atrasada ? C.alert : C.textFaint;
 
+  /* Mesma regra da LinhaAcao: a mesma ação aparece nas duas telas, e pedir
+     a confirmação só numa delas seria uma porta dos fundos para concluir
+     sem responder. */
+  const [agendando, setAgendando] = useState(false);
+  const temGate = !acao.concluida && precisaGate(acao);
+  const clicar = () => {
+    if (automatica) return;
+    if (temGate) { setAgendando((v) => !v); return; }
+    aoMarcar(acao.id, !acao.concluida);
+  };
+
   return (
     /* A primeira linha do dia não desenha o próprio filete: a borda do grupo
        já está ali, e as duas juntas faziam a divisão entre dias parecer igual
        à divisão entre linhas. */
-    <div className="flex items-baseline gap-3 py-2.5 pr-1"
-      style={primeira ? undefined : { borderTop: `1px solid ${C.hair}` }}>
+    <div style={primeira ? undefined : { borderTop: `1px solid ${C.hair}` }}>
+      <div className="flex items-start gap-4 py-3 pr-2">
       <button
-        onClick={() => !automatica && aoMarcar(acao.id, !acao.concluida)}
+        onClick={clicar}
         disabled={automatica || salvando}
         aria-label={acao.concluida ? "Desmarcar" : "Concluir"}
-        className="shrink-0 transition-transform hover:scale-110"
+        className="shrink-0 transition-transform hover:scale-105 w-8 h-8 rounded-full flex items-center justify-center"
         style={{
           color: corMarca, cursor: automatica ? "not-allowed" : "pointer",
-          opacity: salvando ? 0.4 : 1, transform: "translateY(3px)",
+          opacity: salvando ? 0.4 : 1, background: `${corMarca}0D`, border: `1px solid ${corMarca}28`,
         }}
         title={automatica ? TituloAuto : ""}
       >
         {/* Mesmos dois ícones das manuais — ver o comentário em LinhaAcao. */}
-        {acao.concluida ? <CircleCheck size={17} /> : <Circle size={17} />}
+        {acao.concluida ? <CircleCheck size={18} /> : <Circle size={18} />}
       </button>
 
       {/* QUEM VARIA É QUEM MANDA. Existem 8 nomes de ação no sistema todo, e
@@ -651,7 +842,23 @@ function LinhaPauta({ acao, aoMarcar, salvando, mostraPrazo, primeira }) {
             </span>
           )}
         </div>
+
+        {acao.agendado_para && (
+          <div className="mt-1 inline-flex items-center gap-1.5"
+            style={{ ...etiqueta, color: C.gold }}>
+            <CalendarClock size={11} /> vai ao ar {fmtDataHora(acao.agendado_para)}
+          </div>
+        )}
       </div>
+      </div>
+
+      {agendando && (
+        <div className="pb-3 pr-2" style={{ paddingLeft: 48 }}>
+          <GateConclusao acao={acao} salvando={salvando}
+            aoCancelar={() => setAgendando(false)}
+            aoConfirmar={(quando) => { setAgendando(false); aoMarcar(acao.id, true, quando); }} />
+        </div>
+      )}
     </div>
   );
 }
@@ -667,8 +874,8 @@ function GrupoPauta({ dia, titulo, acoes, tom, aoMarcar, salvandoId }) {
   const d = dia ? new Date(dia + "T00:00:00") : null;
 
   return (
-    <div className="flex gap-4 sm:gap-5" style={{ borderTop: `1px solid ${C.bronzeLine}` }}>
-      <div className="shrink-0 pt-3.5 text-right" style={{ width: 52 }}>
+    <div className="flex gap-5 sm:gap-6 py-1" style={{ borderTop: `1px solid ${C.bronzeLine}` }}>
+      <div className="shrink-0 pt-4 text-right" style={{ width: 52 }}>
         {d ? (
           <>
             <div style={{ fontFamily: FONT_DISPLAY, fontSize: 22, lineHeight: 1, color: corRegua, fontWeight: 500 }}>
@@ -690,7 +897,7 @@ function GrupoPauta({ dia, titulo, acoes, tom, aoMarcar, salvandoId }) {
         )}
       </div>
 
-      <div className="flex-1 min-w-0 pb-2.5"
+      <div className="flex-1 min-w-0 pb-3.5"
         style={alerta ? { borderLeft: `2px solid ${C.alert}`, paddingLeft: 14, marginLeft: -8 } : undefined}>
         {acoes.map((a, i) => (
           <LinhaPauta key={a.id} acao={a} aoMarcar={aoMarcar} primeira={i === 0}
@@ -797,6 +1004,192 @@ function AbasUnidade({ unidades, ativa, aoMudar }) {
   );
 }
 
+/* ============ SINO ============
+   Duas perguntas que a Central respondia só depois de navegar: o que ainda
+   falta fazer neste mês, e quanta gente cada evento tem. O sino junta as
+   duas num lugar só, porque são as duas coisas que fazem alguém abrir a
+   tela sem ter tarefa marcada.
+
+   A bolinha vermelha conta AÇÃO PENDENTE DO MÊS, não notificação nova. É
+   uma distinção que muda o comportamento: contador de "não lido" zera
+   quando você olha e volta a mentir depois; contador de pendência só zera
+   quando o trabalho é feito. Nada aqui guarda estado de leitura, e é de
+   propósito — o sino não tem memória para ter opinião sobre.
+
+   Público vem da view 144, com a fonte declarada. Evento sem número não
+   aparece com zero: aparece fora da lista. Zero e "não sei" são coisas
+   diferentes, e a Central tem os dois casos — palestra sem link do Sympla
+   e treinamento sem turma casada. */
+function Sino({ pendentes, atrasadas, publico, mes }) {
+  const [aberto, setAberto] = useState(false);
+  const total = pendentes.length;
+  const totalPessoas = publico.reduce((s, p) => s + (p.inscritos ?? 0), 0);
+
+  return (
+    <div className="relative">
+      <style>{`
+        @keyframes pulsoAlerta {
+          0%, 100% {
+            box-shadow: 0 0 0 2px ${C.void},
+                        0 0 4px color-mix(in srgb, ${C.alert} 55%, transparent);
+          }
+          50% {
+            box-shadow: 0 0 0 2px ${C.void},
+                        0 0 9px ${C.alert},
+                        0 0 16px color-mix(in srgb, ${C.alert} 50%, transparent);
+          }
+        }
+        .pulsoAlerta { animation: pulsoAlerta 2.1s ease-in-out infinite; }
+
+        /* Sem animação para quem pediu menos movimento — mas o ponto NÃO
+           some, e nem fica sem brilho: vira o mesmo halo, parado. A
+           preferência é por movimento, não por deixar de ser avisado. */
+        @media (prefers-reduced-motion: reduce) {
+          .pulsoAlerta {
+            animation: none;
+            box-shadow: 0 0 0 2px ${C.void},
+                        0 0 7px color-mix(in srgb, ${C.alert} 70%, transparent);
+          }
+        }
+      `}</style>
+
+      <button onClick={() => setAberto((v) => !v)}
+        aria-label={total ? `${total} ação(ões) pendente(s) em ${MESES[mes]}` : "Sem pendências no mês"}
+        aria-expanded={aberto}
+        className="w-8 h-8 rounded-lg flex items-center justify-center relative"
+        style={{
+          background: C.surface, color: aberto ? C.gold : C.textMuted,
+          border: `1px solid ${aberto ? C.goldDim : C.bronzeLine}`,
+        }}>
+        <Bell size={14} />
+        {total > 0 && (
+          /* Ponto, não número: a contagem exata cabe no painel, e um "27"
+             de 7px encolhido dentro de um botão de 32px vira sujeira.
+
+             O brilho pulsa porque o sino mora num canto que ninguém olha de
+             propósito — movimento é o que traz o olho até lá. Ciclo de 2,1s,
+             o mesmo dos deltas do FebraHub.jsx: piscar mais rápido lê como
+             erro de sistema, não como aviso.
+
+             O anel de 2px da cor do fundo entrou DENTRO da animação. Ele
+             separa o ponto da borda do botão, e se ficasse no `style`
+             inline o box-shadow animado o sobrescreveria a cada quadro. */
+          <span aria-hidden="true" className="absolute rounded-full pulsoAlerta"
+            style={{ width: 7, height: 7, top: 5, right: 5, background: C.alert }} />
+        )}
+      </button>
+
+      {aberto && (
+        <>
+          {/* Fundo invisível: clicar fora fecha. Sem ele o painel só sai da
+              tela por outro clique no sino, que ninguém adivinha. */}
+          <div className="fixed inset-0" style={{ zIndex: 40 }} onClick={() => setAberto(false)} />
+
+          <div className="absolute right-0 mt-2 rounded-xl overflow-hidden subir"
+            style={{
+              /* 24px de respiro e 400 de largura. Começou em 16/360 e
+                 passou por 20/384 — o Louis apontou aperto nas duas. 24 é
+                 a régua dos painéis grandes desta tela (FilaPendentes e
+                 PainelCancelados usam p-6); abaixo disso o texto encosta
+                 na borda e o número da direita parece colado nele. A
+                 largura sobe junto para o respiro não sair do espaço do
+                 nome do evento, que já trunca. */
+              zIndex: 41, width: 400, maxHeight: "70vh", overflowY: "auto",
+              background: "#101012", border: `1px solid ${C.bronzeLine}`,
+              boxShadow: "0 18px 50px rgba(0,0,0,.55)",
+            }}>
+
+            {/* ---- ações do mês ---- */}
+            <div className="px-6 pt-4 pb-2.5 flex items-baseline justify-between gap-3"
+              style={{ borderBottom: `1px solid ${C.hair}` }}>
+              <span style={{ ...etiqueta, color: C.gold }}>Falta fazer em {MESES[mes]}</span>
+              <span className="tabular-nums" style={{ fontFamily: FONT_DISPLAY, fontSize: 13, color: C.text }}>
+                {total}
+              </span>
+            </div>
+
+            {total === 0 ? (
+              <p className="px-6 py-3.5 text-[12.5px]" style={{ color: C.textFaint }}>
+                Nenhuma ação pendente no mês.
+              </p>
+            ) : (
+              <div className="px-6 py-2.5">
+                {atrasadas.length > 0 && (
+                  <p className="text-[12px] mb-1.5" style={{ color: C.alert }}>
+                    {atrasadas.length} vencida{atrasadas.length > 1 ? "s" : ""} —
+                    {" "}{total - atrasadas.length} ainda no prazo
+                  </p>
+                )}
+                {pendentes.slice(0, 6).map((a) => (
+                  <div key={a.id} className="flex items-baseline gap-3 py-1.5">
+                    <span className="text-[12.5px] truncate flex-1 min-w-0"
+                      style={{ color: C.text }} title={`${a.nome} · ${a.evento?.nome ?? ""}`}>
+                      {a.nome}
+                      <span style={{ color: C.textFaint }}> · {a.evento?.nome}</span>
+                    </span>
+                    <span className="shrink-0 tabular-nums"
+                      style={{
+                        fontFamily: FONT_DISPLAY, fontSize: 11,
+                        color: a.prazo < HOJE ? C.alert : C.textFaint,
+                      }}>
+                      {fmtDiaMes(a.prazo)}
+                    </span>
+                  </div>
+                ))}
+                {total > 6 && (
+                  <p className="text-[11px] pt-1" style={{ color: C.textFaint }}>
+                    e mais {total - 6} na aba Pauta
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* ---- público ---- */}
+            <div className="px-6 pt-3.5 pb-2.5 flex items-baseline justify-between gap-3"
+              style={{ borderTop: `1px solid ${C.hair}`, borderBottom: `1px solid ${C.hair}` }}>
+              <span style={{ ...etiqueta, color: C.gold }}>Inscritos no mês</span>
+              <span className="tabular-nums" style={{ fontFamily: FONT_DISPLAY, fontSize: 13, color: C.text }}>
+                {totalPessoas}
+              </span>
+            </div>
+
+            {publico.length === 0 ? (
+              <p className="px-6 py-3.5 text-[12.5px]" style={{ color: C.textFaint }}>
+                Nenhum evento do mês com número conhecido.
+              </p>
+            ) : (
+              <div className="px-6 py-2.5 pb-4">
+                {publico.map((p) => (
+                  <div key={p.evento_id} className="flex items-baseline gap-2.5 py-1.5">
+                    <Ticket size={11} className="shrink-0"
+                      style={{ color: p.fonte === "sympla" ? C.gold : C.positive }} />
+                    <span className="text-[12.5px] truncate flex-1 min-w-0"
+                      style={{ color: C.text }} title={p.nome}>
+                      {p.nome}
+                    </span>
+                    <span className="shrink-0 tabular-nums"
+                      style={{ fontFamily: FONT_DISPLAY, fontSize: 12.5, color: C.text }}>
+                      {p.inscritos}
+                    </span>
+                  </div>
+                ))}
+                {/* A legenda existe porque os dois números respondem à mesma
+                    pergunta por caminhos diferentes, e a diferença importa:
+                    ingresso vendido não é matrícula aprovada. */}
+                <p className="text-[10.5px] pt-2" style={{ color: C.textFaint }}>
+                  <span style={{ color: C.gold }}>●</span> ingresso no Sympla
+                  {"   "}
+                  <span style={{ color: C.positive }}>●</span> matrícula no Salesforce
+                </p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 /* ============ PÁGINA ============ */
 export default function CentralEventos() {
   const agora = new Date();
@@ -808,6 +1201,7 @@ export default function CentralEventos() {
   const [atrasadas, setAtrasadas] = useState([]);
   const [pendentes, setPendentes] = useState([]);
   const [cancelados, setCancelados] = useState([]);
+  const [publico, setPublico] = useState([]);
   /* Só o gestor cancela/reativa (132). A flag decide o que a tela OFERECE;
      quem decide o que ela PODE é a RPC, que recusa qualquer outro. */
   const [souGestor, setSouGestor] = useState(false);
@@ -826,10 +1220,11 @@ export default function CentralEventos() {
     try {
       const ini = `${ano}-${String(mes + 1).padStart(2, "0")}-01`;
       const fim = mes === 11 ? `${ano + 1}-01-01` : `${ano}-${String(mes + 2).padStart(2, "0")}-01`;
-      const [evs, acs, atr, pends, canc, gestor, tps, unis, prox] = await Promise.all([
+      const [evs, acs, atr, pends, canc, gestor, tps, unis, prox, publ] = await Promise.all([
         mktEventosDoMes(ini, fim), mktAcoesDoPeriodo(ini, fim), mktAcoesAtrasadas(HOJE),
         mktPendentes(), mktCanceladosDoMes(ini, fim), mktSouGestor(),
         mktTiposComChecklist(), mktUnidadesAtivas(), mktProximoEventoAtivo(fim),
+        mktPublicoDoMes(ini, fim),
       ]);
       setEventos(evs);
       setAcoes(acs);
@@ -840,6 +1235,7 @@ export default function CentralEventos() {
       setTipos(tps);
       setUnidades(unis);
       setProximo(prox);
+      setPublico(publ);
     } catch (e) {
       setErro(String(e.message || e));
     } finally {
@@ -867,20 +1263,52 @@ export default function CentralEventos() {
   // Na pauta a unidade vem do evento embutido, não da própria ação.
   const acoesVisiveis = soDaUnidade(acoes, (a) => a.evento?.unidade_id);
   const atrasadasVisiveis = soDaUnidade(atrasadas, (a) => a.evento?.unidade_id);
+  const publicoVisivel = soDaUnidade(publico, (p) => p.unidade_id);
+  /* Índice por evento: são duas listas separadas (eventos e público) e o
+     card precisa cruzar as duas. Sem o Map, cada card varreria a lista
+     inteira a cada render. */
+  const publicoPorEvento = new Map(publicoVisivel.map((p) => [p.evento_id, p]));
 
-  const marcar = async (acaoId, concluida) => {
+  /* O que o sino conta. `acoesVisiveis` são as que VENCEM no mês; as
+     atrasadas entram porque dívida vencida não deixa de ser trabalho do
+     mês só porque o prazo era de antes — e a Pauta já as mostra no topo
+     pelo mesmo motivo.
+
+     Dedupe por id: uma ação de agosto ainda não feita aparece nas duas
+     listas, e somar os dois comprimentos contaria ela duas vezes. */
+  const pendentesDoMes = (() => {
+    const porId = new Map();
+    for (const a of [...atrasadasVisiveis, ...acoesVisiveis]) {
+      if (!a.concluida) porId.set(a.id, a);
+    }
+    return [...porId.values()].sort((a, b) => a.prazo.localeCompare(b.prazo));
+  })();
+
+  /* `quando` é a string do <input type="datetime-local">, no fuso de quem
+     digitou. `new Date(...)` interpreta como hora local e `toISOString`
+     converte para UTC, que é o que timestamptz guarda — mandar a string
+     crua faria o banco ler como UTC e a postagem apareceria três horas
+     deslocada. */
+  const marcar = async (acaoId, concluida, quando = null) => {
+    const agendadoPara = quando ? new Date(quando).toISOString() : null;
     setSalvandoId(acaoId);
     /* Otimista: o check aparece na hora. Nas TRÊS listas — a mesma ação
        aparece no card do evento e na pauta, e atualizar só uma deixaria as
        abas discordando entre si. */
     const aplicar = (a) => (a.id === acaoId
-      ? { ...a, concluida, concluida_em: concluida ? new Date().toISOString() : null }
+      ? {
+        ...a, concluida,
+        concluida_em: concluida ? new Date().toISOString() : null,
+        // Desmarcar limpa o horário aqui também: o banco faz o mesmo, e
+        // deixar o otimismo discordar dele piscaria a data de volta.
+        agendado_para: concluida ? agendadoPara : null,
+      }
       : a);
     setEventos((prev) => prev.map((e) => ({ ...e, acoes: e.acoes.map(aplicar) })));
     setAcoes((prev) => prev.map(aplicar));
     setAtrasadas((prev) => (concluida ? prev.filter((a) => a.id !== acaoId) : prev));
     try {
-      await mktMarcarAcao(acaoId, concluida);
+      await mktMarcarAcao(acaoId, concluida, agendadoPara);
     } catch (e) {
       /* Ordem importa: `carregar()` começa zerando o erro, então setar antes
          dele faria a mensagem do banco piscar e sumir — o check voltaria
@@ -934,30 +1362,43 @@ export default function CentralEventos() {
   const nomeUnidade = unidades.find((u) => u.id === unidadeAlvo)?.nome;
 
   return (
-    <div className="subir">
+    <div className="subir" style={{ maxWidth: 1120, margin: "0 auto", paddingBottom: 48 }}>
       {/* ESPAÇO NO TOPO. São CINCO faixas empilhadas antes do primeiro card —
           etiqueta, título, subtítulo, abas e a barra da fila — e as duas
-          últimas ainda carregam filete próprio. Com 8px (e depois com 24px)
-          o conjunto lia como um bloco só, e os dois filetes pareciam um
-          engano de renderização.
+          últimas ainda carregam filete próprio. Espremidas, o conjunto lia
+          como um bloco só e os dois filetes pareciam engano de renderização.
 
-          A régua: cada faixa abre embaixo de si um vão proporcional ao seu
-          peso, e a passagem de CABEÇALHO para TRABALHO (abas -> conteúdo) é
-          a maior de todas — é ali que a leitura muda de assunto. */}
-      <div className="flex items-end justify-between gap-x-4 gap-y-3 mb-5 flex-wrap">
+          A régua, de cima para baixo: 8 (etiqueta -> título), 10 (título ->
+          subtítulo), 18 (subtítulo -> abas), 24 (abas -> trabalho). Cada
+          faixa abre embaixo de si um vão proporcional ao seu peso, e a
+          passagem de CABEÇALHO para TRABALHO é a MAIOR de todas — é ali que
+          a leitura muda de assunto. Se o vão das abas voltar a empatar com
+          o do subtítulo, essa hierarquia some. */}
+      <div className="flex items-end justify-between gap-x-6 gap-y-4 flex-wrap" style={{ marginBottom: 10 }}>
         <div>
-          <p className="text-xs uppercase tracking-widest mb-3" style={{ color: C.gold }}>
+          <p className="uppercase tracking-widest" style={{ color: C.gold, fontSize: 13, marginBottom: 8, fontWeight: 700 }}>
             Marketing{nomeUnidade ? ` · ${nomeUnidade}` : ""}
           </p>
-          {/* leading-tight: sem controlar a entrelinha, o título de 30px
-              carrega o espaço interno da fonte e o vão de baixo fica menor
-              do que o número da margem promete. */}
-          <h2 className="text-2xl md:text-3xl leading-tight" style={{ color: C.text, fontFamily: FONT_DISPLAY }}>
+          {/* leading-tight: sem controlar a entrelinha, o título — que
+              chega a 36px — carrega o espaço interno da fonte e o vão de
+              baixo fica menor do que o número da margem promete.
+
+              700 e não 650: a Space Grotesk entra pelo index.html só nos
+              pesos 500/600/700, sem eixo variável. 650 não existe e o
+              navegador arredonda para 700 — o número no código dizia uma
+              coisa e a tela mostrava outra. */}
+          <h2 className="leading-tight" style={{ color: C.text, fontFamily: FONT_DISPLAY,
+            fontSize: "clamp(28px, 2.6vw, 36px)", fontWeight: 700 }}>
             Central de Eventos
           </h2>
         </div>
         <div className="flex items-center gap-2">
           <SeletorMes ano={ano} mes={mes} aoMudar={(a, m) => { setAno(a); setMes(m); setAberto(null); }} />
+          {/* O sino fica à esquerda do atualizar: um é leitura, o outro é
+              ação sobre a tela inteira. Juntos e na mesma caixa de 32px
+              para não virarem dois pesos diferentes no canto. */}
+          <Sino pendentes={pendentesDoMes} atrasadas={atrasadasVisiveis}
+            publico={publicoVisivel} mes={mes} />
           <button onClick={carregar} aria-label="Atualizar" className="w-8 h-8 rounded-lg flex items-center justify-center"
             style={{ background: C.surface, color: C.textMuted, border: `1px solid ${C.bronzeLine}` }}>
             <RefreshCw size={14} className={carregando ? "girar" : ""} />
@@ -965,7 +1406,7 @@ export default function CentralEventos() {
         </div>
       </div>
 
-      <p className="text-sm leading-relaxed mb-8" style={{ color: C.textMuted }}>
+      <p className="leading-relaxed" style={{ color: C.textMuted, marginBottom: 18, fontSize: 15 }}>
         {aba === "pauta"
           ? `O que vence em ${MESES[mes]}, na ordem do prazo`
           : `Os eventos de ${MESES[mes]} e o quanto cada um já está pronto`}
@@ -985,7 +1426,7 @@ export default function CentralEventos() {
       {/* Abas como guias sublinhadas, não pílulas: pílula dourada some no meio
           das outras pílulas douradas da tela. A linha embaixo diz onde você
           está sem gastar mais uma cor. */}
-      <div className="flex items-center gap-7 mb-9" style={{ borderBottom: `1px solid ${C.bronzeLine}` }}>
+      <div className="flex items-center gap-8" style={{ borderBottom: `1px solid ${C.bronzeLine}`, marginBottom: 24 }}>
         {[["pauta", "Pauta", ListChecks], ["eventos", "Por evento", CalendarDays]].map(([k, rot, Icone]) => {
           const on = aba === k;
           return (
@@ -996,7 +1437,7 @@ export default function CentralEventos() {
                 borderBottom: `2px solid ${on ? C.gold : "transparent"}`,
               }}>
               <Icone size={14} style={{ color: on ? C.gold : C.textFaint }} />
-              <span style={{ ...etiqueta, fontSize: 10.5 }}>{rot}</span>
+              <span style={{ ...etiqueta, fontSize: 12 }}>{rot}</span>
             </button>
           );
         })}
@@ -1013,6 +1454,11 @@ export default function CentralEventos() {
         </div>
       )}
 
+      {/* Sem invólucro de espaçamento em volta destes três. Cada um já
+          carrega a própria margem de baixo, e os três somem da tela quando
+          não há o que mostrar — unidade única, fila vazia, nada cancelado.
+          Margem por fora sobreviveria ao null e abriria um vão sem
+          conteúdo, que é como o buraco no meio da página aparece. */}
       <AbasUnidade unidades={unidades} ativa={unidadeAlvo} aoMudar={setUnidadeAtiva} />
 
       <FilaPendentes pendentes={pendentesVisiveis} tipos={tipos} aoClassificar={classificar} />
@@ -1056,9 +1502,10 @@ export default function CentralEventos() {
           )}
         </div>
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-4">
           {eventosVisiveis.map((e) => (
             <EventoCard key={e.id} evento={e}
+              publico={publicoPorEvento.get(e.id)}
               aberto={aberto === e.id}
               aoAbrir={() => setAberto(aberto === e.id ? null : e.id)}
               aoMarcar={marcar}
