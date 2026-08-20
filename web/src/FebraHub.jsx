@@ -20,12 +20,12 @@ import {
   useComercialVerdesDetalhe,
   useComercialMatriculasFaturamento, useComercialCursosPorConsultora,
   useComercialRankingGeralConsolidado, useComercialGeralMensal, useComercialMatriculasPeriodo, useFaturamentoMensal,
-  useFinanceiroPagamentos, useFinanceiroQualidadePeriodo,
+  useFinanceiroPagamentosPeriodo, useFinanceiroQualidadePeriodo,
   useFinanceiroCaixaHorizonte, useFinanceiroFormasPagamento,
   useFinanceiroReceitaMensal, useFinanceiroCaixaMensal,
   useFinanceiroInadimp, useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
-  useFinanceiroReceitaCategoriaPeriodo, useFinanceiroDespesaCategoriaPeriodo,
+  useFinanceiroReceitaCategoriaPeriodo, useFinanceiroReceitaCategoriaDetalhe, useFinanceiroDespesaCategoriaPeriodo,
   useLojaReceitaPeriodo, useLojaReceitaTotalMes, useLojaReceitaConsolidada,
   useLojaSerie, useLojaKpisAno, useLojaKpisPeriodo,
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
@@ -1042,7 +1042,7 @@ function Lista({ linhas, formatar = moeda, total, top }) {
 
 /* Chip de KPI compacto — faixa horizontal do design: ícone + label +
    valor + delta/nota. `hero` deixa o card dourado (o número-âncora). */
-function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto, sub, className, deltaBrilha }) {
+function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto, sub, className, deltaBrilha, deltaNota, subCentralizado }) {
   return (
     <div className={className} style={{
       display: "flex", alignItems: "center", gap: compacto ? 9 : 12, minHeight: compacto ? 56 : 78,
@@ -1058,7 +1058,7 @@ function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto
       }}>
         <Icone size={compacto ? 13 : 15} />
       </span>
-      <div style={{ minWidth: 0 }}>
+      <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: compacto ? 10 : 11, color: C.muted, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{label}</div>
         <div style={{ display: "flex", alignItems: "baseline", gap: compacto ? 5 : 7, flexWrap: "wrap" }}>
           <span style={{ fontFamily: GROTESK, fontSize: compacto ? 18 : 22, fontWeight: 700, letterSpacing: "-.5px", color: hero ? C.gold : C.text }}>
@@ -1066,15 +1066,24 @@ function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto
             {unidade && <span style={{ fontSize: compacto ? 11 : 12, color: C.muted, fontWeight: 600 }}> {unidade}</span>}
           </span>
           {delta != null
-            ? <span className={deltaBrilha ? (up ? "deltaBrilhaUp" : "deltaBrilhaDown") : undefined}
+            ? <span style={{ display: "inline-flex", alignItems: "baseline", gap: 5, whiteSpace: "nowrap" }}>
+              <span className={deltaBrilha ? (up ? "deltaBrilhaUp" : "deltaBrilhaDown") : undefined}
                 style={{ fontSize: compacto ? 10 : 11, fontWeight: 800, color: up ? C.up : C.down }}>
                 {up ? "▲" : "▼"} {String(delta).replace(/[+-]/, "")}
+              </span>
+              {deltaNota && <span style={{ fontSize: compacto ? 9.5 : 10.5, fontWeight: 600, color: C.faint }}>{deltaNota}</span>}
               </span>
             : nota && <span style={{ fontSize: compacto ? 9.5 : 11, fontWeight: 800, color: C.muted }}>{nota}</span>}
         </div>
         {/* Linha secundária opcional (ex.: líquido abaixo do bruto). Sem
             `sub`, o chip renderiza igual a antes. */}
-        {sub && <div style={{ fontSize: compacto ? 9.5 : 10.5, color: C.faint, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{sub}</div>}
+        {sub && <div style={{ fontSize: subCentralizado ? 8.5 : (compacto ? 9.5 : 10.5), color: C.faint, marginTop: 1,
+          whiteSpace: "nowrap",
+          overflow: subCentralizado ? "visible" : "hidden",
+          textOverflow: subCentralizado ? "clip" : "ellipsis",
+          marginLeft: subCentralizado ? -42 : undefined,
+          width: subCentralizado ? "calc(100% + 42px)" : undefined,
+          textAlign: subCentralizado ? "center" : "left" }}>{sub}</div>}
       </div>
     </div>
   );
@@ -1233,13 +1242,29 @@ function Donut({ segmentos, size = 132, centroValor, centroLabel, centroCor, cen
    Coaching o bruto se divide 50/50: a metade da unidade é sólida, a do
    coach é hachurada (aparece, mas não conta como receita da casa).
    "Sem vínculo" fica por último, cinza — é cobertura, não produto. */
-function BarrasCategoria({ reais, orfas, semVinc, cobertura }) {
+function BarrasCategoria({ reais, orfas, semVinc, cobertura, detalhesPorCategoria = new Map() }) {
+  const [detalheAberto, setDetalheAberto] = useState(null);
   const max = Math.max(...reais.map((r) => r.unidade), 1);
+  const total = [...reais, ...orfas].reduce((s, r) => s + Number(r.unidade ?? 0), 0);
+  const abrirDetalhe = (e, r, fixo = false) => {
+    const detalhes = detalhesPorCategoria.get(r.categoria);
+    if (!detalhes?.length || r.orfa) return;
+    const box = e.currentTarget.getBoundingClientRect();
+    setDetalheAberto({ categoria: r.categoria, x: Math.max(12, Math.min(window.innerWidth - 372, box.right + 10)), y: Math.max(12, box.top - 4), fixo });
+  };
   const barra = (r, i) => (
-    <div key={r.categoria}>
+    <div key={r.categoria}
+      onMouseEnter={(e) => abrirDetalhe(e, r)}
+      onMouseLeave={() => { if (!detalheAberto?.fixo) setDetalheAberto(null); }}
+      onClick={(e) => detalheAberto?.fixo && detalheAberto.categoria === r.categoria
+        ? setDetalheAberto(null) : abrirDetalhe(e, r, true)}
+      style={{ cursor: detalhesPorCategoria.get(r.categoria)?.length && !r.orfa ? "pointer" : "default" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 6 }}>
         <span style={{ fontSize: 12.5, fontWeight: 600, color: r.orfa ? C.faint : C.bright, fontStyle: r.orfa ? "italic" : "normal", display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.categoria}>{r.categoria}</span>
+          {!r.orfa && <span style={{ fontSize: 10.2, color: C.muted, flexShrink: 0 }}>
+            {total > 0 ? `${((r.unidade / total) * 100).toFixed(1).replace(".", ",")}% da receita` : "0% da receita"}
+          </span>}
           {r.repasse > 0 && (
             <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".4px", color: C.warn, background: `${C.warn}24`, border: `1px solid ${C.warn}4d`, padding: "1px 6px", borderRadius: 5, flexShrink: 0 }}>50/50</span>
           )}
@@ -1263,6 +1288,37 @@ function BarrasCategoria({ reais, orfas, semVinc, cobertura }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 15 }}>
       {reais.map(barra)}
       {orfas.map((o, i) => barra(o, reais.length + i))}
+      {detalheAberto && (() => {
+        const itens = detalhesPorCategoria.get(detalheAberto.categoria) ?? [];
+        return (
+          <div className="receitaDetalheScroll" onClick={(e) => e.stopPropagation()} style={{
+            position: "fixed", left: detalheAberto.x, top: detalheAberto.y, zIndex: 80,
+            width: 360, maxWidth: "calc(100vw - 24px)", maxHeight: 340, overflowY: "auto",
+            padding: "12px 18px 12px 13px", background: "#141418", border: `1px solid ${C.gold}55`,
+            borderRadius: 11, boxShadow: "inset 0 12px 12px -14px rgba(0,0,0,.9), inset 0 -12px 12px -14px rgba(0,0,0,.9), 0 16px 38px rgba(0,0,0,.62)",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 800, color: C.gold, textTransform: "uppercase", letterSpacing: ".45px" }}>{detalheAberto.categoria}</div>
+                <div style={{ fontSize: 9.5, color: C.faint, marginTop: 2 }}>participação dentro da categoria</div>
+              </div>
+              {detalheAberto.fixo && <button onClick={() => setDetalheAberto(null)} style={{ border: "none", background: "none", color: C.muted, cursor: "pointer" }}><X size={14} /></button>}
+            </div>
+            {itens.map((d) => (
+              <div key={d.nomeCompleto} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) auto auto", gap: 9,
+                alignItems: "baseline", padding: "7px 0", borderTop: `1px solid ${C.hair}` }}>
+                <span title={d.nomeCompleto} style={{ fontSize: 11.5, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.nome}</span>
+                <span style={{ fontSize: 10, color: C.muted }}>{numero(d.vendas)}×</span>
+                <span style={{ minWidth: 88, textAlign: "right" }}>
+                  <b style={{ display: "block", fontFamily: GROTESK, fontSize: 11.5, color: C.text }}>{moeda(d.unidade)}</b>
+                  <small style={{ fontSize: 9.5, color: C.gold }}>{d.pct.toFixed(1).replace(".", ",")}%</small>
+                </span>
+              </div>
+            ))}
+            {!detalheAberto.fixo && <div style={{ fontSize: 9, color: C.faint, marginTop: 7, textAlign: "center" }}>clique na categoria para manter aberto</div>}
+          </div>
+        );
+      })()}
       <div style={{ display: "flex", gap: 8, paddingTop: 10, borderTop: `1px solid ${C.hair}` }}>
         <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
         <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
@@ -1750,7 +1806,6 @@ function CaixaCard({ serie, semFonte }) {
             {pct >= 0 ? "▲" : "▼"} {Math.abs(pct).toFixed(0)}% vs mês anterior
           </div>
         )}
-        <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6, lineHeight: 1.5 }}>Só CisPay — a Stone ainda não está integrada. Não é o caixa total.</div>
       </div>
       <div style={{ height: 34, marginTop: 10 }}><Spark serie={serie} cor={C.up} /></div>
     </div>
@@ -2675,7 +2730,8 @@ const abreviaForma = (s) => {
 function HubFinanceiro() {
   const { inicio, fim, rotulo, modo } = usePeriodo();
   const recCat = useFinanceiroReceitaCategoriaPeriodo();
-  const pag = useFinanceiroPagamentos();
+  const recCatDetalhe = useFinanceiroReceitaCategoriaDetalhe();
+  const pagPeriodo = useFinanceiroPagamentosPeriodo();
   const qualid = useFinanceiroQualidadePeriodo();
   const caixaHor = useFinanceiroCaixaHorizonte();
   const fpag = useFinanceiroFormasPagamento();
@@ -2713,6 +2769,50 @@ function HubFinanceiro() {
     return { reais, orfas, total, vendasTot, semVinc, cobertura: total ? ((total - semVinc) / total) * 100 : null };
   }, [recCat.data, inicio, fim]);
 
+  /* Comparativo do KPI principal: somente no filtro Mês, porque comparar Ano,
+     Hoje ou 7 dias contra um mês inteiro misturaria janelas diferentes. */
+  const receitaMesAnterior = useMemo(() => {
+    if (modo !== "mes") return null;
+    const anoMes = String(inicio).slice(0, 7);
+    const a = Number(anoMes.slice(0, 4));
+    const m = Number(anoMes.slice(5, 7)) - 1;
+    const anterior = new Date(a, m - 1, 1);
+    const ai = anterior.getFullYear(), mi = anterior.getMonth();
+    const de = iso(new Date(ai, mi, 1));
+    const ate = iso(new Date(ai, mi + 1, 0));
+    return noPeriodo(recCat.data, { inicio: de, fim: ate })
+      .reduce((s, r) => s + Number(r.receita_unidade ?? 0), 0);
+  }, [recCat.data, inicio, modo]);
+  const deltaReceitaMes = receitaMesAnterior > 0
+    ? ((categorias.total - receitaMesAnterior) / receitaMesAnterior) * 100
+    : null;
+
+  const detalhesReceitaCategoria = useMemo(() => {
+    const categoriasMap = new Map();
+    for (const r of noPeriodo(recCatDetalhe.data, { inicio, fim })) {
+      const categoria = ehSemVinculo(r.categoria) ? "Sem vínculo" : String(r.categoria ?? "—");
+      if (!categoriasMap.has(categoria)) categoriasMap.set(categoria, new Map());
+      const produtos = categoriasMap.get(categoria);
+      const chave = String(r.curso ?? "Sem identificação");
+      const atual = produtos.get(chave) ?? {
+        nome: r.curso_curto ?? r.curso ?? "Sem identificação",
+        nomeCompleto: r.curso ?? "Sem identificação", vendas: 0, unidade: 0,
+      };
+      atual.vendas += Number(r.vendas ?? 0);
+      atual.unidade += Number(r.receita_unidade ?? 0);
+      produtos.set(chave, atual);
+    }
+    const saida = new Map();
+    for (const [categoria, produtos] of categoriasMap) {
+      const itens = [...produtos.values()].sort((a, b) => b.unidade - a.unidade);
+      const totalCategoria = itens.reduce((s, item) => s + item.unidade, 0);
+      saida.set(categoria, itens.map((item) => ({
+        ...item, pct: totalCategoria > 0 ? (item.unidade / totalCategoria) * 100 : 0,
+      })));
+    }
+    return saida;
+  }, [recCatDetalhe.data, inicio, fim]);
+
   /* Status de pagamento, somando as origens. A view vem por ANO, e isso
      importa: "sem status" é PASSIVO ANTIGO. Era 44% em 2021 e 31% em 2023;
      caiu pra 4,5% em 2025 e 0% em 2026, quando o sync do CisPay passou a
@@ -2743,18 +2843,20 @@ function HubFinanceiro() {
         pctSem: matr ? (sem / matr) * 100 : (tot ? (sem / tot) * 100 : null),
       };
     };
-    const linhas = (pag.data ?? []).filter((r) => r.ano != null && Number(r.matriculas ?? 0) > 0);
-    const anos = [...new Set(linhas.map((r) => Number(r.ano)))].sort((a, b) => b - a);
-    const selecionado = Number(String(inicio).slice(0, 4));
-    const ano = anos.includes(selecionado) ? selecionado : (anos[0] ?? null);
+    const de = String(inicio).slice(0, 7), ate = String(fim).slice(0, 7);
+    const linhas = (pagPeriodo.data ?? []).filter((r) => r.mes != null && Number(r.matriculas ?? 0) > 0);
+    const recorte = linhas.filter((r) => {
+      const mes = String(r.mes).slice(0, 7);
+      return mes >= de && mes <= ate;
+    });
+    const ano = Number(String(inicio).slice(0, 4));
     return {
       ano,
-      recente: somar(ano != null ? linhas.filter((r) => Number(r.ano) === ano) : []),
-      // `foraDoFiltro` avisa quando caiu no fallback: o painel não pode dizer
-      // "2024" mostrando 2026 sem que ninguém perceba.
-      foraDoFiltro: ano != null && ano !== selecionado,
+      periodo: modo === "mes" ? dataCurta(`${de}-01`) : (modo === "ano" ? String(ano) : rotulo),
+      recente: somar(recorte),
+      foraDoFiltro: false,
     };
-  }, [pag.data, inicio]);
+  }, [pagPeriodo.data, inicio, fim, modo, rotulo]);
   const pagTot = pagPorAno.recente;
 
   /* Taxa de "sem status" do PERÍODO selecionado (migration 109). A view vem
@@ -2853,22 +2955,99 @@ function HubFinanceiro() {
   const recebido = recebidoMaisRecente(recebidoMensal.data, ymCorrente());
   const inad = inadimplenciaResumo(inadimp.data, recebidoMensal.data);
 
+  /* Leitura executiva do mês mais recente. Receita/categorias/ticket usam a
+     mesma fonte do gráfico; caixa usa o extrato real da CisPay. */
+  const movimentosMes = useMemo(() => {
+    const porMes = new Map();
+    for (const r of recCat.data ?? []) {
+      const mes = String(r.data ?? r.mes ?? "").slice(0, 7);
+      if (!mes) continue;
+      const item = porMes.get(mes) ?? { total: 0, vendas: 0, categorias: new Map() };
+      const valor = Number(r.receita_unidade ?? 0);
+      item.total += valor;
+      item.vendas += Number(r.vendas ?? 0);
+      const cat = ehSemVinculo(r.categoria) ? "Sem vínculo" : String(r.categoria ?? "—");
+      item.categorias.set(cat, (item.categorias.get(cat) ?? 0) + valor);
+      porMes.set(mes, item);
+    }
+    const deFiltro = String(inicio).slice(0, 7), ateFiltro = String(fim).slice(0, 7);
+    const mesesDisponiveis = [...porMes.keys()]
+      .filter((mes) => mes >= deFiltro && mes <= ateFiltro)
+      .sort();
+    const atualMes = mesesDisponiveis.at(-1);
+    const atual = atualMes ? porMes.get(atualMes) : null;
+    const d = atualMes ? new Date(`${atualMes}-01T00:00:00`) : null;
+    if (d) d.setMonth(d.getMonth() - 1);
+    const anteriorMes = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}` : null;
+    const anterior = anteriorMes ? porMes.get(anteriorMes) : null;
+    const deltaPct = (a, b) => b > 0 ? ((a - b) / b) * 100 : null;
+    const categoria = (base, nome) => Number(base?.categorias.get(nome) ?? 0);
+    const eventoAtual = categoria(atual, "Evento"), eventoAnterior = categoria(anterior, "Evento");
+    const ggbAtual = categoria(atual, "GGB"), ggbAnterior = categoria(anterior, "GGB");
+    const ticketAtual = atual?.vendas ? atual.total / atual.vendas : null;
+    const ticketAnterior = anterior?.vendas ? anterior.total / anterior.vendas : null;
+    const caixaAtual = caixaSerie.find((r) => String(r.mes).slice(0, 7) === atualMes)?.valor ?? null;
+    const caixaAnterior = caixaSerie.find((r) => String(r.mes).slice(0, 7) === anteriorMes)?.valor ?? null;
+    return {
+      atualMes, anteriorMes,
+      evento: anterior ? eventoAtual - eventoAnterior : null,
+      ggb: deltaPct(ggbAtual, ggbAnterior),
+      caixa: caixaAtual != null && caixaAnterior > 0 ? deltaPct(caixaAtual, caixaAnterior) : null,
+      ticket: ticketAtual != null && ticketAnterior > 0 ? deltaPct(ticketAtual, ticketAnterior) : null,
+    };
+  }, [recCat.data, caixaSerie, inicio, fim]);
+  // Percentual = status das matrículas; R$ = posição real a receber na CisPay.
+  // Não multiplicar o percentual pela receita: isso seria uma estimativa.
+  const emAbertoValor = aReceber;
+
+  const conversaoCaixa = useMemo(() => {
+    const de = String(inicio).slice(0, 7), ate = String(fim).slice(0, 7);
+    const caixa = caixaSerie
+      .filter((r) => {
+        const mes = String(r.mes).slice(0, 7);
+        return mes >= de && mes <= ate;
+      })
+      .reduce((s, r) => s + Number(r.valor ?? 0), 0);
+    const pct = categorias.total > 0 ? (caixa / categorias.total) * 100 : null;
+    if (modo !== "mes") return { caixa, pct, deltaPp: null };
+
+    const d = new Date(`${de}-01T00:00:00`);
+    d.setMonth(d.getMonth() - 1);
+    const mesAnterior = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const receitaAnterior = (recCat.data ?? [])
+      .filter((r) => String(r.data ?? r.mes ?? "").slice(0, 7) === mesAnterior)
+      .reduce((s, r) => s + Number(r.receita_unidade ?? 0), 0);
+    const caixaAnterior = caixaSerie.find((r) => String(r.mes).slice(0, 7) === mesAnterior)?.valor ?? 0;
+    const pctAnterior = receitaAnterior > 0 ? (Number(caixaAnterior) / receitaAnterior) * 100 : null;
+    return { caixa, pct, deltaPp: pct != null && pctAnterior != null ? pct - pctAnterior : null };
+  }, [inicio, fim, modo, caixaSerie, categorias.total, recCat.data]);
+
   return (
     <>
       {/* Faixa de KPIs compactos — âncora dourada + 4 métricas do mês */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
-        <ChipKpi hero Icone={Wallet} label="Receita reconhecida" valor={moeda(categorias.total)} nota={rotulo} />
+        <ChipKpi hero Icone={Wallet} label="Receita reconhecida" valor={moeda(categorias.total)}
+          delta={deltaReceitaMes != null ? `${Math.abs(deltaReceitaMes).toFixed(0)}%` : null}
+          up={deltaReceitaMes >= 0} deltaBrilha
+          deltaNota={deltaReceitaMes != null ? "vs. mês anterior" : null}
+          nota={rotulo}
+          sub={modo === "mes" && deltaReceitaMes == null ? "sem base no mês anterior" : null} />
         {/* Qualidade do dado do PERÍODO selecionado — trocar o ano troca o
             número (2026: 0% · 2024: 8,8% · 2023: 13,3%). Sem média histórica:
             somar tudo escondia que o buraco é passivo antigo, já corrigido.
             "Vendas", não "pagamentos": a view deduplica por original_id_venda
             antes de contar, então a unidade é a venda, não a linha de
             pagamento (uma venda parcelada é uma só aqui). */}
-        <ChipKpi Icone={Clock} label="Vendas sem status" valor={semStatus.pct != null ? semStatus.pct.toFixed(1) : "—"} unidade="%"
-          nota={rotulo}
-          sub={semStatus.sub} />
+        <ChipKpi Icone={Percent} label="Conversão em caixa"
+          valor={conversaoCaixa.pct != null ? conversaoCaixa.pct.toFixed(0) : "—"} unidade="%"
+          delta={conversaoCaixa.deltaPp != null ? `${Math.abs(conversaoCaixa.deltaPp).toFixed(0)} p.p.` : null}
+          up={conversaoCaixa.deltaPp >= 0}
+          deltaNota={conversaoCaixa.deltaPp != null ? "vs. mês anterior" : null}
+          nota={conversaoCaixa.pct != null ? rotulo : "sem base"}
+          sub={conversaoCaixa.pct != null ? `${moeda(conversaoCaixa.caixa)} de ${moeda(categorias.total)}` : null}
+          subCentralizado />
         <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%"
-          nota={pagPorAno.ano ? String(pagPorAno.ano) : "—"} />
+          nota={pagPorAno.periodo ?? "—"} />
         <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
         <ChipKpi Icone={Hourglass} label="A receber" valor={moeda(aReceber)} nota="CisPay · posição atual" />
         <ChipKpi Icone={Receipt} label={recebido ? `Recebido em ${dataCurta(recebido.mes)}` : "Recebido"}
@@ -2886,45 +3065,39 @@ function HubFinanceiro() {
             vazioTitulo={tituloVazioFluxo(modo)}
             vazioDica={`Nenhuma receita com data entre ${inicio} e ${fim}. É normal: o negócio vende em lote — troque o período no topo.`}
           >
-            <BarrasCategoria reais={categorias.reais} orfas={categorias.orfas} semVinc={categorias.semVinc} cobertura={categorias.cobertura} />
+            <BarrasCategoria reais={categorias.reais} orfas={categorias.orfas}
+              semVinc={categorias.semVinc} cobertura={categorias.cobertura}
+              detalhesPorCategoria={detalhesReceitaCategoria} />
           </Estado>
         </Bloco>
 
-        <Bloco titulo="Status de pagamento"
-          canto={pagTot.tot ? `${pagPorAno.ano ?? ""} · ${pctPagoCentro}% pago` : null} altura={ALTURA_PAINEL}>
-          <Estado carregando={pag.isLoading} erro={pag.error} vazio={!pagTot.tot}>
-            <Donut segmentos={statusSeg} centroValor={`${pctPagoCentro}%`} centroLabel="pago" centroCor={C.up} />
-            {/* O rodapé só alarma se ainda houver buraco NO ANO exibido.
-                Resolvido, vira o contrário: registra que o dado do ano está
-                íntegro, pra ninguém desconfiar da inadimplência. Nada de
-                percentual histórico aqui — quem responde por período é o chip
-                "Sem status" acima, e dois números diferentes na mesma tela é
-                exatamente o que confunde. */}
-            <div style={{ display: "flex", gap: 8, marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.hair}` }}>
-              {pagTot.sem > 0 ? (
-                <>
-                  <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
-                  <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
-                    {pagTot.pctSem != null ? `${pagTot.pctSem.toFixed(1)}% sem status` : "Parte sem status"} em {pagPorAno.ano} — Stone/legado batido a mão. <b style={{ color: C.muted }}>Não é inadimplência.</b>
-                  </span>
-                </>
-              ) : (
-                <>
-                  <ShieldCheck size={12} style={{ color: C.up, marginTop: 2, flexShrink: 0 }} />
-                  <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
-                    Todas as matrículas de {pagPorAno.ano} vêm com status (sync CisPay).
-                  </span>
-                </>
-              )}
-              {/* Ano só por ano: se o filtro é um mês/ano que a fonte do donut
-                  não tem, o painel diz de onde veio em vez de fingir. */}
+        <Bloco titulo="Principais movimentos do mês"
+          canto={movimentosMes.atualMes && movimentosMes.anteriorMes ? `${movimentosMes.atualMes} vs ${movimentosMes.anteriorMes}` : null}
+          altura={ALTURA_PAINEL}>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {[
+              ["Evento", movimentosMes.evento, "moeda"],
+              ["GGB", movimentosMes.ggb, "pct"],
+              ["Caixa CisPay", movimentosMes.caixa, "pct"],
+              ["Ticket médio", movimentosMes.ticket, "pct"],
+            ].map(([nome, valor, tipo]) => {
+              const positivo = valor != null && valor >= 0;
+              const texto = valor == null ? "—" : tipo === "moeda"
+                ? `${positivo ? "+" : "−"}${moeda(Math.abs(valor))}`
+                : `${positivo ? "+" : "−"}${Math.abs(valor).toFixed(0)}%`;
+              return <div key={nome} style={{ display: "flex", justifyContent: "space-between", gap: 12,
+                padding: "10px 0", borderBottom: `1px solid ${C.hair}` }}>
+                <span style={{ fontSize: 12, color: C.muted }}>{nome}</span>
+                <b style={{ fontSize: 12.5, color: valor == null ? C.faint : (positivo ? C.up : C.down), fontFamily: GROTESK }}>{texto}</b>
+              </div>;
+            })}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, padding: "10px 0" }}>
+              <span style={{ fontSize: 12, color: C.muted }}>Em aberto</span>
+              <b style={{ fontSize: 12.5, color: C.warn, fontFamily: GROTESK }}>
+                {pagTot.pctEmAberto != null ? `${pagTot.pctEmAberto.toFixed(1)}% = ${moeda(emAbertoValor)}` : "—"}
+              </b>
             </div>
-            {pagPorAno.foraDoFiltro && (
-              <div style={{ fontSize: 10, color: C.dim, marginTop: 6 }}>
-                sem base em {String(inicio).slice(0, 4)} — mostrando {pagPorAno.ano}
-              </div>
-            )}
-          </Estado>
+          </div>
         </Bloco>
 
         <Bloco titulo="Caixa recebido" canto="mês · CisPay" altura={ALTURA_PAINEL}>
@@ -2955,6 +3128,37 @@ function HubFinanceiro() {
         <Bloco titulo="Formas de pagamento" canto={rotulo} altura={ALTURA_PAINEL}>
           <Estado carregando={fpag.isLoading} erro={fpag.error} vazio={!formas.length}>
             <Donut segmentos={formas} size={118} centroSize={17} centroValor={formas[0] ? abreviaForma(formas[0].rotulo) : "—"} centroLabel={`${leaderPct}% líder`} centroCor={C.gold} />
+          </Estado>
+        </Bloco>
+      </div>
+
+      <div style={{ marginTop: 16 }}>
+        <Bloco titulo="Status de pagamento"
+          canto={pagTot.tot ? `${pagPorAno.periodo ?? ""} · ${pctPagoCentro}% pago` : null}>
+          <Estado carregando={pagPeriodo.isLoading} erro={pagPeriodo.error} vazio={!pagTot.tot}>
+            <Donut segmentos={statusSeg} centroValor={`${pctPagoCentro}%`} centroLabel="pago" centroCor={C.up} />
+            <div style={{ display: "flex", gap: 8, marginTop: 14, paddingTop: 12, borderTop: `1px solid ${C.hair}` }}>
+              {pagTot.sem > 0 ? (
+                <>
+                  <AlertTriangle size={12} style={{ color: C.warn, marginTop: 2, flexShrink: 0 }} />
+                  <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+                    {pagTot.pctSem != null ? `${pagTot.pctSem.toFixed(1)}% sem status` : "Parte sem status"} em {pagPorAno.periodo} — Stone/legado batido a mão. <b style={{ color: C.muted }}>Não é inadimplência.</b>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck size={12} style={{ color: C.up, marginTop: 2, flexShrink: 0 }} />
+                  <span style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>
+                    Todas as matrículas de {pagPorAno.periodo} vêm com status (sync CisPay).
+                  </span>
+                </>
+              )}
+            </div>
+            {pagPorAno.foraDoFiltro && (
+              <div style={{ fontSize: 10, color: C.dim, marginTop: 6 }}>
+                sem base em {String(inicio).slice(0, 4)} — mostrando {pagPorAno.ano}
+              </div>
+            )}
           </Estado>
         </Bloco>
       </div>
@@ -8224,6 +8428,17 @@ function Shell({ perfil }) {
         button:focus-visible, input:focus-visible { outline: 2px solid ${C.gold}; outline-offset: 2px; }
         .rolagem::-webkit-scrollbar { width: 9px; }
         .rolagem::-webkit-scrollbar-thumb { background: rgba(255,255,255,.09); border-radius: 20px; }
+        .receitaDetalheScroll { scrollbar-width: thin; scrollbar-color: ${C.gold}99 transparent; }
+        .receitaDetalheScroll::-webkit-scrollbar { width: 5px; }
+        .receitaDetalheScroll::-webkit-scrollbar-track { background: transparent; margin: 9px 0; }
+        .receitaDetalheScroll::-webkit-scrollbar-thumb {
+          background: linear-gradient(180deg, ${C.gold}b8, ${C.gold}70);
+          border-radius: 999px;
+          border: 1px solid transparent;
+          background-clip: padding-box;
+        }
+        .receitaDetalheScroll::-webkit-scrollbar-thumb:hover { background: ${C.gold}d6; }
+        .receitaDetalheScroll::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
         @keyframes girar { to { transform: rotate(360deg); } }
         @keyframes subir { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
         @keyframes metaPonteiro {

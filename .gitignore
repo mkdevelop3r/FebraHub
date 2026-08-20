@@ -14,6 +14,11 @@ service_account*.json
 service_account.json
 *service_account*.json
 
+# Log do sync da agenda: cresce a cada rodada e nao diz nada
+# que o banco ja nao saiba.
+etl/agenda_sync.log
+etl/agenda_sync.log.old
+
 # Node
 node_modules/
 dist/

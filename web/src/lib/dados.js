@@ -192,6 +192,8 @@ export const useFinanceiroQualid  = () => useView("vw_financeiro_qualidade");
 export const useFinanceiroQualidadePeriodo = () =>
   useView("vw_financeiro_qualidade_periodo", { ordem: ["mes"], staleTime: 60 * 1000, retry: 2 });
 export const useFinanceiroPagamentos = () => useView("vw_financeiro_pagamentos");
+export const useFinanceiroPagamentosPeriodo = () =>
+  useView("vw_financeiro_pagamentos_periodo", { ordem: ["mes"] });
 export const useFinanceiroReceitaCategoria = () => useView("vw_financeiro_receita_categoria_total");
 export const useFinanceiroCaixaHorizonte = () => useView("vw_financeiro_caixa_horizonte");
 // Série diária; o Hub Financeiro reagrega conforme Ano/Mês/7 dias.
@@ -371,6 +373,8 @@ export const useLojaKpisPeriodo = () =>
 // `ordem` = chave natural (uma linha por dia+categoria/forma): paginação estável.
 export const useFinanceiroReceitaCategoriaPeriodo = () =>
   useView("vw_financeiro_receita_categoria_periodo", { ordem: ["data", "categoria"] });
+export const useFinanceiroReceitaCategoriaDetalhe = () =>
+  useView("vw_financeiro_receita_categoria_detalhe", { ordem: ["data", "categoria", "curso"] });
 export const useFinanceiroDespesaCategoriaPeriodo = () =>
   useView("vw_financeiro_despesa_categoria_periodo", { ordem: ["data", "categoria"] });
 export const useLojaReceitaPeriodo = () =>
@@ -908,7 +912,8 @@ export async function mktEventosDoMes(inicio, fim) {
       "id, nome, codigo, data_evento, status, unidade_id," +
       "tipo:mkt_tipos_evento(nome)," +
       "resultados:mkt_resultados_evento(inscritos,presentes,vendas_pitch,vendas_pos)," +
-      "acoes:mkt_acoes_evento(id,nome,responsavel,prazo,conclusao,concluida,concluida_em)"
+      "acoes:mkt_acoes_evento(id,nome,responsavel,prazo,conclusao,concluida,concluida_em," +
+      "pede_agendamento,agendado_para,confirmar_itens)"
     )
     .eq("status", "ativo")
     .gte("data_evento", inicio)
@@ -953,6 +958,12 @@ export async function mktProximoEventoAtivo(deData) {
    da tabela embutida, e `evento.status` seria ignorado silenciosamente. */
 const SELECT_ACAO =
   "id, nome, responsavel, prazo, conclusao, concluida, concluida_em," +
+  /* pede_agendamento vem COPIADO do template para a ação (migration 142), e
+     não por embedding de `mkt_templates_acao`. Ler do template exigiria
+     policy de leitura lá, e a Central já pagou esse pedágio uma vez: a
+     `mkt_tipos_evento` tinha RLS sem policy e devolvia nulo para todo
+     mundo — é o "—" que a 127 foi consertar. */
+  "pede_agendamento, agendado_para, confirmar_itens," +
   "evento:mkt_eventos!inner(id, nome, codigo, data_evento, unidade_id)";
 
 export async function mktAcoesDoPeriodo(inicio, fim) {
@@ -981,6 +992,27 @@ export async function mktAcoesAtrasadas(hoje) {
   return (data ?? []).map((a) => ({ ...a, evento: primeiro(a.evento) }));
 }
 
+/* Público por evento (view da migration 144). Duas fontes numa coluna só:
+   ingresso do Sympla ou matrícula aprovada do Salesforce, com `fonte`
+   declarada para a tela poder dizer de onde veio em vez de fingir que é
+   tudo a mesma coisa.
+
+   A view já se protege sozinha com `pode_ver('marketing')` no `where` —
+   quem não é do setor recebe zero linhas, sem erro. View não aceita policy
+   de RLS; por isso o gate mora lá dentro. */
+export async function mktPublicoDoMes(inicio, fim) {
+  const { data, error } = await supabase
+    .from("vw_mkt_publico_evento")
+    .select("evento_id, nome, data_evento, status, unidade_id, fonte, inscritos, vendas, receita, capacidade")
+    .eq("status", "ativo")
+    .gte("data_evento", inicio)
+    .lt("data_evento", fim)
+    .not("inscritos", "is", null)
+    .order("data_evento");
+  erroSupabase(error);
+  return data ?? [];
+}
+
 export async function mktPendentes() {
   const { data, error } = await supabase
     .from("mkt_eventos")
@@ -991,10 +1023,18 @@ export async function mktPendentes() {
   return data ?? [];
 }
 
-export async function mktMarcarAcao(acaoId, concluida) {
+/* `agendadoPara` só viaja em ação com `pede_agendamento` — hoje, a
+   "Postagem programada" dos cinco tipos. A RPC recusa horário em qualquer
+   outra, de propósito: dado que nenhuma tela mostra é dado que ninguém
+   sabe explicar seis meses depois.
+
+   Desmarcar não manda horário nenhum, e o banco limpa o que havia: se a
+   postagem não está mais programada, a data de quando estaria engana. */
+export async function mktMarcarAcao(acaoId, concluida, agendadoPara = null) {
   const { error } = await supabase.rpc("mkt_marcar_acao", {
     p_acao_id: acaoId,
     p_concluida: concluida,
+    p_agendado_para: agendadoPara,
   });
   erroSupabase(error);
 }
