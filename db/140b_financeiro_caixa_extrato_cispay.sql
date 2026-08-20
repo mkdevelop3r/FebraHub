@@ -1,5 +1,11 @@
 -- ============================================================
--- FebraHub · Migration 140 — Caixa CisPay pelo extrato real
+-- FebraHub · Migration 140b — Caixa CisPay pelo extrato real
+--
+-- Nasceu 140 e virou 140b: a 140 já estava ocupada por
+-- `140_tipos_mentoria_evento.sql`. O sufixo de letra é a convenção desta
+-- pasta para adição posterior no mesmo ponto (ver 07b, 14b, 15b, 16b, 19b,
+-- 21b) e não muda ordem de aplicação. Renomeado a pedido do Louis, em
+-- 20/08/2026; o conteúdo é do Codex e não foi tocado.
 --
 -- `schedules-ex` contém liquidações futuras e serve para projeção.
 -- O KPI "Caixa recebido" deve usar `checking-account`, persistido em

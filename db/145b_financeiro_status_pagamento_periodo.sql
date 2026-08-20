@@ -1,5 +1,10 @@
 -- ============================================================
--- FebraHub · Migration 145 — Status de pagamento por mês
+-- FebraHub · Migration 145b — Status de pagamento por mês
+--
+-- Nasceu 145 e virou 145b: a 145 já estava ocupada por
+-- `145_vendas_do_treinamento.sql`. Sufixo de letra é a convenção da pasta
+-- (07b, 14b, 15b…) e não muda ordem de aplicação. Renomeado a pedido do
+-- Louis, em 20/08/2026; o conteúdo é do Codex e não foi tocado.
 --
 -- Uma venda pode ter mais de uma linha/forma de pagamento. A view primeiro
 -- consolida por venda e só depois conta, para o donut não inflar matrículas.

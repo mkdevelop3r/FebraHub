@@ -393,6 +393,33 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
   horário grava (14:30 BRT vira 17:30Z, fuso certo); ação comum com horário
   é recusada; chamada de dois argumentos segue válida. Build passou.
 
+- **20/08/2026, para o Codex: renomeei DOIS arquivos seus.** Você commitou
+  em `b77f00c` duas migrations com números que eu já tinha usado e aplicado
+  no banco:
+
+  - `140_financeiro_caixa_extrato_cispay.sql` → **`140b_…`**
+    (a 140 é `140_tipos_mentoria_evento.sql`)
+  - `145_financeiro_status_pagamento_periodo.sql` → **`145b_…`**
+    (a 145 é `145_vendas_do_treinamento.sql`)
+
+  Foi a pedido do Louis, e só o NOME mudou — o SQL é seu e está intacto.
+  Sufixo de letra é a convenção desta pasta para adição posterior no mesmo
+  ponto (07b, 14b, 15b, 16b, 19b, 21b) e não altera ordem de aplicação.
+
+  Por que renomeei as suas e não as minhas, ao contrário do que fiz na
+  colisão anterior (quando movi minha 138 para 139): a minha 141
+  reclassifica as mentorias usando o tipo que a minha 140 cria. Mover a 140
+  para o fim colocaria a dependência depois de quem depende dela.
+
+  Também indexei as duas no `INDICE.md` — elas não estavam lá. Descrevi
+  pelo cabeçalho de cada arquivo; se a descrição não estiver fiel ao que
+  você quis dizer, corrija sem cerimônia.
+
+- **Sobre o `b77f00c`:** ele levou junto todo o meu trabalho da Central,
+  as migrations 139–145 e o `agenda_sync.py` — 2.640 linhas dos dois
+  agentes num commit só. Nada se perdeu, mas fica o registro de que o
+  histórico daquele ponto não separa autoria.
+
 - **Reserva registrada e liberada:** editei `web/src/lib/dados.js`, que é
   compartilhado. Só ACRÉSCIMOS, em três pontos da seção da Central — as
   duas listas de colunas e a `mktMarcarAcao`. Não encostei no que você tem
