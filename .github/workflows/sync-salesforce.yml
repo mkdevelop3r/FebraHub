@@ -1,0 +1,135 @@
+# FebraHub · .github/workflows/sync-salesforce.yml
+#
+# Lê os relatórios do Salesforce que chegam por e-mail (Gmail) e atualiza
+# fato_pagamento_base e fato_base_alunos. Roda 3x/dia, pouco depois de cada
+# disparo agendado do Salesforce (06h, 12h, 17h Salvador).
+#
+# Separado do sync-diario para não re-executar CisPay/Sympla/etc 3x ao dia.
+#
+# COMO FUNCIONA (e por que é seguro agora):
+#   - o relatório do Salesforce filtra por DATA DE APROVAÇÃO
+#   - o script apaga e reinsere pela MESMA data de aprovação
+#   - critério igual dos dois lados = nenhuma linha órfã, nenhuma duplicata
+#   (foi o descasamento aprovação x pagamento que quebrou a base antes)
+#
+# TRAVA: se a janela do arquivo passar de 120 dias, o script ABORTA em vez
+# de apagar — protege contra subir um export de base inteira por engano.
+#
+# O SEGUNDO STEP MANDA AS MENSAGENS, e roda DEPOIS do sync de propósito:
+# a fila de boas-vindas é uma view sobre fato_base_alunos. Invertida a
+# ordem, o script trabalharia sobre a base da rodada anterior e quem
+# comprou hoje só seria acolhido amanhã.
+#
+# Secrets necessários:
+#   GMAIL_ADDRESS, GMAIL_APP_PASSWORD   (senha de APP, não a senha real)
+#   SUPABASE_URL, SUPABASE_SERVICE_KEY
+#   CRM_TOKEN, CRM_LOCATION_ID
+#   SF_ASSUNTO_PAGAMENTO  (opcional, padrão 'Base pagamentos')
+#   SF_ASSUNTO_ALUNOS     (opcional, padrão 'Base alunos')
+#
+# MSG_LIMITE fica no arquivo, não em secret: não é sigiloso, e no arquivo
+# o histórico do git mostra quando mudou e por quê.
+name: Sync Salesforce (e-mail)
+on:
+  schedule:
+    - cron: '15 9 * * *'    # 06:15 Salvador
+    - cron: '15 15 * * *'   # 12:15 Salvador
+    - cron: '15 20 * * *'   # 17:15 Salvador
+  workflow_dispatch:
+jobs:
+  salesforce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r etl/requirements.txt
+      - name: Salesforce (e-mail)
+        id: sf
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SF_ASSUNTO_PAGAMENTO: ${{ secrets.SF_ASSUNTO_PAGAMENTO }}
+          SF_ASSUNTO_ALUNOS: ${{ secrets.SF_ASSUNTO_ALUNOS }}
+        run: python etl/salesforce_email_sync.py
+        continue-on-error: true
+      - name: Status — Salesforce
+        if: always()
+        run: |
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"salesforce\",\"nome_exibicao\":\"Salesforce\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.sf.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+
+      # ----------------------------------------------------------------
+      # FILA DE PRAZO
+      #
+      # Recalcula a tabela materializada fila_prazo. Precisa rodar entre
+      # o sync e as mensagens: depois do sync porque lê fato_base_alunos
+      # e fato_presenca recém-atualizados, antes das mensagens porque
+      # vw_prazo_fila_envio lê desta tabela.
+      #
+      # A fila é tabela, e não view, porque a consulta original estoura
+      # o statement timeout do PostgREST — `norm_curso()` nas junções
+      # impede o uso de índice comum. O custo fica aqui, no ETL, que
+      # tem tempo de sobra.
+      # ----------------------------------------------------------------
+      - name: Atualizar fila de prazo
+        id: fila
+        if: steps.sf.outcome == 'success'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          curl -s --fail-with-body -X POST \
+            "$SUPABASE_URL/rest/v1/rpc/atualizar_fila_prazo" \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}'
+        continue-on-error: true
+
+      # ----------------------------------------------------------------
+      # MENSAGENS DO PEDAGÓGICO
+      #
+      # Lê as filas (views), grava os campos no CRM, aplica a tag que
+      # dispara o workflow, e registra o envio em pedagogico_envios.
+      #
+      # `if: steps.sf.outcome == 'success'` de propósito: se o sync
+      # falhou, a fila está desatualizada e é melhor não mandar nada do
+      # que mandar sobre dado velho.
+      #
+      # MSG_LIMITE=10, rodando 3x/dia, dá até 30 mensagens diárias.
+      # Suficiente para a fila atual (~25) e conservador o bastante para
+      # acompanhar de perto na primeira semana. Subir depois, com commit.
+      # ----------------------------------------------------------------
+      - name: Mensagens do pedagógico
+        id: msg
+        if: steps.sf.outcome == 'success'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
+          CRM_LOCATION_ID: ${{ secrets.CRM_LOCATION_ID }}
+          MSG_LIMITE: '10'
+        run: python etl/pedagogico_mensagens.py
+        continue-on-error: true
+
+      - name: Status — Mensagens
+        if: always()
+        run: |
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"mensagens_pedagogico\",\"nome_exibicao\":\"Mensagens Pedagógico\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.msg.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"

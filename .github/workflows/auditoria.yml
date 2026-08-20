@@ -1,0 +1,42 @@
+name: Auditoria Comercial
+
+# 09:00 UTC = 06:00 em Salvador (UTC-3, sem horário de verão)
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:        # permite rodar manualmente pelo botão
+
+jobs:
+  auditar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Rodar a rotina
+        working-directory: etl
+        env:
+          BLACK_CRM_TOKEN:      ${{ secrets.BLACK_CRM_TOKEN }}
+          OPENAI_API_KEY:       ${{ secrets.OPENAI_API_KEY }}
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python run_auditoria.py
+
+      # Os CSVs contêm transcrição de conversa com lead (nome, telefone falado).
+      # Ficam como artefato temporário para diagnóstico — NUNCA são commitados.
+      - name: Guardar CSVs para diagnóstico
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auditoria-${{ github.run_number }}
+          path: |
+            etl/transcricoes.csv
+            etl/auditorias_whatsapp.csv
+            etl/auditorias_ligacoes.csv
+          retention-days: 7
+          if-no-files-found: ignore
