@@ -30,9 +30,8 @@ import {
   useLojaSerie, useLojaKpisAno, useLojaKpisPeriodo,
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
-  useMarketingAtribuicao,
   useMarketingSaudeCaptacao, useMarketingCaptacaoDiaria,
-  useMarketingLeadsCanal, useMarketingCplCampanha,
+  useMarketingLeadsCanal,
   usePedagogicoKpis, usePedagogicoPresencaKpis, usePedagogicoPresencaTempo,
   usePedagogicoRecompraCurso, usePedagogicoPresencaCurso,
   usePedagogicoMaestrosCompleto, usePedagogicoMaestrosKpis, usePedagogicoMaestroAnotacoes,
@@ -2199,7 +2198,6 @@ function HubExecutivo({ onIr }) {
   const comMensal = useComercialGeralMensal();
   const recMensal = useFinanceiroRecebidoMensal();
   const mktInv = useMarketingInvestimento();
-  const mktAtr = useMarketingAtribuicao();
   const pedK = usePedagogicoKpis();
   const pedP = usePedagogicoPresencaKpis();
 
@@ -2238,7 +2236,6 @@ function HubExecutivo({ onIr }) {
   }, [fatMensal.data, comMensal.data, ym]);
   const recebido = useMemo(() => recebidoMaisRecente(recMensal.data, ym), [recMensal.data, ym]);
   const investMes = useMemo(() => (mktInv.data ?? []).filter((r) => noMesYM(r.mes, ym)).reduce((s, r) => s + Number(r.gasto ?? 0), 0), [mktInv.data, ym]);
-  const retornoMes = useMemo(() => (mktAtr.data ?? []).filter((r) => noMesYM(r.mes, ym)).reduce((s, r) => s + Number(r.faturamento_atribuido ?? 0), 0), [mktAtr.data, ym]);
   const recompra = pedK.data?.[0]?.taxa_recompra;
   const comparec = pedP.data?.[0]?.taxa_comparecimento_geral;
 
@@ -2281,8 +2278,8 @@ function HubExecutivo({ onIr }) {
           nota={lojaRow ? `nível: ${lojaRow.nivel_atingido}` : null} />
         <CardSetor Icone={Megaphone} titulo="Marketing" onIr={() => onIr("marketing")}
           estado={{ carregando: mktInv.isLoading, erro: mktInv.error }}
-          linhas={[{ label: "investimento", valor: moeda(investMes) }, { label: "retorno atribuído", valor: moeda(retornoMes), cor: C.up }]}
-          nota="atribuição parcial — só vendas com origem confirmada" />
+          linhas={[{ label: "investimento", valor: moeda(investMes), cor: C.gold }]}
+          nota="Receita e ROI não são atribuíveis nesta base" />
         <CardSetor Icone={GraduationCap} titulo="Pedagógico" onIr={() => onIr("pedagogico")}
           estado={{ carregando: pedK.isLoading, erro: pedK.error }}
           linhas={[{ label: "recompra (grade)", valor: fmtPct(recompra, 1), cor: C.gold }, { label: "comparecimento", valor: fmtPct(comparec), cor: C.up }]} />
@@ -3854,8 +3851,9 @@ function HubMarketing() {
   const saude = useMarketingSaudeCaptacao();
   const captacao = useMarketingCaptacaoDiaria();
   const canais = useMarketingLeadsCanal();
-  const campanhas = useMarketingCplCampanha();
-  const consultas = [saude, captacao, canais, campanhas];
+  const desempenho = useMarketingDesempenho();
+  const consultas = [saude, captacao, canais, desempenho];
+  const [semLeadAberto, setSemLeadAberto] = useState(false);
 
   const resumo = useMemo(() => {
     const linhas = noPeriodo(captacao.data, per, "dia");
@@ -3878,27 +3876,61 @@ function HubMarketing() {
     return [...mapa.values()].sort((a, b) => b.leads - a.leads);
   }, [canais.data, per.inicio, per.fim]);
 
+  const performance = useMemo(
+    () => mktNoIntervaloMensal(desempenho.data, per),
+    [desempenho.data, per.inicio, per.fim]
+  );
+
+  const totaisPerformance = useMemo(() => performance.reduce((a, l) => ({
+    gasto: a.gasto + Number(l.gasto ?? 0),
+    leads: a.leads + Number(l.leads ?? 0),
+  }), { gasto: 0, leads: 0 }), [performance]);
+
+  const porCategoria = useMemo(() => {
+    const ordem = ["CIS", "GGB", "LL", "Eventos", "Outros"];
+    const mapa = new Map(ordem.map((categoria) => [categoria, { categoria, gasto: 0, leads: 0 }]));
+    for (const l of performance) {
+      const categoria = l.categoria || "Outros";
+      const atual = mapa.get(categoria) ?? { categoria, gasto: 0, leads: 0 };
+      atual.gasto += Number(l.gasto ?? 0);
+      atual.leads += Number(l.leads ?? 0);
+      mapa.set(categoria, atual);
+    }
+    return [...mapa.values()].map((l) => ({ ...l, cpl: l.leads > 0 ? l.gasto / l.leads : null }));
+  }, [performance]);
+
   const porCampanha = useMemo(() => {
     const mapa = new Map();
-    for (const l of mktNoIntervaloMensal(campanhas.data, per)) {
+    for (const l of performance) {
       const nome = l.campanha_nome || "Campanha sem nome";
       const atual = mapa.get(nome) ?? {
-        campanha_nome: nome, gasto: 0, leads: 0,
-        objetivo: mktObjetivo(l), gera_lead: mktGeraLead(l), explicacao: l.explicacao,
+        campanha_nome: nome, categoria: l.categoria || "Outros", gasto: 0, leads: 0,
       };
       atual.gasto += Number(l.gasto ?? 0);
       atual.leads += Number(l.leads ?? 0);
-      atual.explicacao ||= l.explicacao;
       mapa.set(nome, atual);
     }
     return [...mapa.values()].map((l) => ({
-      ...l,
-      cpl: l.gera_lead && l.gasto > 0 && l.leads > 0 ? l.gasto / l.leads : null,
-    })).sort((a, b) => b.gasto - a.gasto);
-  }, [campanhas.data, per.inicio, per.fim]);
+      ...l, cpl: l.leads > 0 ? l.gasto / l.leads : null,
+    }));
+  }, [performance]);
+
+  const campanhasComCpl = useMemo(
+    () => porCampanha.filter((l) => l.cpl != null).sort((a, b) => a.cpl - b.cpl),
+    [porCampanha]
+  );
+  const campanhasSemLead = useMemo(
+    () => porCampanha.filter((l) => l.cpl == null).sort((a, b) => b.gasto - a.gasto),
+    [porCampanha]
+  );
+  const gastoSemLead = useMemo(
+    () => campanhasSemLead.reduce((s, l) => s + l.gasto, 0),
+    [campanhasSemLead]
+  );
 
   const alerta = saude.data?.[0];
   const maiorCanal = Math.max(1, ...porCanal.map((l) => l.leads));
+  const maiorGastoCategoria = Math.max(1, ...porCategoria.map((l) => l.gasto));
   const pct = (parte, total) => total > 0 ? Math.round(parte / total * 100) : 0;
 
   return (
@@ -3931,19 +3963,40 @@ function HubMarketing() {
           background: C.card, border: `1px solid ${C.cardLine}`,
         }}>
           <span style={{ color: C.muted, fontSize: 11, fontWeight: 750, textTransform: "uppercase", letterSpacing: ".08em" }}>
-            Captação · {per.rotulo}
+            Performance · {per.rotulo}
           </span>
-          <span style={{ color: C.bright, fontSize: 14 }}><b>{numero(resumo.leads)}</b> leads</span>
-          <span style={{ color: C.bright, fontSize: 14 }}><b>{pct(resumo.origem, resumo.leads)}%</b> com origem identificada</span>
-          <span style={{ color: C.bright, fontSize: 14 }}><b>{pct(resumo.telefone, resumo.leads)}%</b> com telefone</span>
+          <span style={{ color: C.bright, fontSize: 14 }}><b>{numero(totaisPerformance.leads)}</b> leads atribuíveis</span>
+          <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(totaisPerformance.gasto)}</b> investidos</span>
+          <span style={{ color: C.goldTop, fontSize: 17, fontWeight: 800 }}>
+            {totaisPerformance.leads > 0 ? `${moeda(totaisPerformance.gasto / totaisPerformance.leads)} CPL` : "sem lead atribuível"}
+          </span>
+          <span style={{ flexBasis: "100%", color: C.faint, fontSize: 10.5 }}>
+            Qualidade da captação no CRM: {numero(resumo.leads)} cadastros · {pct(resumo.origem, resumo.leads)}% com origem · {pct(resumo.telefone, resumo.leads)}% com telefone
+          </span>
         </div>
+
+        <Bloco titulo="Investimento e CPL por categoria" canto="comparação de eficiência">
+          <div style={{ display: "flex", flexDirection: "column", gap: 13, padding: "4px 0 2px" }}>
+            {porCategoria.map((l) => (
+              <div key={l.categoria} style={{ display: "grid", gridTemplateColumns: "82px minmax(160px, 1fr) 112px 150px", gap: 12, alignItems: "center" }}>
+                <div style={{ color: C.bright, fontSize: 12.5, fontWeight: 750 }}>{l.categoria}</div>
+                <div style={{ height: 10, borderRadius: 999, background: "rgba(255,255,255,.055)", overflow: "hidden" }}>
+                  <div style={{ width: `${Math.max(l.gasto > 0 ? 2 : 0, l.gasto / maiorGastoCategoria * 100)}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${C.goldBase}, ${C.goldTop})` }} />
+                </div>
+                <div style={{ color: C.muted, fontSize: 11.5, textAlign: "right", whiteSpace: "nowrap" }}>{moeda(l.gasto)}</div>
+                <div style={{ color: l.cpl != null ? C.up : C.faint, fontSize: 11.5, fontWeight: l.cpl != null ? 750 : 500, textAlign: "right", whiteSpace: "nowrap" }}>
+                  {l.cpl != null ? `${moeda(l.cpl)} / lead` : "sem lead atribuível"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Bloco>
 
         <Bloco titulo="Leads por canal" canto="volume × capacidade de contato">
           {porCanal.length ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "4px 0 2px" }}>
               {porCanal.map((l) => {
                 const contato = pct(l.com_telefone, l.leads);
-                const corContato = contato >= 80 ? C.up : contato >= 50 ? C.warn : C.down;
                 return (
                   <div key={l.canal} style={{ display: "grid", gridTemplateColumns: "minmax(128px, 1.1fr) minmax(150px, 3fr) minmax(150px, 1.35fr)", gap: 13, alignItems: "center" }}>
                     <div style={{ minWidth: 0 }}>
@@ -3953,9 +4006,12 @@ function HubMarketing() {
                     <div style={{ height: 9, borderRadius: 999, background: "rgba(255,255,255,.055)", overflow: "hidden" }}>
                       <div style={{ width: `${Math.max(2, l.leads / maiorCanal * 100)}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${C.goldBase}, ${C.goldTop})` }} />
                     </div>
-                    <div style={{ color: corContato, fontSize: 11.5, textAlign: "right", whiteSpace: "nowrap" }}>
-                      <b>{numero(l.com_telefone)}</b> com telefone · {contato}%
-                    </div>
+                    {contato < 80 ? (
+                      <div style={{ color: C.down, fontSize: 11.5, fontWeight: 750, textAlign: "right", whiteSpace: "nowrap" }}>
+                        <AlertTriangle size={12} style={{ verticalAlign: -2, marginRight: 5 }} />
+                        Apenas {numero(l.com_telefone)} contatáveis · {contato}%
+                      </div>
+                    ) : <div />}
                   </div>
                 );
               })}
@@ -3963,35 +4019,48 @@ function HubMarketing() {
           ) : <Estado vazio vazioTitulo="Sem leads no período" vazioDica="Não há captação por canal para o recorte selecionado." />}
         </Bloco>
 
-        <Bloco titulo="Investimento e CPL" canto="campanhas por maior gasto">
-          {porCampanha.length ? (
+        <Bloco titulo="Campanhas com CPL" canto="menor CPL primeiro">
+          {campanhasComCpl.length ? (
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}>
                 <thead><tr>
-                  {["Campanha", "Objetivo", "Investimento", "Leads", "CPL"].map((h, i) => (
+                  {["Campanha", "Categoria", "Investimento", "Leads", "CPL"].map((h, i) => (
                     <th key={h} style={{ padding: "8px 10px", textAlign: i < 2 ? "left" : "right", color: C.faint, fontSize: 10, textTransform: "uppercase", letterSpacing: ".07em", borderBottom: `1px solid ${C.cardLine}` }}>{h}</th>
                   ))}
                 </tr></thead>
-                <tbody>{porCampanha.map((l) => (
-                  <tr key={l.campanha_nome} style={{ borderBottom: `1px solid ${C.hair}`, background: l.gera_lead ? `${C.up}06` : "transparent" }}>
-                    <td style={{ padding: "10px", color: C.bright, fontSize: 11.5, fontWeight: 650, borderLeft: `2px solid ${l.gera_lead ? C.up : C.faint}` }}>{l.campanha_nome}</td>
-                    <td style={{ padding: "10px", fontSize: 11 }}>
-                      <span style={{ color: l.gera_lead ? C.up : C.muted, background: l.gera_lead ? `${C.up}14` : "rgba(255,255,255,.04)", borderRadius: 999, padding: "3px 7px", whiteSpace: "nowrap" }}>{l.objetivo}</span>
-                    </td>
+                <tbody>{campanhasComCpl.map((l) => (
+                  <tr key={l.campanha_nome} style={{ borderBottom: `1px solid ${C.hair}` }}>
+                    <td style={{ padding: "10px", color: C.bright, fontSize: 11.5, fontWeight: 650, borderLeft: `2px solid ${C.up}` }}>{l.campanha_nome}</td>
+                    <td style={{ padding: "10px", color: C.muted, fontSize: 11 }}>{l.categoria}</td>
                     <td style={{ padding: "10px", color: C.bright, fontSize: 11.5, textAlign: "right", whiteSpace: "nowrap" }}>{moeda(l.gasto)}</td>
                     <td style={{ padding: "10px", color: C.bright, fontSize: 11.5, textAlign: "right" }}>{numero(l.leads)}</td>
-                    <td style={{ padding: "10px", color: l.cpl != null ? C.goldTop : C.muted, fontSize: 11.5, textAlign: "right", maxWidth: 260 }}>
-                      {l.cpl != null ? moeda(l.cpl) : (l.explicacao || (l.gera_lead ? "Sem lead identificado para calcular o CPL" : "Objetivo não gera lead mensurável"))}
-                    </td>
+                    <td style={{ padding: "10px", color: C.goldTop, fontSize: 12.5, fontWeight: 800, textAlign: "right" }}>{moeda(l.cpl)}</td>
                   </tr>
                 ))}</tbody>
               </table>
             </div>
-          ) : <Estado vazio vazioTitulo="Sem investimento no período" vazioDica="Não há campanhas para o recorte selecionado." />}
-          <div style={{ marginTop: 11, paddingTop: 10, borderTop: `1px solid ${C.hair}`, color: C.muted, fontSize: 11.5, lineHeight: 1.45 }}>
-            61% do investimento vai para campanhas de WhatsApp; 35% vai para alcance e tráfego, objetivos que não geram lead mensurável por design.
-          </div>
+          ) : <Estado vazio vazioTitulo="Sem campanha com CPL" vazioDica="Nenhuma campanha tem gasto e lead atribuível no recorte." />}
         </Bloco>
+
+        <div style={{ border: `1px solid ${C.cardLine}`, borderRadius: 11, background: C.card, overflow: "hidden" }}>
+          <button type="button" onClick={() => setSemLeadAberto((v) => !v)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", color: C.bright, background: "transparent", border: 0, cursor: "pointer", fontFamily: SANS, textAlign: "left" }}>
+            {semLeadAberto ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+            <b style={{ fontSize: 12.5 }}>Campanhas sem lead atribuível</b>
+            <span style={{ color: C.goldTop, fontSize: 12, marginLeft: "auto" }}>{moeda(gastoSemLead)}</span>
+          </button>
+          <div style={{ padding: semLeadAberto ? "0 14px 12px" : "0 14px 11px", color: C.muted, fontSize: 11.5, lineHeight: 1.45 }}>
+            Investimento em alcance, landing page e WhatsApp; o cadastro ou contato acontece fora do Meta.
+          </div>
+          {semLeadAberto && campanhasSemLead.length > 0 && (
+            <div style={{ borderTop: `1px solid ${C.hair}`, padding: "5px 14px 10px" }}>
+              {campanhasSemLead.map((l) => (
+                <div key={l.campanha_nome} style={{ display: "flex", gap: 12, justifyContent: "space-between", padding: "7px 0", color: C.muted, fontSize: 11.5 }}>
+                  <span>{l.campanha_nome} · {l.categoria}</span><b style={{ color: C.bright, whiteSpace: "nowrap" }}>{moeda(l.gasto)}</b>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         <div style={{ color: C.faint, fontSize: 10.5, lineHeight: 1.5, padding: "0 2px" }}>
           A série de captação começa em 17/07/2026, data da migração do CRM. Não há dado de canal antes disso.
@@ -4006,7 +4075,7 @@ function HubMarketingLegado() {
   const resumo = useMarketingResumoMensal();
   const desemp = useMarketingDesempenho();
   const canais = useMarketingOrigemVendas();
-  const atrib = useMarketingAtribuicao();
+  const atrib = { data: [] };
   const [produto, setProduto] = useState(null);
   const [categoria, setCategoria] = useState(null);
   const [geral, setGeral] = useState(false);

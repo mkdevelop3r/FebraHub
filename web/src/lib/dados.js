@@ -378,7 +378,7 @@ export const useFinanceiroReceitaCategoriaDetalhe = () =>
 export const useFinanceiroDespesaCategoriaPeriodo = () =>
   useView("vw_financeiro_despesa_categoria_periodo", { ordem: ["data", "categoria"] });
 export const useLojaReceitaPeriodo = () =>
-  useView("vw_loja_receita_periodo", { ordem: ["data", "forma"] });
+  useView("vw_loja_receita_periodo", { ordem: ["data"] });
 
 /* ============ MARKETING ============
    Meta Ads entrega gasto/impressão/lead por anúncio, agregado por MÊS —
@@ -402,17 +402,6 @@ export const useMarketingDesempenho = () =>
    cada mês; a maioria das vendas ainda cai em "Pedido". */
 export const useMarketingOrigemVendas = () =>
   useView("vw_marketing_origem_vendas", { ordem: ["mes", "canal"] });
-
-/* Atribuição: vendas cujo comprador foi lead de anúncio ANTES da compra.
-   É um PISO comprovável (~7% das vendas), não o faturamento do digital.
-   Vive à parte de propósito — dividir isto pelo investimento (que é cheio)
-   daria um ROI falso, comparando um parcial com um total.
-
-   Sem `ordem`: são poucas dezenas de linhas, e a view é pesada o bastante
-   pra estourar o statement timeout na primeira execução fria — o retry
-   padrão do QueryClient pega a segunda, já com o plano quente. */
-export const useMarketingAtribuicao = () =>
-  useView("vw_marketing_atribuicao_campanha", { retry: 2 });
 
 /* Hub de Marketing acionável: captação e investimento, sem atribuição de
    receita. As quatro views abaixo já aplicam pode_ver('marketing') no banco. */
