@@ -113,10 +113,24 @@ sem_proximo_passo.
 
 PROVA OBRIGATÓRIA. Para cada etapa, além da nota, devolva:
 - "obs": uma frase objetiva dizendo por que a nota é essa.
-- "trecho": CITAÇÃO LITERAL da conversa, copiada sem alterar uma palavra, que
-  sustenta a nota (até 200 caracteres). Se a etapa falhou por AUSÊNCIA, cite o
-  trecho onde ela deveria ter acontecido — normalmente a transição em que a
-  consultora pulou para a oferta. Se não houver trecho possível, use "".
+- "trecho": CITAÇÃO LITERAL da conversa, copiada sem alterar uma palavra
+  (até 200 caracteres). O que citar depende do caso:
+
+  NOTA 1 (cumpriu): cite a mensagem em que a consultora cumpriu a etapa.
+
+  NOTA 0 por execução ruim: cite a mensagem que mostra a falha — a pergunta
+  fechada, o discurso genérico, o encerramento passivo.
+
+  NOTA 0 por AUSÊNCIA (a etapa simplesmente não aconteceu): NÃO devolva vazio.
+  Cite as DUAS mensagens seguidas da consultora entre as quais a etapa deveria
+  ter entrado, separadas por " → ". Quase sempre é o ponto em que ela saltou da
+  saudação ou do motivo do contato direto para a oferta. Exemplo do formato:
+  "Oi Ana, aqui é a Beatriz da Febracis → O treinamento custa R$ 1.997 em 12x"
+  Isso mostra o salto, que é a prova da ausência.
+
+  Só use "" quando a conversa for curta demais para ter duas mensagens da
+  consultora. Este campo é lido pela consultora na devolutiva: nunca invente
+  frase que não está na conversa.
 Isto é usado em devolutiva com a consultora: ela vai ler. Não parafraseie, não
 invente frase que não está na conversa e não julgue a pessoa — descreva o que
 foi dito.
