@@ -1003,7 +1003,9 @@ export async function mktAcoesAtrasadas(hoje) {
 export async function mktPublicoDoMes(inicio, fim) {
   const { data, error } = await supabase
     .from("vw_mkt_publico_evento")
-    .select("evento_id, nome, data_evento, status, unidade_id, fonte, inscritos, vendas, receita, capacidade")
+    /* `receita` existe na view (145) e não é buscada: a Central responde
+       quantas, não quanto. Está lá para quem precisar do valor um dia. */
+    .select("evento_id, nome, data_evento, status, unidade_id, fonte, inscritos, vendas, capacidade")
     .eq("status", "ativo")
     .gte("data_evento", inicio)
     .lt("data_evento", fim)
