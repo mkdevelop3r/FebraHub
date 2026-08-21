@@ -414,6 +414,17 @@ export const useMarketingOrigemVendas = () =>
 export const useMarketingAtribuicao = () =>
   useView("vw_marketing_atribuicao_campanha", { retry: 2 });
 
+/* Hub de Marketing acionável: captação e investimento, sem atribuição de
+   receita. As quatro views abaixo já aplicam pode_ver('marketing') no banco. */
+export const useMarketingSaudeCaptacao = () =>
+  useView("vw_mkt_saude_captacao");
+export const useMarketingCaptacaoDiaria = () =>
+  useView("vw_mkt_captacao_diaria", { ordem: ["dia"] });
+export const useMarketingLeadsCanal = () =>
+  useView("vw_mkt_leads_canal", { ordem: ["mes", "canal"] });
+export const useMarketingCplCampanha = () =>
+  useView("vw_mkt_cpl_campanha", { ordem: ["mes", "campanha_nome"] });
+
 /* ============ PEDAGÓGICO / SUCESSO DO CLIENTE ============
    Foco em SAÚDE (acompanhamento), não lista de tarefas. Tudo vem do
    Salesforce. Conclusão, notas e NPS não são medidos — não existem na fonte.

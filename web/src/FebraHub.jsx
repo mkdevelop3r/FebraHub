@@ -31,6 +31,8 @@ import {
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingAtribuicao,
+  useMarketingSaudeCaptacao, useMarketingCaptacaoDiaria,
+  useMarketingLeadsCanal, useMarketingCplCampanha,
   usePedagogicoKpis, usePedagogicoPresencaKpis, usePedagogicoPresencaTempo,
   usePedagogicoRecompraCurso, usePedagogicoPresencaCurso,
   usePedagogicoMaestrosCompleto, usePedagogicoMaestrosKpis, usePedagogicoMaestroAnotacoes,
@@ -159,6 +161,35 @@ function intervaloDe({ modo, ano, mesIdx }) {
     return { inicio: hoje, fim: hoje, rotulo: "Hoje" };
   }
   return { inicio: iso(new Date(ano, 0, 1)), fim: menor(iso(new Date(ano, 11, 31)), hoje), rotulo: String(ano) };
+}
+
+/* Janela anterior equivalente para comparações de força. Mês e ano voltam
+   um período de calendário e preservam o avanço da janela atual (mês/ano
+   corrente parcial); 7 dias e hoje usam a janela imediatamente anterior. */
+function intervaloAnterior({ inicio, fim, modo }) {
+  const ler = (s) => {
+    const [a, m, d] = String(s).split("-").map(Number);
+    return new Date(a, m - 1, d);
+  };
+  const i = ler(inicio), f = ler(fim);
+  if (modo === "mes") {
+    const ai = i.getFullYear(), mi = i.getMonth() - 1;
+    const ultimoDia = new Date(ai, mi + 1, 0).getDate();
+    return {
+      inicio: iso(new Date(ai, mi, 1)),
+      fim: iso(new Date(ai, mi, Math.min(f.getDate(), ultimoDia))),
+    };
+  }
+  if (modo === "ano") {
+    const ano = i.getFullYear() - 1;
+    return { inicio: iso(new Date(ano, 0, 1)), fim: iso(new Date(ano, f.getMonth(), f.getDate())) };
+  }
+  const dias = Math.round((f - i) / 86400000) + 1;
+  const anteriorFim = new Date(i.getFullYear(), i.getMonth(), i.getDate() - 1);
+  return {
+    inicio: iso(new Date(anteriorFim.getFullYear(), anteriorFim.getMonth(), anteriorFim.getDate() - dias + 1)),
+    fim: iso(anteriorFim),
+  };
 }
 
 /* Limites de navegação saem do DADO, não do calendário: o primeiro mês com
@@ -1042,7 +1073,7 @@ function Lista({ linhas, formatar = moeda, total, top }) {
 
 /* Chip de KPI compacto — faixa horizontal do design: ícone + label +
    valor + delta/nota. `hero` deixa o card dourado (o número-âncora). */
-function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto, sub, className, deltaBrilha, deltaNota, subCentralizado }) {
+function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto, sub, className, deltaBrilha, deltaNota, subCentralizado, deltaAbaixo }) {
   return (
     <div className={className} style={{
       display: "flex", alignItems: "center", gap: compacto ? 9 : 12, minHeight: compacto ? 56 : 78,
@@ -1066,7 +1097,11 @@ function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto
             {unidade && <span style={{ fontSize: compacto ? 11 : 12, color: C.muted, fontWeight: 600 }}> {unidade}</span>}
           </span>
           {delta != null
-            ? <span style={{ display: "inline-flex", alignItems: "baseline", gap: 5, whiteSpace: "nowrap" }}>
+            ? <span style={{ display: "inline-flex", alignItems: "baseline", gap: 5,
+                whiteSpace: deltaAbaixo ? "normal" : "nowrap",
+                flexBasis: deltaAbaixo ? "100%" : undefined,
+                flexWrap: deltaAbaixo ? "wrap" : "nowrap",
+                lineHeight: deltaAbaixo ? 1.2 : undefined }}>
               <span className={deltaBrilha ? (up ? "deltaBrilhaUp" : "deltaBrilhaDown") : undefined}
                 style={{ fontSize: compacto ? 10 : 11, fontWeight: 800, color: up ? C.up : C.down }}>
                 {up ? "▲" : "▼"} {String(delta).replace(/[+-]/, "")}
@@ -1269,7 +1304,16 @@ function BarrasCategoria({ reais, orfas, semVinc, cobertura, detalhesPorCategori
             <span style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".4px", color: C.warn, background: `${C.warn}24`, border: `1px solid ${C.warn}4d`, padding: "1px 6px", borderRadius: 5, flexShrink: 0 }}>50/50</span>
           )}
         </span>
-        <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, flexShrink: 0, color: r.orfa ? C.faint : (i === 0 ? C.gold : C.text) }}>{moeda(r.unidade)}</span>
+        <span style={{ display: "flex", alignItems: "baseline", gap: 7, flexShrink: 0 }}>
+          <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: r.orfa ? C.faint : (i === 0 ? C.gold : C.text) }}>{moeda(r.unidade)}</span>
+          {!r.orfa && r.variacaoForca != null && (
+            <span title="Variação da participação na receita vs. período anterior"
+              style={{ minWidth: 48, textAlign: "right", fontSize: 9.5, fontWeight: 800,
+                color: r.variacaoForca >= 0 ? C.up : C.down }}>
+              {r.variacaoForca >= 0 ? "▲" : "▼"} {Math.abs(r.variacaoForca).toFixed(1).replace(".", ",")} p.p.
+            </span>
+          )}
+        </span>
       </div>
       <div style={{ height: 8, borderRadius: 5, background: "rgba(255,255,255,.05)", overflow: "hidden", display: "flex" }}>
         <div style={{
@@ -1346,7 +1390,8 @@ function BarrasCategoria({ reais, orfas, semVinc, cobertura, detalhesPorCategori
    - `yRedondo=true`     eixo Y com poucos marcadores arredondados (R$0/35mil/70mil).
    - `meta` array paralelo a `serie` = linha de referência (meta mínima do mês). */
 const ARRED_META = "#6BA8E5"; // linha de meta: azul discreto, distinto do dourado da receita
-function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda, mostrarNota = true, rotularParcial = true, meta = null, metaLabel = "meta", rotularVar = true, soDestaques = false, yRedondo = false }) {
+function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = false, formatar = moeda, mostrarNota = true, rotularParcial = true, meta = null, metaLabel = "meta", rotularVar = true, soDestaques = false, yRedondo = false, interativo = false }) {
+  const [hoverIdx, setHoverIdx] = useState(null);
   if (serie.length < 2) return null;
   const W = 720, H = 228, padL = 54, padR = 14, padT = 44, padB = 26;
   const plotW = W - padL - padR, plotH = H - padT - padB, plotBottom = padT + plotH;
@@ -1423,6 +1468,11 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
     const d = new Date(String(iso).slice(0, 10) + "T00:00:00");
     return d.toLocaleDateString("pt-BR", { month: "short" }).replace(".", "") + "/" + String(d.getFullYear()).slice(2);
   };
+  const hover = hoverIdx != null ? serie[hoverIdx] : null;
+  const hoverPrev = hoverIdx > 0 ? serie[hoverIdx - 1]?.valor : null;
+  const hoverDelta = hoverPrev > 0 ? ((hover.valor - hoverPrev) / hoverPrev) * 100 : null;
+  const tooltipW = 142;
+  const tooltipX = hoverIdx == null ? 0 : Math.max(padL, Math.min(W - padR - tooltipW, x(hoverIdx) - tooltipW / 2));
 
   // Quais pontos ganham rótulo de valor. `soDestaques`: só máximo, mínimo
   // (entre meses fechados) e o mês atual — em vez de um rótulo em cada tick.
@@ -1435,7 +1485,8 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
 
   return (
     <>
-      <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
+      <svg viewBox={`0 0 ${W} ${H}`} onMouseLeave={() => interativo && setHoverIdx(null)}
+        style={{ width: "100%", height: "auto", display: "block", overflow: "visible" }}>
         <defs>
           <linearGradient id={idGrad} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0" stopColor={cor} stopOpacity="0.16" />
@@ -1499,6 +1550,33 @@ function LinhaEvolucao({ serie, cor = C.gold, idGrad = "fillEvol", inverso = fal
             {mesAno(serie[i].mes)}
           </text>
         ))}
+        {interativo && hover && (
+          <g pointerEvents="none">
+            <line x1={x(hoverIdx)} y1={padT} x2={x(hoverIdx)} y2={plotBottom}
+              stroke={cor} strokeWidth="1" strokeDasharray="3 4" opacity=".45" />
+            <circle cx={pts[hoverIdx][0]} cy={pts[hoverIdx][1]} r="5.5" fill={C.void} stroke={cor} strokeWidth="2.5" />
+            <rect x={tooltipX} y="4" width={tooltipW} height="36" rx="7"
+              fill="#17171b" stroke={`${cor}66`} strokeWidth="1" />
+            <text x={tooltipX + 9} y="18" fontSize="10" fontWeight="700" fill={C.muted} fontFamily={SANS}>
+              {mesAno(hover.mes)}{hover.parcial ? " · parcial" : ""}
+            </text>
+            <text x={tooltipX + 9} y="32" fontSize="11.5" fontWeight="800" fill={C.bright} fontFamily={GROTESK}>
+              {formatar(hover.valor)}
+            </text>
+            {hoverDelta != null && (
+              <text x={tooltipX + tooltipW - 9} y="32" fontSize="10.5" fontWeight="800" textAnchor="end"
+                fill={(inverso ? hoverDelta <= 0 : hoverDelta >= 0) ? C.up : C.down} fontFamily={SANS}>
+                {hoverDelta >= 0 ? "▲" : "▼"} {Math.abs(hoverDelta).toFixed(0)}%
+              </text>
+            )}
+          </g>
+        )}
+        {interativo && serie.map((_, i) => {
+          const esquerda = i === 0 ? padL : (x(i - 1) + x(i)) / 2;
+          const direita = i === n - 1 ? W - padR : (x(i) + x(i + 1)) / 2;
+          return <rect key={`hit-${i}`} x={esquerda} y={padT} width={direita - esquerda} height={plotH}
+            fill="transparent" style={{ cursor: "crosshair" }} onMouseEnter={() => setHoverIdx(i)} />;
+        })}
       </svg>
       {temMeta && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 10, color: C.faint, marginTop: 4 }}>
@@ -2753,7 +2831,7 @@ function HubFinanceiro() {
     // mentoria — não só o coach. Nome antigo era repasse_coach.
     const recorte = somarPor(noPeriodo(recCat.data, { inicio, fim }), "categoria",
       ["receita_bruta", "receita_unidade", "repasse", "vendas"]);
-    const rows = recorte.map((r) => ({
+    let rows = recorte.map((r) => ({
       categoria: ehSemVinculo(r.categoria) ? "Sem vínculo" : (r.categoria ?? "—"),
       vendas: Number(r.vendas ?? 0),
       bruto: Number(r.receita_bruta ?? 0),
@@ -2761,13 +2839,26 @@ function HubFinanceiro() {
       repasse: Number(r.repasse ?? 0),
       orfa: ehSemVinculo(r.categoria),
     }));
+    const total = rows.reduce((s, r) => s + r.unidade, 0);
+    const anterior = intervaloAnterior({ inicio, fim, modo });
+    const recorteAnterior = somarPor(noPeriodo(recCat.data, anterior), "categoria", ["receita_unidade"]);
+    const totalAnterior = recorteAnterior.reduce((s, r) => s + Number(r.receita_unidade ?? 0), 0);
+    const participacaoAnterior = new Map(recorteAnterior.map((r) => [
+      ehSemVinculo(r.categoria) ? "Sem vínculo" : (r.categoria ?? "—"),
+      totalAnterior > 0 ? (Number(r.receita_unidade ?? 0) / totalAnterior) * 100 : 0,
+    ]));
+    rows = rows.map((r) => ({
+      ...r,
+      variacaoForca: total > 0 && totalAnterior > 0
+        ? (r.unidade / total) * 100 - Number(participacaoAnterior.get(r.categoria) ?? 0)
+        : null,
+    }));
     const reais = rows.filter((r) => !r.orfa).sort((a, b) => b.unidade - a.unidade);
     const orfas = rows.filter((r) => r.orfa);
-    const total = rows.reduce((s, r) => s + r.unidade, 0);
     const vendasTot = rows.reduce((s, r) => s + r.vendas, 0);
     const semVinc = orfas.reduce((s, r) => s + r.unidade, 0);
     return { reais, orfas, total, vendasTot, semVinc, cobertura: total ? ((total - semVinc) / total) * 100 : null };
-  }, [recCat.data, inicio, fim]);
+  }, [recCat.data, inicio, fim, modo]);
 
   /* Comparativo do KPI principal: somente no filtro Mês, porque comparar Ano,
      Hoje ou 7 dias contra um mês inteiro misturaria janelas diferentes. */
@@ -3026,7 +3117,7 @@ function HubFinanceiro() {
     <>
       {/* Faixa de KPIs compactos — âncora dourada + 4 métricas do mês */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 12, marginBottom: 16 }}>
-        <ChipKpi hero Icone={Wallet} label="Receita reconhecida" valor={moeda(categorias.total)}
+        <ChipKpi hero className="kpiTopoFinanceiro" Icone={Wallet} label="Recebido líquido" valor={moeda(categorias.total)}
           delta={deltaReceitaMes != null ? `${Math.abs(deltaReceitaMes).toFixed(0)}%` : null}
           up={deltaReceitaMes >= 0} deltaBrilha
           deltaNota={deltaReceitaMes != null ? "vs. mês anterior" : null}
@@ -3038,7 +3129,7 @@ function HubFinanceiro() {
             "Vendas", não "pagamentos": a view deduplica por original_id_venda
             antes de contar, então a unidade é a venda, não a linha de
             pagamento (uma venda parcelada é uma só aqui). */}
-        <ChipKpi Icone={Percent} label="Conversão em caixa"
+        <ChipKpi className="kpiTopoFinanceiro" Icone={Percent} label="Conversão em caixa"
           valor={conversaoCaixa.pct != null ? conversaoCaixa.pct.toFixed(0) : "—"} unidade="%"
           delta={conversaoCaixa.deltaPp != null ? `${Math.abs(conversaoCaixa.deltaPp).toFixed(0)} p.p.` : null}
           up={conversaoCaixa.deltaPp >= 0}
@@ -3046,11 +3137,9 @@ function HubFinanceiro() {
           nota={conversaoCaixa.pct != null ? rotulo : "sem base"}
           sub={conversaoCaixa.pct != null ? `${moeda(conversaoCaixa.caixa)} de ${moeda(categorias.total)}` : null}
           subCentralizado />
-        <ChipKpi Icone={AlertTriangle} label="Em aberto" valor={pagTot.pctEmAberto != null ? pagTot.pctEmAberto.toFixed(1) : "—"} unidade="%"
-          nota={pagPorAno.periodo ?? "—"} />
-        <ChipKpi Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
-        <ChipKpi Icone={Hourglass} label="A receber" valor={moeda(aReceber)} nota="CisPay · posição atual" />
-        <ChipKpi Icone={Receipt} label={recebido ? `Recebido em ${dataCurta(recebido.mes)}` : "Recebido"}
+        <ChipKpi className="kpiTopoFinanceiro" Icone={Receipt} label="Ticket médio" valor={ticket != null ? moeda(ticket) : "—"} nota={rotulo} />
+        <ChipKpi className="kpiTopoFinanceiro" Icone={Hourglass} label="A receber" valor={moeda(aReceber)} nota="CisPay · posição atual" />
+        <ChipKpi className="kpiTopoFinanceiro" Icone={Receipt} label={recebido ? `Recebido em ${dataCurta(recebido.mes)}` : "Recebido"}
           valor={recebido ? moeda(recebido.valor) : "—"}
           nota={recebido ? (recebido.fechado ? "último fechado · fluxo do mês" : "mês corrente · fluxo") : "sem lançamento"} />
       </div>
@@ -3076,33 +3165,37 @@ function HubFinanceiro() {
           altura={ALTURA_PAINEL}>
           <div style={{ display: "flex", flexDirection: "column" }}>
             {[
-              ["Evento", movimentosMes.evento, "moeda"],
-              ["GGB", movimentosMes.ggb, "pct"],
-              ["Caixa CisPay", movimentosMes.caixa, "pct"],
-              ["Ticket médio", movimentosMes.ticket, "pct"],
-            ].map(([nome, valor, tipo]) => {
+              ["Evento", movimentosMes.evento, "moeda", "ganhou", "perdeu"],
+              ["GGB", movimentosMes.ggb, "pct", "cresceu", "caiu"],
+              ["Caixa CisPay", movimentosMes.caixa, "pct", "cresceu", "caiu"],
+              ["Ticket médio", movimentosMes.ticket, "pct", "subiu", "caiu"],
+            ].map(([nome, valor, tipo, verboPositivo, verboNegativo]) => {
               const positivo = valor != null && valor >= 0;
-              const texto = valor == null ? "—" : tipo === "moeda"
-                ? `${positivo ? "+" : "−"}${moeda(Math.abs(valor))}`
-                : `${positivo ? "+" : "−"}${Math.abs(valor).toFixed(0)}%`;
-              return <div key={nome} style={{ display: "flex", justifyContent: "space-between", gap: 12,
-                padding: "10px 0", borderBottom: `1px solid ${C.hair}` }}>
-                <span style={{ fontSize: 12, color: C.muted }}>{nome}</span>
-                <b style={{ fontSize: 12.5, color: valor == null ? C.faint : (positivo ? C.up : C.down), fontFamily: GROTESK }}>{texto}</b>
+              const medida = valor == null ? null : tipo === "moeda"
+                ? moeda(Math.abs(valor))
+                : `${Math.abs(valor).toFixed(0)}%`;
+              const frase = valor == null
+                ? `${nome} sem base para comparação`
+                : `${nome} ${positivo ? verboPositivo : verboNegativo} ${medida}`;
+              return <div key={nome} style={{ padding: "10px 0", borderBottom: `1px solid ${C.hair}` }}>
+                <b style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 14,
+                  color: valor == null ? C.faint : (positivo ? C.up : C.down), fontFamily: GROTESK }}>
+                  <span aria-hidden="true" style={{ fontSize: 12 }}>{valor == null ? "⚪" : (positivo ? "🟢" : "🔴")}</span>
+                  <span>{frase}</span>
+                </b>
               </div>;
             })}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, padding: "10px 0" }}>
-              <span style={{ fontSize: 12, color: C.muted }}>Em aberto</span>
-              <b style={{ fontSize: 12.5, color: C.warn, fontFamily: GROTESK }}>
-                {pagTot.pctEmAberto != null ? `${pagTot.pctEmAberto.toFixed(1)}% = ${moeda(emAbertoValor)}` : "—"}
+            <div style={{ padding: "10px 0" }}>
+              <b style={{ display: "flex", alignItems: "baseline", gap: 8, fontSize: 14, color: C.warn, fontFamily: GROTESK }}>
+                <span aria-hidden="true" style={{ fontSize: 12 }}>{pagTot.pctEmAberto != null ? "🟠" : "⚪"}</span>
+                <span>{pagTot.pctEmAberto != null
+                  ? `Em aberto representa ${pagTot.pctEmAberto.toFixed(1)}% · ${moeda(emAbertoValor)}`
+                  : "Em aberto sem base disponível"}</span>
               </b>
             </div>
           </div>
         </Bloco>
 
-        <Bloco titulo="Caixa recebido" canto="mês · CisPay" altura={ALTURA_PAINEL}>
-          <CaixaCard serie={caixaSerie} semFonte={caixaSemFonte} />
-        </Bloco>
       </div>
 
       {/* Linha 2: evolução mensal (larga) · formas de pagamento donut */}
@@ -3121,7 +3214,7 @@ function HubFinanceiro() {
               </div>
             </div>
           ) : (
-            <LinhaEvolucao serie={evolucao} />
+            <LinhaEvolucao serie={evolucao} interativo rotularVar={false} soDestaques yRedondo />
           )}
         </Bloco>
 
@@ -3215,7 +3308,8 @@ function HubFinanceiro() {
         ) : pagoMensal.error || evolDespesa.length < 2 ? (
           <Estado vazio />
         ) : (
-          <LinhaEvolucao serie={evolDespesa} cor={C.down} idGrad="fillDesp" inverso />
+          <LinhaEvolucao serie={evolDespesa} cor={C.down} idGrad="fillDesp" inverso
+            interativo rotularVar={false} soDestaques yRedondo />
         )}
       </Bloco>
 
@@ -3730,7 +3824,184 @@ function FunilConversao({ leads }) {
   );
 }
 
+const mktNoIntervaloMensal = (linhas, per) => {
+  const inicio = per.inicio.slice(0, 7);
+  const fim = per.fim.slice(0, 7);
+  return (linhas ?? []).filter((l) => {
+    const mes = String(l.mes ?? "").slice(0, 7);
+    return mes && mes >= inicio && mes <= fim;
+  });
+};
+
+const mktObjetivo = (linha) => {
+  if (linha.objetivo) return linha.objetivo;
+  const nome = String(linha.campanha_nome ?? "").toLowerCase();
+  if (/whats|mensag/.test(nome)) return "WhatsApp";
+  if (/alcance/.test(nome)) return "Alcance";
+  if (/tr[aá]fego/.test(nome)) return "Tráfego";
+  if (/lead|capta|cadastro|formul/.test(nome)) return "Captação";
+  return "Outro";
+};
+
+const mktGeraLead = (linha) => {
+  if (typeof linha.gera_lead === "boolean") return linha.gera_lead;
+  if (linha.gera_lead != null) return String(linha.gera_lead) === "true";
+  return /whats|mensag|lead|capta|cadastro|formul/i.test(String(linha.campanha_nome ?? ""));
+};
+
 function HubMarketing() {
+  const per = usePeriodo();
+  const saude = useMarketingSaudeCaptacao();
+  const captacao = useMarketingCaptacaoDiaria();
+  const canais = useMarketingLeadsCanal();
+  const campanhas = useMarketingCplCampanha();
+  const consultas = [saude, captacao, canais, campanhas];
+
+  const resumo = useMemo(() => {
+    const linhas = noPeriodo(captacao.data, per, "dia");
+    return linhas.reduce((a, l) => ({
+      leads: a.leads + Number(l.leads ?? 0),
+      origem: a.origem + Number(l.com_origem ?? 0),
+      telefone: a.telefone + Number(l.com_telefone ?? 0),
+    }), { leads: 0, origem: 0, telefone: 0 });
+  }, [captacao.data, per.inicio, per.fim]);
+
+  const porCanal = useMemo(() => {
+    const mapa = new Map();
+    for (const l of mktNoIntervaloMensal(canais.data, per)) {
+      const canal = l.canal || "Sem origem";
+      const atual = mapa.get(canal) ?? { canal, leads: 0, com_telefone: 0 };
+      atual.leads += Number(l.leads ?? 0);
+      atual.com_telefone += Number(l.com_telefone ?? 0);
+      mapa.set(canal, atual);
+    }
+    return [...mapa.values()].sort((a, b) => b.leads - a.leads);
+  }, [canais.data, per.inicio, per.fim]);
+
+  const porCampanha = useMemo(() => {
+    const mapa = new Map();
+    for (const l of mktNoIntervaloMensal(campanhas.data, per)) {
+      const nome = l.campanha_nome || "Campanha sem nome";
+      const atual = mapa.get(nome) ?? {
+        campanha_nome: nome, gasto: 0, leads: 0,
+        objetivo: mktObjetivo(l), gera_lead: mktGeraLead(l), explicacao: l.explicacao,
+      };
+      atual.gasto += Number(l.gasto ?? 0);
+      atual.leads += Number(l.leads ?? 0);
+      atual.explicacao ||= l.explicacao;
+      mapa.set(nome, atual);
+    }
+    return [...mapa.values()].map((l) => ({
+      ...l,
+      cpl: l.gera_lead && l.gasto > 0 && l.leads > 0 ? l.gasto / l.leads : null,
+    })).sort((a, b) => b.gasto - a.gasto);
+  }, [campanhas.data, per.inicio, per.fim]);
+
+  const alerta = saude.data?.[0];
+  const maiorCanal = Math.max(1, ...porCanal.map((l) => l.leads));
+  const pct = (parte, total) => total > 0 ? Math.round(parte / total * 100) : 0;
+
+  return (
+    <Estado
+      carregando={consultas.some((q) => q.isLoading)}
+      erro={consultas.find((q) => q.error)?.error}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {alerta?.alerta && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 11, padding: "12px 15px",
+            borderRadius: 11, border: `1px solid ${C.down}66`,
+            background: `linear-gradient(90deg, ${C.down}1f, ${C.down}08)`,
+          }}>
+            <AlertTriangle size={18} color={C.down} style={{ flexShrink: 0 }} />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ color: C.bright, fontSize: 13.5, fontWeight: 750 }}>
+                Captação parada há {numero(alerta.dias_sem_lead)} dias
+              </div>
+              <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>
+                Nenhum lead novo desde {alerta.ultimo_lead ? new Date(`${String(alerta.ultimo_lead).slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR") : "a última sincronização"}. Verifique a ponte do CRM.
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div style={{
+          display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px 26px",
+          minHeight: 48, padding: "9px 15px", borderRadius: 11,
+          background: C.card, border: `1px solid ${C.cardLine}`,
+        }}>
+          <span style={{ color: C.muted, fontSize: 11, fontWeight: 750, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            Captação · {per.rotulo}
+          </span>
+          <span style={{ color: C.bright, fontSize: 14 }}><b>{numero(resumo.leads)}</b> leads</span>
+          <span style={{ color: C.bright, fontSize: 14 }}><b>{pct(resumo.origem, resumo.leads)}%</b> com origem identificada</span>
+          <span style={{ color: C.bright, fontSize: 14 }}><b>{pct(resumo.telefone, resumo.leads)}%</b> com telefone</span>
+        </div>
+
+        <Bloco titulo="Leads por canal" canto="volume × capacidade de contato">
+          {porCanal.length ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "4px 0 2px" }}>
+              {porCanal.map((l) => {
+                const contato = pct(l.com_telefone, l.leads);
+                const corContato = contato >= 80 ? C.up : contato >= 50 ? C.warn : C.down;
+                return (
+                  <div key={l.canal} style={{ display: "grid", gridTemplateColumns: "minmax(128px, 1.1fr) minmax(150px, 3fr) minmax(150px, 1.35fr)", gap: 13, alignItems: "center" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div title={l.canal} style={{ color: C.bright, fontSize: 12.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.canal}</div>
+                      <div style={{ color: C.muted, fontSize: 10.5 }}>{numero(l.leads)} leads</div>
+                    </div>
+                    <div style={{ height: 9, borderRadius: 999, background: "rgba(255,255,255,.055)", overflow: "hidden" }}>
+                      <div style={{ width: `${Math.max(2, l.leads / maiorCanal * 100)}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${C.goldBase}, ${C.goldTop})` }} />
+                    </div>
+                    <div style={{ color: corContato, fontSize: 11.5, textAlign: "right", whiteSpace: "nowrap" }}>
+                      <b>{numero(l.com_telefone)}</b> com telefone · {contato}%
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : <Estado vazio vazioTitulo="Sem leads no período" vazioDica="Não há captação por canal para o recorte selecionado." />}
+        </Bloco>
+
+        <Bloco titulo="Investimento e CPL" canto="campanhas por maior gasto">
+          {porCampanha.length ? (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 720 }}>
+                <thead><tr>
+                  {["Campanha", "Objetivo", "Investimento", "Leads", "CPL"].map((h, i) => (
+                    <th key={h} style={{ padding: "8px 10px", textAlign: i < 2 ? "left" : "right", color: C.faint, fontSize: 10, textTransform: "uppercase", letterSpacing: ".07em", borderBottom: `1px solid ${C.cardLine}` }}>{h}</th>
+                  ))}
+                </tr></thead>
+                <tbody>{porCampanha.map((l) => (
+                  <tr key={l.campanha_nome} style={{ borderBottom: `1px solid ${C.hair}`, background: l.gera_lead ? `${C.up}06` : "transparent" }}>
+                    <td style={{ padding: "10px", color: C.bright, fontSize: 11.5, fontWeight: 650, borderLeft: `2px solid ${l.gera_lead ? C.up : C.faint}` }}>{l.campanha_nome}</td>
+                    <td style={{ padding: "10px", fontSize: 11 }}>
+                      <span style={{ color: l.gera_lead ? C.up : C.muted, background: l.gera_lead ? `${C.up}14` : "rgba(255,255,255,.04)", borderRadius: 999, padding: "3px 7px", whiteSpace: "nowrap" }}>{l.objetivo}</span>
+                    </td>
+                    <td style={{ padding: "10px", color: C.bright, fontSize: 11.5, textAlign: "right", whiteSpace: "nowrap" }}>{moeda(l.gasto)}</td>
+                    <td style={{ padding: "10px", color: C.bright, fontSize: 11.5, textAlign: "right" }}>{numero(l.leads)}</td>
+                    <td style={{ padding: "10px", color: l.cpl != null ? C.goldTop : C.muted, fontSize: 11.5, textAlign: "right", maxWidth: 260 }}>
+                      {l.cpl != null ? moeda(l.cpl) : (l.explicacao || (l.gera_lead ? "Sem lead identificado para calcular o CPL" : "Objetivo não gera lead mensurável"))}
+                    </td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            </div>
+          ) : <Estado vazio vazioTitulo="Sem investimento no período" vazioDica="Não há campanhas para o recorte selecionado." />}
+          <div style={{ marginTop: 11, paddingTop: 10, borderTop: `1px solid ${C.hair}`, color: C.muted, fontSize: 11.5, lineHeight: 1.45 }}>
+            61% do investimento vai para campanhas de WhatsApp; 35% vai para alcance e tráfego, objetivos que não geram lead mensurável por design.
+          </div>
+        </Bloco>
+
+        <div style={{ color: C.faint, fontSize: 10.5, lineHeight: 1.5, padding: "0 2px" }}>
+          A série de captação começa em 17/07/2026, data da migração do CRM. Não há dado de canal antes disso.
+        </div>
+      </div>
+    </Estado>
+  );
+}
+
+function HubMarketingLegado() {
   const per = usePeriodo();
   const resumo = useMarketingResumoMensal();
   const desemp = useMarketingDesempenho();
@@ -8481,21 +8752,21 @@ function Shell({ perfil }) {
         }
         .girar { animation: girar 1s linear infinite; }
         .subir { animation: subir .4s ease; }
-        .kpiTopoComercial { position: relative; isolation: isolate; overflow: hidden; transition: border-color .22s ease; }
-        .kpiTopoComercial::after {
+        .kpiTopoComercial, .kpiTopoFinanceiro { position: relative; isolation: isolate; overflow: hidden; transition: border-color .22s ease; }
+        .kpiTopoComercial::after, .kpiTopoFinanceiro::after {
           content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none; border-radius: inherit;
           opacity: 0; transition: opacity .22s ease;
           background: transparent;
           box-shadow: inset 0 0 0 1px ${C.gold}52, inset 0 0 11px ${C.gold}20;
         }
-        .kpiTopoComercial:hover { border-color: ${C.gold}55 !important; }
-        .kpiTopoComercial:hover::after { opacity: 1; }
+        .kpiTopoComercial:hover, .kpiTopoFinanceiro:hover { border-color: ${C.gold}55 !important; }
+        .kpiTopoComercial:hover::after, .kpiTopoFinanceiro:hover::after { opacity: 1; }
         /* Painéis do Hub Financeiro (design portado): 1 coluna no mobile,
            proporções do design (5:4:3 e 7:5) em telas largas. */
         .finRow1 { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
         .finRow2 { display: grid; grid-template-columns: 1fr; gap: 16px; align-items: start; }
         @media (min-width: 1000px) {
-          .finRow1 { grid-template-columns: 5fr 4fr 3fr; }
+          .finRow1 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
           .finRow2 { grid-template-columns: 7fr 5fr; }
         }
         /* Hub Comercial: evolução à esquerda, consultoras à direita. Denso
