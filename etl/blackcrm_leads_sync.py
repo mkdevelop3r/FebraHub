@@ -84,10 +84,12 @@ def checar_ambiente():
 # ---------------------------------------------------------------- extração
 def buscar_pagina(start_after=None, start_after_id=None, data_inicio=None):
     """Uma página de oportunidades, mais recentes primeiro."""
+    # NÃO passar `order`: o endpoint devolve lista VAZIA (sem erro) com
+    # order=added_desc. Sem o parâmetro, já vem do mais recente para o mais
+    # antigo, que é o que a paginação por startAfter espera.
     params = {
         "location_id": LOCATION_ID,
         "limit": PAGINA,
-        "order": "added_desc",
         "status": "all",
     }
     if start_after and start_after_id:
@@ -104,8 +106,19 @@ def buscar_pagina(start_after=None, start_after_id=None, data_inicio=None):
         time.sleep(10)
         return buscar_pagina(start_after, start_after_id, data_inicio)
 
+    if r.status_code >= 300:
+        log(f"  HTTP {r.status_code}: {r.text[:400]}")
     r.raise_for_status()
-    return r.json().get("data", {})
+
+    dados = r.json().get("data", {})
+
+    # Vazio sem erro é sintoma de parâmetro recusado silenciosamente
+    # (foi o que aconteceu com order=added_desc). Mostra o que veio.
+    if not dados.get("opportunities") and not start_after:
+        log(f"  resposta sem oportunidades — meta: {json.dumps(dados.get('meta', {}))}")
+        log(f"  params enviados: {json.dumps(params)}")
+
+    return dados
 
 
 def coletar(dias=None, limite_paginas=None):
