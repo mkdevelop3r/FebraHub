@@ -59,6 +59,54 @@ def para_fato(linha, canal):
     return reg
 
 
+def _post(tabela, registros, on_conflict):
+    """Upsert em lote numa tabela. Devolve erro ou None."""
+    if not registros:
+        return None
+    req = urllib.request.Request(
+        f"{SUPABASE_URL}/rest/v1/{tabela}?on_conflict={on_conflict}",
+        data=json.dumps(registros).encode("utf-8"), method="POST",
+        headers={"apikey": SUPABASE_KEY,
+                 "Authorization": f"Bearer {SUPABASE_KEY}",
+                 "Content-Type": "application/json",
+                 "Prefer": "resolution=merge-duplicates,return=minimal"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return None if r.status in (200, 201, 204) else f"HTTP {r.status}"
+    except urllib.error.HTTPError as e:
+        return f"HTTP {e.code} {e.read().decode('utf-8','replace')[:300]}"
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"[:200]
+
+
+def gravar_prova(linhas, canal):
+    """Grava a transcrição e a justificativa por etapa — a prova para quando
+    a consultora contestar a nota. Só o banco recebe: é dado pessoal."""
+    transcricoes, etapas = [], []
+    for l in linhas:
+        aid = l.get("conversation_id") or l.get("message_id")
+        texto = l.get("_transcricao")
+        if texto:
+            transcricoes.append({
+                "auditoria_id": aid, "canal": canal, "texto": texto,
+                "audios": texto.count("[ÁUDIO TRANSCRITO]"),
+                "caracteres": len(texto),
+            })
+        for etapa, dados in (l.get("_etapas") or {}).items():
+            if not isinstance(dados, dict):
+                continue
+            etapas.append({
+                "auditoria_id": aid, "etapa": etapa,
+                "nota": dados.get("nota"),
+                "observacao": (dados.get("obs") or "")[:1000],
+                "trecho": (dados.get("trecho") or "")[:500],
+            })
+    erro = _post("fato_auditoria_transcricao", transcricoes, "auditoria_id")
+    if erro:
+        return f"transcrição: {erro}"
+    return _post("fato_auditoria_etapa", etapas, "auditoria_id,etapa")
+
+
 def gravar(linhas, canal):
     """Upsert em lote. Devolve (gravadas, erro_ou_None)."""
     if not disponivel():
@@ -80,7 +128,10 @@ def gravar(linhas, canal):
     try:
         with urllib.request.urlopen(req, timeout=120) as r:
             if r.status in (200, 201, 204):
-                return len(linhas), None
+                # a prova vai depois: a FK exige o registro pai gravado
+                erro_prova = gravar_prova(linhas, canal)
+                return len(linhas), (f"auditorias ok, prova falhou — {erro_prova}"
+                                     if erro_prova else None)
             return 0, f"HTTP {r.status}"
     except urllib.error.HTTPError as e:
         return 0, f"HTTP {e.code} {e.read().decode('utf-8','replace')[:300]}"
