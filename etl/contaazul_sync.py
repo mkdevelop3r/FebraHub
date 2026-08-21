@@ -14,12 +14,22 @@ o antigo morre. Se o script não gravar o novo, funciona uma vez e
 quebra. Aqui o token vive na tabela integracao_tokens do Supabase:
 o script lê, renova, e grava o novo de volta. Nunca mais Postman.
 
-AUTORIZAÇÃO INICIAL (uma vez, manual):
-OAuth2 Authorization Code exige um humano autorizar no navegador uma
-vez. Faça isso no Postman ou na extensão Chrome da Conta Azul, pegue
-o primeiro refresh_token, e rode:
-    python contaazul_sync.py --semear-token SEU_REFRESH_TOKEN
-Isso grava o token inicial no Supabase. Depois, o script se vira.
+AUTORIZAÇÃO (quando o refresh morre de vez):
+OAuth2 Authorization Code exige um humano autorizar no navegador. O
+`--autorizar` conduz isso do início ao fim: monta a URL, abre o
+navegador, recebe o `code` colado de volta, troca por tokens e grava
+no Supabase.
+    python contaazul_sync.py --autorizar
+Precisa de CONTAAZUL_REDIRECT_URI no .env — o MESMO que está cadastrado
+no app da Conta Azul, caractere por caractere.
+
+QUANDO USAR CADA COISA:
+    --autorizar      o refresh morreu (a API responde invalid_grant)
+    --semear-token   você já tem um refresh novo em mãos, de outra origem
+
+SEMEIE UMA VEZ SÓ. Cada refresh serve para UM uso: quem o usa recebe o
+substituto. Semear de novo com uma cópia velha devolve invalid_grant, e
+esse é o jeito mais comum de se perder aqui.
 
 Uso:
     pip install requests python-dotenv
@@ -42,9 +52,11 @@ import os
 import re
 import sys
 import time
+import webbrowser
 from collections import Counter
 from datetime import date, datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
@@ -56,6 +68,8 @@ except ImportError:
 
 
 AUTH_URL = "https://auth.contaazul.com/oauth2/token"
+AUTORIZA_URL = "https://auth.contaazul.com/oauth2/authorize"
+NOVA_LINHA = chr(10)
 BASE = "https://api-v2.contaazul.com"
 ENDPOINT = "/v1/financeiro/eventos-financeiros/contas-a-receber/buscar"
 TAM_PAGINA = 100
@@ -167,6 +181,114 @@ def _renovar(refresh_token: str) -> str:
     expira_iso = datetime.fromtimestamp(expira, timezone.utc).isoformat()
     token_gravar(d["access_token"], novo_refresh, expira_iso)
     return d["access_token"]
+
+
+SCOPE_PADRAO = "openid profile aws.cognito.signin.user.admin"
+
+ERRO_CODE = """invalid_grant aqui quase sempre e uma destas tres:
+  - o code ja foi usado (vale UMA vez);
+  - passou do prazo (poucos minutos);
+  - o redirect_uri nao e IDENTICO ao do passo do navegador."""
+
+ERRO_REDIRECT = """Falta o redirect_uri. Passe --redirect-uri ou ponha
+CONTAAZUL_REDIRECT_URI no .env. Ele precisa ser IDENTICO ao cadastrado no
+app da Conta Azul - inclusive http/https, barra no fim e porta."""
+
+
+def _trocar_code(code: str, redirect_uri: str) -> Dict[str, Any]:
+    """Troca o `code` de uso unico pelos tokens. Espelha `_renovar`, mudando
+    so o grant_type - o endpoint e a autenticacao Basic sao os mesmos."""
+    r = requests.post(
+        AUTH_URL,
+        headers={
+            "Authorization": f"Basic {_basic()}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+        data={
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+        },
+        timeout=TIMEOUT,
+    )
+    if r.status_code >= 300:
+        raise RuntimeError(
+            f"Troca do code falhou: {r.status_code}" + NOVA_LINHA
+            + r.text[:300] + NOVA_LINHA + ERRO_CODE
+        )
+    return r.json()
+
+
+def autorizar(redirect_uri: Optional[str] = None) -> None:
+    """Fluxo completo de autorizacao, do navegador ao token gravado.
+
+    Existe porque o refresh do Cognito morre - por expirar (costuma ser 30
+    dias) ou porque alguem usou uma copia velha dele. Quando isso acontece
+    nao ha automacao possivel: OAuth2 Authorization Code exige um humano
+    dizendo sim numa tela. O que da para automatizar e todo o resto, e era
+    isso que faltava aqui - o cabecalho deste arquivo mandava para o
+    Postman e nunca mais trazia de volta.
+    """
+    cid = os.environ.get("CONTAAZUL_CLIENT_ID")
+    if not cid:
+        sys.exit("Falta CONTAAZUL_CLIENT_ID no .env")
+
+    redirect_uri = redirect_uri or os.environ.get("CONTAAZUL_REDIRECT_URI")
+    if not redirect_uri:
+        sys.exit(ERRO_REDIRECT)
+
+    escopo = os.environ.get("CONTAAZUL_SCOPE", SCOPE_PADRAO)
+    url = AUTORIZA_URL + "?" + urlencode({
+        "response_type": "code",
+        "client_id": cid,
+        "redirect_uri": redirect_uri,
+        "scope": escopo,
+        "state": "febrahub",
+    })
+
+    print()
+    print("1. Abra esta URL, entre e autorize:")
+    print()
+    print(url)
+    try:
+        webbrowser.open(url)
+        print()
+        print("   (tentei abrir no seu navegador)")
+    except Exception:
+        pass
+
+    print()
+    print("2. Voce vai cair numa pagina de erro ou em branco - e esperado. O")
+    print("   redirect so existe para carregar o `code` na barra de endereco.")
+    print("   Cole a URL INTEIRA aqui (ou so o valor do code):")
+    print()
+    bruto = input("   > ").strip()
+    if not bruto:
+        sys.exit("Nada colado. Abortado.")
+
+    # Aceita a URL inteira ou o code cru: colar a URL e o que a pessoa tem a
+    # mao, e obrigar a recortar o parametro e onde o erro de digitacao entra.
+    code = bruto
+    if "?" in bruto or "code=" in bruto:
+        q = parse_qs(urlparse(bruto).query)
+        if "error" in q:
+            sys.exit("O navegador voltou com erro: " + q["error"][0] + " "
+                     + (q.get("error_description") or [""])[0])
+        if not q.get("code"):
+            sys.exit("Nao achei `code=` na URL colada.")
+        code = q["code"][0]
+
+    print()
+    print("3. Trocando o code por tokens...")
+    d = _trocar_code(code, redirect_uri)
+    if not d.get("refresh_token"):
+        sys.exit("A resposta veio sem refresh_token. Confira os scopes do app.")
+
+    expira = datetime.now(timezone.utc).timestamp() + int(d.get("expires_in", 3600))
+    token_gravar(d["access_token"], d["refresh_token"],
+                 datetime.fromtimestamp(expira, timezone.utc).isoformat())
+    print("OK - tokens gravados no Supabase. O script se vira daqui em diante.")
+    print("Confira com: python contaazul_sync.py --diagnostico")
 
 
 def semear(refresh_token: str) -> None:
@@ -429,14 +551,20 @@ def sincronizar(desde: str) -> None:
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
+    ap.add_argument("--autorizar", action="store_true",
+                    help="refaz a autorização no navegador e grava os tokens")
+    ap.add_argument("--redirect-uri",
+                    help="sobrepõe CONTAAZUL_REDIRECT_URI, só com --autorizar")
     ap.add_argument("--semear-token", metavar="REFRESH_TOKEN",
-                    help="grava o refresh token inicial (obtido manualmente uma vez)")
+                    help="grava um refresh token que você já tem em mãos")
     ap.add_argument("--diagnostico", action="store_true")
     ap.add_argument("--sync", action="store_true")
     ap.add_argument("--desde", default="2024-01-01", help="data de vencimento inicial")
     a = ap.parse_args()
 
-    if a.semear_token:
+    if a.autorizar:
+        autorizar(a.redirect_uri)
+    elif a.semear_token:
         semear(a.semear_token)
     elif a.diagnostico:
         diagnosticar()
