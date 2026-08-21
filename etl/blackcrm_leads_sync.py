@@ -84,13 +84,11 @@ def checar_ambiente():
 # ---------------------------------------------------------------- extração
 def buscar_pagina(start_after=None, start_after_id=None, data_inicio=None):
     """Uma página de oportunidades, mais recentes primeiro."""
-    # NÃO passar `order`: o endpoint devolve lista VAZIA (sem erro) com
-    # order=added_desc. Sem o parâmetro, já vem do mais recente para o mais
-    # antigo, que é o que a paginação por startAfter espera.
     params = {
         "location_id": LOCATION_ID,
         "limit": PAGINA,
         "status": "all",
+        "order": "added_desc",   # mais recentes primeiro (casa com startAfter)
     }
     if start_after and start_after_id:
         params["startAfter"] = start_after
@@ -110,12 +108,21 @@ def buscar_pagina(start_after=None, start_after_id=None, data_inicio=None):
         log(f"  HTTP {r.status_code}: {r.text[:400]}")
     r.raise_for_status()
 
-    dados = r.json().get("data", {})
+    bruto = r.json()
 
-    # Vazio sem erro é sintoma de parâmetro recusado silenciosamente
-    # (foi o que aconteceu com order=added_desc). Mostra o que veio.
+    # A API do LeadConnector devolve {"opportunities": [...], "meta": {...}}
+    # na RAIZ. Alguns clientes (o conector MCP, por exemplo) embrulham em
+    # {"data": {...}}. Aceita os dois.
+    if "opportunities" in bruto:
+        dados = bruto
+    elif isinstance(bruto.get("data"), dict):
+        dados = bruto["data"]
+    else:
+        dados = {}
+
     if not dados.get("opportunities") and not start_after:
-        log(f"  resposta sem oportunidades — meta: {json.dumps(dados.get('meta', {}))}")
+        log(f"  resposta sem oportunidades — chaves na raiz: {list(bruto.keys())}")
+        log(f"  meta: {json.dumps(dados.get('meta', {}))}")
         log(f"  params enviados: {json.dumps(params)}")
 
     return dados
