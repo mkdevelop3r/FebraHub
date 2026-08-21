@@ -1,0 +1,46 @@
+name: Sync Leads (Black CRM)
+
+on:
+  schedule:
+    # 3x ao dia, alinhado com os outros syncs (horário de Salvador = UTC-3)
+    - cron: '20 9,15,20 * * *'
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'Tipo de carga'
+        required: true
+        default: 'incremental'
+        type: choice
+        options:
+          - incremental
+          - full
+          - diagnostico
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependências
+        run: pip install requests
+
+      - name: Rodar sync
+        env:
+          BLACKCRM_TOKEN: ${{ secrets.BLACKCRM_TOKEN }}
+          BLACKCRM_LOCATION_ID: ${{ secrets.BLACKCRM_LOCATION_ID }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          MODO="${{ github.event.inputs.modo }}"
+          if [ "$MODO" = "full" ]; then
+            python etl/blackcrm_leads_sync.py --full
+          elif [ "$MODO" = "diagnostico" ]; then
+            python etl/blackcrm_leads_sync.py --diagnostico
+          else
+            python etl/blackcrm_leads_sync.py
+          fi
