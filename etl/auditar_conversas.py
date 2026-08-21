@@ -111,15 +111,29 @@ nao_identificou_desafios, perguntas_superficiais, discurso_generico,
 nao_conectou_solucao, nao_trabalhou_objecoes, nao_realizou_fechamento,
 sem_proximo_passo.
 
+PROVA OBRIGATÓRIA. Para cada etapa, além da nota, devolva:
+- "obs": uma frase objetiva dizendo por que a nota é essa.
+- "trecho": CITAÇÃO LITERAL da conversa, copiada sem alterar uma palavra, que
+  sustenta a nota (até 200 caracteres). Se a etapa falhou por AUSÊNCIA, cite o
+  trecho onde ela deveria ter acontecido — normalmente a transição em que a
+  consultora pulou para a oferta. Se não houver trecho possível, use "".
+Isto é usado em devolutiva com a consultora: ela vai ler. Não parafraseie, não
+invente frase que não está na conversa e não julgue a pessoa — descreva o que
+foi dito.
+
 NÃO CALCULE NOTA NEM SCORE. O cálculo é feito fora, a partir das suas notas.
 
 Responda SÓ com este JSON, sem texto em volta e sem blocos de código:
-{"etapas":{"apresentacao":{"nota":<1|0>,"obs":"<frase>"},
-"motivo_contato":{"nota":<1|0>,"obs":""},"perfil_profissional":{"nota":<1|0>,"obs":""},
-"objetivos_futuro":{"nota":<1|0>,"obs":""},"desafios_dores":{"nota":<1|0>,"obs":""},
-"apresentacao_treinamento":{"nota":<1|0>,"obs":""},"validacao_interesse":{"nota":<1|0>,"obs":""},
-"tratamento_objecoes":{"nota":<1|0|null>,"obs":""},"fechamento":{"nota":<1|0>,"obs":""},
-"proximos_passos":{"nota":<1|0>,"obs":""}},
+{"etapas":{"apresentacao":{"nota":<1|0>,"obs":"<frase>","trecho":"<citação literal>"},
+"motivo_contato":{"nota":<1|0>,"obs":"","trecho":""},
+"perfil_profissional":{"nota":<1|0>,"obs":"","trecho":""},
+"objetivos_futuro":{"nota":<1|0>,"obs":"","trecho":""},
+"desafios_dores":{"nota":<1|0>,"obs":"","trecho":""},
+"apresentacao_treinamento":{"nota":<1|0>,"obs":"","trecho":""},
+"validacao_interesse":{"nota":<1|0>,"obs":"","trecho":""},
+"tratamento_objecoes":{"nota":<1|0|null>,"obs":"","trecho":""},
+"fechamento":{"nota":<1|0>,"obs":"","trecho":""},
+"proximos_passos":{"nota":<1|0>,"obs":"","trecho":""}},
 "criticos":{"apresentou_antes_de_sondar":<bool>,"nao_identificou_profissao":<bool>,
 "nao_identificou_objetivos":<bool>,"nao_identificou_desafios":<bool>,
 "perguntas_superficiais":<bool>,"discurso_generico":<bool>,"nao_conectou_solucao":<bool>,
@@ -328,6 +342,9 @@ if __name__ == "__main__":
             continue
 
         linha = linha_csv(a, cid, consultora, consultora_uid, humanas, n_audios)
+        # prova: a conversa como a IA leu, e a justificativa de cada etapa
+        linha["_transcricao"] = texto
+        linha["_etapas"] = a.get("etapas", {})
         resultados.append(linha)
         marca = "COMPLETO" if linha["atendimento_completo"] == "sim" else \
                 f"{len(linha['pontos_criticos'].split(' | '))} críticos"
@@ -336,8 +353,11 @@ if __name__ == "__main__":
         time.sleep(0.5)
 
     if resultados:
+        # o CSV fica sem os campos de prova: transcrição é dado pessoal e não
+        # deve circular em arquivo solto. Vai só para o banco, com RLS.
+        colunas = [c for c in resultados[0].keys() if not c.startswith("_")]
         with open("auditorias_whatsapp.csv", "w", newline="", encoding="utf-8-sig") as f:
-            w = csv.DictWriter(f, fieldnames=list(resultados[0].keys()))
+            w = csv.DictWriter(f, fieldnames=colunas, extrasaction="ignore")
             w.writeheader(); w.writerows(resultados)
         media = sum(r["score"] for r in resultados if r["score"]) / len(resultados)
         print(f"\n{len(resultados)} auditadas · score médio {media:.0f} -> auditorias_whatsapp.csv")
