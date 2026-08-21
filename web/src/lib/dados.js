@@ -409,8 +409,6 @@ export const useMarketingSaudeCaptacao = () =>
   useView("vw_mkt_saude_captacao");
 export const useMarketingCaptacaoDiaria = () =>
   useView("vw_mkt_captacao_diaria", { ordem: ["dia"] });
-export const useMarketingLeadsCanal = () =>
-  useView("vw_mkt_leads_canal", { ordem: ["mes", "canal"] });
 export const useMarketingCplCampanha = () =>
   useView("vw_mkt_cpl_campanha", { ordem: ["mes", "campanha_nome"] });
 

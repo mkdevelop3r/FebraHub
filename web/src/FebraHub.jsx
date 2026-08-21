@@ -31,7 +31,6 @@ import {
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingSaudeCaptacao, useMarketingCaptacaoDiaria,
-  useMarketingLeadsCanal,
   usePedagogicoKpis, usePedagogicoPresencaKpis, usePedagogicoPresencaTempo,
   usePedagogicoRecompraCurso, usePedagogicoPresencaCurso,
   usePedagogicoMaestrosCompleto, usePedagogicoMaestrosKpis, usePedagogicoMaestroAnotacoes,
@@ -3850,9 +3849,8 @@ function HubMarketing() {
   const per = usePeriodo();
   const saude = useMarketingSaudeCaptacao();
   const captacao = useMarketingCaptacaoDiaria();
-  const canais = useMarketingLeadsCanal();
   const desempenho = useMarketingDesempenho();
-  const consultas = [saude, captacao, canais, desempenho];
+  const consultas = [saude, captacao, desempenho];
   const [semLeadAberto, setSemLeadAberto] = useState(false);
 
   const resumo = useMemo(() => {
@@ -3863,18 +3861,6 @@ function HubMarketing() {
       telefone: a.telefone + Number(l.com_telefone ?? 0),
     }), { leads: 0, origem: 0, telefone: 0 });
   }, [captacao.data, per.inicio, per.fim]);
-
-  const porCanal = useMemo(() => {
-    const mapa = new Map();
-    for (const l of mktNoIntervaloMensal(canais.data, per)) {
-      const canal = l.canal || "Sem origem";
-      const atual = mapa.get(canal) ?? { canal, leads: 0, com_telefone: 0 };
-      atual.leads += Number(l.leads ?? 0);
-      atual.com_telefone += Number(l.com_telefone ?? 0);
-      mapa.set(canal, atual);
-    }
-    return [...mapa.values()].sort((a, b) => b.leads - a.leads);
-  }, [canais.data, per.inicio, per.fim]);
 
   const performance = useMemo(
     () => mktNoIntervaloMensal(desempenho.data, per),
@@ -3929,7 +3915,6 @@ function HubMarketing() {
   );
 
   const alerta = saude.data?.[0];
-  const maiorCanal = Math.max(1, ...porCanal.map((l) => l.leads));
   const maiorGastoCategoria = Math.max(1, ...porCategoria.map((l) => l.gasto));
   const pct = (parte, total) => total > 0 ? Math.round(parte / total * 100) : 0;
 
@@ -3990,33 +3975,6 @@ function HubMarketing() {
               </div>
             ))}
           </div>
-        </Bloco>
-
-        <Bloco titulo="Leads por canal" canto="volume × capacidade de contato">
-          {porCanal.length ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "4px 0 2px" }}>
-              {porCanal.map((l) => {
-                const contato = pct(l.com_telefone, l.leads);
-                return (
-                  <div key={l.canal} style={{ display: "grid", gridTemplateColumns: "minmax(128px, 1.1fr) minmax(150px, 3fr) minmax(150px, 1.35fr)", gap: 13, alignItems: "center" }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div title={l.canal} style={{ color: C.bright, fontSize: 12.5, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.canal}</div>
-                      <div style={{ color: C.muted, fontSize: 10.5 }}>{numero(l.leads)} leads</div>
-                    </div>
-                    <div style={{ height: 9, borderRadius: 999, background: "rgba(255,255,255,.055)", overflow: "hidden" }}>
-                      <div style={{ width: `${Math.max(2, l.leads / maiorCanal * 100)}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${C.goldBase}, ${C.goldTop})` }} />
-                    </div>
-                    {contato < 80 ? (
-                      <div style={{ color: C.down, fontSize: 11.5, fontWeight: 750, textAlign: "right", whiteSpace: "nowrap" }}>
-                        <AlertTriangle size={12} style={{ verticalAlign: -2, marginRight: 5 }} />
-                        Apenas {numero(l.com_telefone)} contatáveis · {contato}%
-                      </div>
-                    ) : <div />}
-                  </div>
-                );
-              })}
-            </div>
-          ) : <Estado vazio vazioTitulo="Sem leads no período" vazioDica="Não há captação por canal para o recorte selecionado." />}
         </Bloco>
 
         <Bloco titulo="Campanhas com CPL" canto="menor CPL primeiro">
