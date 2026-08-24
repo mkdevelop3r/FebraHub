@@ -38,7 +38,7 @@ import {
   usePedagogicoPainel,
   useVendaFaturamentoDesde, useFinanceiroRecebidoMensal,
   useMarketingInvestimento, useLojaMetaRealizado,
-  useExecutivoReativacao, useExecutivoComercial30d,
+  useExecutivoReativacao,
   useTurmaDim, useTurmaSugestao,
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
   useRepresadoLista, dispararRepresados, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
@@ -1975,23 +1975,16 @@ const resumoReativacao = (rows) => {
   return { alunos: alunos.size, valor, temDados: arr.length > 0 };
 };
 
-/* Receita comercial dos últimos 30 dias por consultora — a MESMA base sustenta o
-   alerta de concentração e o card Top 3 (o % tem que bater). Regras do dado
-   (task da diretoria): só tipo_matricula de venda real; receita = MAX(valor) por
-   original_id_venda (somar cru infla ~77% por causa das parcelas); agrupa por
-   consultor_id, que já traz o NOME. Concentração = líder ÷ total. */
-const TIPOS_MATRICULA_VENDA = ["Matrícula", "COMPRADOR DE VAGAS", "MAT. RETROATIVA"];
-const rankConsultoras30d = (rows) => {
-  const arr = (rows ?? []).filter((r) => TIPOS_MATRICULA_VENDA.includes(String(r.tipo_matricula)));
-  const maxVenda = new Map(), consVenda = new Map();
-  for (const r of arr) {
-    const k = String(r.original_id_venda), v = Number(r.valor ?? 0);
-    maxVenda.set(k, Math.max(maxVenda.get(k) ?? -Infinity, v));
-    if (!consVenda.has(k)) consVenda.set(k, r.consultor_id);
-  }
+/* Receita comercial dos últimos 30 dias por consultora. Usa a mesma view
+   consolidada do ranking Geral do Comercial: venda deduplicada, nome resolvido
+   em dim_consultores e recorte pela data de aprovação (venda, não caixa). */
+const rankConsultoras30d = (rows, desde) => {
   const porCons = new Map();
-  for (const [venda, v] of maxVenda) {
-    const c = consVenda.get(venda) ?? "—";
+  for (const r of rows ?? []) {
+    const data = String(r.data_aprovacao ?? r.data ?? "").slice(0, 10);
+    if (!data || data < desde) continue;
+    const c = r.consultora ?? "—";
+    const v = Number(r.valor_bruto ?? r.valor ?? 0);
     porCons.set(c, (porCons.get(c) ?? 0) + v);
   }
   const rank = [...porCons.entries()]
@@ -2193,8 +2186,8 @@ function HubExecutivo({ onIr }) {
   const inadimp = useFinanceiroInadimp();
   const lojaMeta = useLojaMetaRealizado();
   const reativ = useExecutivoReativacao();
-  const cons30 = useExecutivoComercial30d(desde30);
-  const comMensal = useComercialGeralMensal();
+  const cons30 = useComercialRankingGeralConsolidado();
+  const matriculasExec = useComercialMatriculasPeriodo();
   const recMensal = useFinanceiroRecebidoMensal();
   const mktInv = useMarketingInvestimento();
   const pedK = usePedagogicoKpis();
@@ -2204,7 +2197,7 @@ function HubExecutivo({ onIr }) {
   const lojaRow = useMemo(() => (lojaMeta.data ?? []).find((r) => noMesYM(r.mes_ref, ym)), [lojaMeta.data, ym]);
   const lojaAbaixo = lojaRow && String(lojaRow.nivel_atingido ?? "").trim().toLowerCase() === "abaixo";
   const reativacao = useMemo(() => resumoReativacao(reativ.data), [reativ.data]);
-  const consultoras = useMemo(() => rankConsultoras30d(cons30.data), [cons30.data]);
+  const consultoras = useMemo(() => rankConsultoras30d(cons30.data, desde30), [cons30.data, desde30]);
 
   /* Bloco 2 — radar. Status de integração saiu daqui: saúde de API é assunto da
      Central de APIs, não decisão de diretoria. No lugar, dois alertas de
@@ -2221,18 +2214,16 @@ function HubExecutivo({ onIr }) {
     ...(consultoras.concentracao != null && consultoras.concentracao > 40 ? [{ cor: C.down, Icone: AlertTriangle, titulo: "Concentração comercial", valor: `${Math.round(consultoras.concentracao)}%`, sub: `da receita de 30 dias em ${consultoras.lider ? primeiroNome(consultoras.lider) : "1 consultora"}` }] : []),
   ];
 
-  /* Bloco 3 — cards por setor (mês corrente). O faturamento do card Comercial
-     sai da MESMA fonte canônica do topo (não da soma por mês de pagamento, que
-     é caixa e mostrava outro número na mesma tela). As matrículas a view
-     canônica não tem — vêm do consolidado, recortadas pelo mesmo critério
-     (aprovação), porque comprador de vaga é receita mas não é aluno. */
+  /* Bloco 3 — cards por setor (mês corrente). Faturamento e matrículas usam as
+     mesmas fontes canônicas do Hub Comercial. Matrícula conta quem estuda
+     (Matrícula + CONSUMIDOR DE VAGAS), nunca o comprador terceiro. */
   const com = useMemo(() => {
     const linhaMes = (fatMensal.data ?? []).find((r) => noMesYM(r.mes, ym));
-    const mat = (comMensal.data ?? [])
-      .filter((r) => noMesYM(r.data_aprovacao ?? r.data, ym))
-      .reduce((s, r) => s + Number(r.conta_matricula ?? 0), 0);
+    const mat = (matriculasExec.data ?? [])
+      .filter((r) => noMesYM(r.data, ym))
+      .reduce((s, r) => s + Number(r.matriculas ?? 0), 0);
     return { fat: Number(linhaMes?.faturamento_bruto ?? 0), mat };
-  }, [fatMensal.data, comMensal.data, ym]);
+  }, [fatMensal.data, matriculasExec.data, ym]);
   const recebido = useMemo(() => recebidoMaisRecente(recMensal.data, ym), [recMensal.data, ym]);
   const investMes = useMemo(() => (mktInv.data ?? []).filter((r) => noMesYM(r.mes, ym)).reduce((s, r) => s + Number(r.gasto ?? 0), 0), [mktInv.data, ym]);
   const recompra = pedK.data?.[0]?.taxa_recompra;
@@ -2260,7 +2251,7 @@ function HubExecutivo({ onIr }) {
       {/* Bloco 3 */}
       <div className="execCards">
         <CardSetor Icone={TrendingUp} titulo="Comercial" onIr={() => onIr("comercial")}
-          estado={{ carregando: fatMensal.isLoading, erro: fatMensal.error }}
+          estado={{ carregando: fatMensal.isLoading || matriculasExec.isLoading, erro: fatMensal.error ?? matriculasExec.error }}
           linhas={[{ label: "faturamento bruto", valor: moeda(com.fat), cor: C.gold }, { label: "matrículas", valor: numero(com.mat) }]} />
         <CardSetor Icone={Wallet} titulo="Financeiro" onIr={() => onIr("financeiro")}
           estado={{ carregando: recMensal.isLoading, erro: recMensal.error }}
