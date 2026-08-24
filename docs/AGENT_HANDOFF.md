@@ -554,6 +554,48 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
 
 ### Codex → Claude Code
 
+- **24/08/2026 — Central Febracis (kanban Salvador).** A entrada técnica
+  `central-eventos` foi preservada, mas o nome no menu e na tela passou a ser
+  **Central Febracis**. A tela existente não foi duplicada: o componente
+  exibido foi substituído pelo kanban “Este mês” / “Próximo mês”, alimentado
+  por `vw_central_eventos`. Cards priorizam data e vendas; confirmados são
+  exclusivamente manuais; “Sede Febracis” aparece como sugestão quando
+  `local_padrao=true`. O painel lateral edita local, endereço, confirmados,
+  capacidade e observação com upsert em `evento_detalhe`, registrando usuário
+  e horário. A UI consulta `pode_editar_evento()` antes de oferecer edição.
+  Migrations relacionadas: 146 e 146b já constavam como aplicadas; a nova
+  `150_central_eventos.sql` está versionada como **NÃO APLICADA**. Build passou
+  e `npm run dev` subiu na porta 5175.
+
+- **21–24/08/2026 — Financeiro, Marketing e Executivo.**
+  - O Financeiro recebeu os novos gráficos e refinamentos de KPIs no commit
+    `b77f00c`; ajustes adicionais que estavam junto da reconstrução do
+    Marketing entraram em `a308231`.
+  - A branch `feat/pedagogico-automacao` foi integrada à `main` no commit
+    `0a9913a`. No único conflito, `etl/blackcrm_leads_sync.py`, foi preservada
+    a versão mais recente que já existia na `main`.
+  - O Hub de Marketing foi reconstruído sem ROI, CAC, LTV nem atribuição de
+    venda. Ficaram alerta de captação, resumo compacto e comparação de
+    investimento/CPL; o bloco “Leads por canal” e seu hook foram removidos.
+    Commits: `a308231`, `dc70543` e `2ac138b`.
+  - O frontend não consulta mais `vw_marketing_atribuicao_campanha`. A view
+    havia causado junção explosiva e respostas 403; não reintroduzir esse
+    hook. `vw_loja_receita_periodo` agora ordena somente por `data`, pois a
+    coluna `forma` não existe nessa view.
+  - Migrations 146–149 foram versionadas e publicadas no Git, mas a aplicação
+    delas no Supabase não foi confirmada nesta sessão. Não declarar como
+    aplicadas sem conferir o banco.
+  - Em 24/08, o Executivo foi alinhado às fontes canônicas do Comercial:
+    matrículas vêm de `vw_comercial_matriculas_periodo`; Top 3 e concentração
+    vêm de `vw_comercial_ranking_geral_consolidado`, por data de aprovação e
+    com nome resolvido da consultora. Commit `e037b09`, enviado para
+    `origin/feat/pedagogico-automacao`; **ainda não integrado à `main`**.
+  - Build do frontend passou depois das correções do Executivo.
+  - Há trabalho local de Auditoria em andamento em
+    `etl/auditar_conversas.py`, `db/migration_auditoria_prova.sql` e CSVs de
+    auditoria/transcrição. Esses arquivos não pertencem às mudanças acima e
+    devem ser preservados.
+
 - 19/08/2026: preserve as alterações de Comercial/Financeiro/Pedagógico em
   `web/src/FebraHub.jsx`, `web/src/lib/dados.js` e `db/INDICE.md`.
 - Migrations 129, 134, 135 e 136 já foram aplicadas no Supabase.

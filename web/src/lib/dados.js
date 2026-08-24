@@ -846,6 +846,47 @@ const erroSupabase = (error) => {
   throw new Error(error.message || String(error));
 };
 
+/* Central Febracis — kanban das turmas de Salvador. A consulta já nasce
+   limitada às duas colunas visíveis. */
+export function useCentralFebracis() {
+  return useQuery({
+    queryKey: ["central_febracis"],
+    staleTime: 60 * 1000,
+    retry: 2,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vw_central_eventos")
+        .select("*")
+        .in("coluna", ["este_mes", "proximo_mes"])
+        .order("data_inicio", { ascending: true });
+      erroSupabase(error);
+      return data ?? [];
+    },
+  });
+}
+
+export function usePodeEditarEvento() {
+  return useQuery({
+    queryKey: ["pode_editar_evento"],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc("pode_editar_evento");
+      erroSupabase(error);
+      return data === true;
+    },
+  });
+}
+
+export async function salvarEventoDetalhe(detalhe) {
+  const { data, error } = await supabase
+    .from("evento_detalhe")
+    .upsert(detalhe, { onConflict: "turma_id" })
+    .select("turma_id")
+    .single();
+  erroSupabase(error);
+  return data;
+}
+
 export async function mktUnidadesAtivas() {
   const { data, error } = await supabase
     .from("mkt_unidades")

@@ -87,10 +87,19 @@ const HUBS = [
   { key: "comercial",  nome: "Comercial",  Icone: TrendingUp,    desc: "Pódio de consultoras e placar da semana" },
   { key: "financeiro", nome: "Financeiro", Icone: Wallet,        desc: "Receita por curso e cobertura" },
   { key: "marketing",  nome: "Marketing",  Icone: Megaphone,     desc: "Origem de leads e campanhas" },
-  /* Operação do Marketing, como a Central Pedagógica é a do Pedagógico:
-     `setor` existe porque a chave não é o próprio setor. */
-  { key: "central-eventos", setor: "marketing", nome: "Central de Eventos", Icone: CalendarDays,
-    desc: "Agenda, checklist de divulgação e o que está atrasado" },
+  /* Operação do Marketing, como a Central Pedagógica é a do Pedagógico.
+     DOIS setores abrem este hub, e é o único assim: quem é do marketing
+     entra porque a Central é parte do trabalho dele; e existe o setor
+     estreito `central-eventos`, para quem opera evento SEM ver lead,
+     campanha e investimento — o caso da social media (migration 146).
+
+     Se fosse um setor só, dar a Central obrigaria a dar o Hub de
+     Marketing junto. Se fosse só `central-eventos`, todo mundo do
+     marketing precisaria de dois setores e esquecer um deixaria a pessoa
+     sem a Central. */
+  { key: "central-eventos", setores: ["marketing", "central-eventos"],
+    nome: "Central Febracis", Icone: CalendarDays,
+    desc: "Eventos e turmas de Salvador" },
   { key: "pedagogico", nome: "Pedagógico", Icone: GraduationCap, desc: "Turmas, matrículas e conclusão" },
   /* A Central é operação, não setor: quem enxerga é quem tem o setor
      'pedagogico'. `setor` existe só por isso — nos outros, a chave já é o
@@ -8656,7 +8665,10 @@ function Shell({ perfil }) {
     };
   }, [modo, ano, mesIdx, anos, minMes, maxMes, geral]);
 
-  const visiveis = admin ? HUBS : HUBS.filter((h) => setores.includes(h.setor ?? h.key));
+  /* `setores` (plural) para hubs que aceitam mais de um; `setor` para o
+     que tem um só; e a chave quando ela própria é o setor. */
+  const visiveis = admin ? HUBS : HUBS.filter((h) =>
+    (h.setores ?? [h.setor ?? h.key]).some((s) => setores.includes(s)));
   const hub = HUBS.find((h) => h.key === tela);
 
   const conteudo = () => {

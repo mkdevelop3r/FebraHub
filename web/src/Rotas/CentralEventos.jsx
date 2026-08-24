@@ -20,11 +20,12 @@
    achado sem leitura.
    ============================================================ */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import {
   CalendarDays, ChevronLeft, ChevronRight, CircleCheck, Circle,
   AlertTriangle, Copy, Check, Users, UserCheck, Zap, HelpCircle,
   RefreshCw, X, ListChecks, Ban, Undo2, CalendarClock, Bell, Ticket,
+  MapPin, Pencil, Save, Lock,
 } from "lucide-react";
 import {
   mktUnidadesAtivas, mktTiposComChecklist, mktEventosDoMes,
@@ -32,6 +33,7 @@ import {
   mktAcoesDoPeriodo, mktAcoesAtrasadas,
   mktCanceladosDoMes, mktCancelarEvento, mktReativarEvento, mktSouGestor,
   mktPublicoDoMes,
+  useCentralFebracis, usePodeEditarEvento, salvarEventoDetalhe, useSessao,
 } from "../lib/dados";
 
 /* ============ DESIGN TOKENS ============
@@ -1189,7 +1191,7 @@ function Sino({ pendentes, atrasadas, publico, mes }) {
 }
 
 /* ============ PÁGINA ============ */
-export default function CentralEventos() {
+function CentralEventosLegado() {
   const agora = new Date();
   const [ano, setAno] = useState(agora.getFullYear());
   const [mes, setMes] = useState(agora.getMonth());
@@ -1513,6 +1515,146 @@ export default function CentralEventos() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+/* ============ CENTRAL FEBRACIS · SALVADOR ============ */
+const fmtPeriodoCentral = (inicio, fim) => {
+  const fmt = (iso) => new Date(`${String(iso).slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
+  if (!inicio) return "Data não informada";
+  return !fim || String(fim).slice(0, 10) === String(inicio).slice(0, 10)
+    ? fmt(inicio) : `${fmt(inicio)} a ${fmt(fim)}`;
+};
+
+const contagemEvento = (dias) => {
+  const n = Number(dias);
+  if (n < 0) return { texto: "realizado", cor: C.textFaint };
+  if (n === 0) return { texto: "hoje", cor: C.gold };
+  return { texto: `em ${n} dia${n === 1 ? "" : "s"}`, cor: n <= 7 ? C.gold : C.textMuted };
+};
+
+function CardCentralFebracis({ evento, onAbrir }) {
+  const quando = contagemEvento(evento.dias_para_inicio);
+  return (
+    <button type="button" onClick={onAbrir} className="w-full text-left rounded-xl p-4 transition-colors"
+      style={{ background: C.surface, border: `1px solid ${C.bronzeLine}`, color: C.text }}>
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0">
+          <h3 className="font-semibold text-[14px] leading-snug truncate" title={evento.titulo}>{evento.titulo}</h3>
+          <div className="text-[11px] mt-1" style={{ color: C.textMuted }}>{fmtPeriodoCentral(evento.data_inicio, evento.data_fim)}</div>
+        </div>
+        <span className="text-[10.5px] font-semibold shrink-0" style={{ color: quando.cor }}>{quando.texto}</span>
+      </div>
+
+      <div className="flex items-end justify-between gap-3 pb-3 mb-3" style={{ borderBottom: `1px solid ${C.hair}` }}>
+        <div>
+          <div className="text-[9px] uppercase tracking-[.11em]" style={{ color: C.textFaint }}>Vendas</div>
+          <div className="text-[22px] font-bold tabular-nums" style={{ fontFamily: FONT_DISPLAY, color: C.gold }}>{Number(evento.vendas ?? 0).toLocaleString("pt-BR")}</div>
+        </div>
+        <Pencil size={13} style={{ color: C.textFaint }} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <div className="text-[9px] uppercase tracking-[.11em] mb-1" style={{ color: C.textFaint }}>Confirmados</div>
+          {evento.confirmados == null
+            ? <span className="text-[11px]" style={{ color: C.textFaint }}>— informar</span>
+            : <span className="text-[13px] font-semibold tabular-nums">{Number(evento.confirmados).toLocaleString("pt-BR")}</span>}
+        </div>
+        <div className="min-w-0">
+          <div className="text-[9px] uppercase tracking-[.11em] mb-1" style={{ color: C.textFaint }}>Local</div>
+          <span className="text-[11px] leading-snug flex items-start gap-1 min-w-0"
+            style={{ color: evento.local_padrao ? C.textFaint : C.textMuted, fontStyle: evento.local_padrao ? "italic" : "normal" }}>
+            <MapPin size={11} className="shrink-0 mt-0.5" />
+            <span className="truncate">{evento.local}{evento.local_padrao ? " · sugestão" : ""}</span>
+          </span>
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function PainelDetalheEvento({ evento, podeEditar, usuarioId, onFechar, onSalvo }) {
+  const [form, setForm] = useState({
+    local: evento.local_padrao ? "" : (evento.local ?? ""),
+    endereco: evento.endereco ?? "",
+    confirmados: evento.confirmados ?? "",
+    capacidade: evento.capacidade ?? "",
+    observacao: evento.observacao ?? "",
+  });
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+  const campo = (key) => (e) => setForm((v) => ({ ...v, [key]: e.target.value }));
+  const inputStyle = { width: "100%", background: C.void, border: `1px solid ${C.bronzeLine}`, borderRadius: 8, padding: "9px 10px", color: C.text, fontSize: 12.5, outline: "none" };
+
+  const salvar = async () => {
+    setSalvando(true); setErro(null);
+    try {
+      await salvarEventoDetalhe({
+        turma_id: evento.turma_id,
+        local: form.local.trim() || null,
+        endereco: form.endereco.trim() || null,
+        confirmados: form.confirmados === "" ? null : Number(form.confirmados),
+        capacidade: form.capacidade === "" ? null : Number(form.capacidade),
+        observacao: form.observacao.trim() || null,
+        atualizado_por: usuarioId,
+        atualizado_em: new Date().toISOString(),
+      });
+      await onSalvo();
+      onFechar();
+    } catch (e) { setErro(e.message || String(e)); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end" style={{ background: "rgba(0,0,0,.58)" }} onMouseDown={(e) => e.target === e.currentTarget && onFechar()}>
+      <aside className="h-full w-full max-w-[480px] overflow-y-auto p-6" style={{ background: "#101012", borderLeft: `1px solid ${C.bronzeLine}` }}>
+        <div className="flex items-start justify-between gap-3 mb-6">
+          <div><div className="text-[10px] uppercase tracking-[.12em] mb-1" style={{ color: C.gold }}>Central Febracis</div><h2 className="text-lg font-semibold" style={{ color: C.text }}>{evento.titulo}</h2><div className="text-xs mt-1" style={{ color: C.textMuted }}>{fmtPeriodoCentral(evento.data_inicio, evento.data_fim)}</div></div>
+          <button onClick={onFechar} aria-label="Fechar" style={{ color: C.textMuted }}><X size={18} /></button>
+        </div>
+
+        {!podeEditar && <div className="flex items-center gap-2 rounded-lg p-3 mb-5 text-xs" style={{ background: C.surface, color: C.textMuted }}><Lock size={13} /> Somente leitura para o seu perfil.</div>}
+        <div className="grid grid-cols-2 gap-4">
+          <label className="col-span-2 text-[11px]" style={{ color: C.textMuted }}>Local<input disabled={!podeEditar} value={form.local} onChange={campo("local")} placeholder={evento.local_padrao ? "Sede Febracis (sugestão)" : "Informe o local"} style={{ ...inputStyle, marginTop: 6, opacity: podeEditar ? 1 : .65 }} /></label>
+          <label className="col-span-2 text-[11px]" style={{ color: C.textMuted }}>Endereço<input disabled={!podeEditar} value={form.endereco} onChange={campo("endereco")} style={{ ...inputStyle, marginTop: 6, opacity: podeEditar ? 1 : .65 }} /></label>
+          <label className="text-[11px]" style={{ color: C.textMuted }}>Confirmados<input disabled={!podeEditar} type="number" min="0" value={form.confirmados} onChange={campo("confirmados")} style={{ ...inputStyle, marginTop: 6, opacity: podeEditar ? 1 : .65 }} /></label>
+          <label className="text-[11px]" style={{ color: C.textMuted }}>Capacidade<input disabled={!podeEditar} type="number" min="0" value={form.capacidade} onChange={campo("capacidade")} style={{ ...inputStyle, marginTop: 6, opacity: podeEditar ? 1 : .65 }} /></label>
+          <label className="col-span-2 text-[11px]" style={{ color: C.textMuted }}>Observação<textarea disabled={!podeEditar} rows="5" value={form.observacao} onChange={campo("observacao")} style={{ ...inputStyle, marginTop: 6, resize: "vertical", opacity: podeEditar ? 1 : .65 }} /></label>
+        </div>
+        {evento.atualizado_em && <div className="text-[10.5px] mt-4" style={{ color: C.textFaint }}>Última edição por {evento.atualizado_por || "usuário não identificado"}, em {fmtDataHora(evento.atualizado_em)}.</div>}
+        {erro && <div className="text-xs mt-4" style={{ color: C.alert }}>{erro}</div>}
+        {podeEditar && <button onClick={salvar} disabled={salvando} className="mt-6 w-full rounded-lg py-2.5 flex items-center justify-center gap-2 text-sm font-semibold" style={{ background: C.gold, color: C.void, opacity: salvando ? .6 : 1 }}><Save size={14} />{salvando ? "Salvando…" : "Salvar informações"}</button>}
+      </aside>
+    </div>
+  );
+}
+
+export default function CentralEventos() {
+  const sessao = useSessao();
+  const central = useCentralFebracis();
+  const permissao = usePodeEditarEvento();
+  const [selecionado, setSelecionado] = useState(null);
+  const colunas = useMemo(() => ({
+    este_mes: (central.data ?? []).filter((e) => e.coluna === "este_mes"),
+    proximo_mes: (central.data ?? []).filter((e) => e.coluna === "proximo_mes"),
+  }), [central.data]);
+
+  return (
+    <div className="mx-auto w-full" style={{ maxWidth: 1180 }}>
+      <div className="mb-6"><h1 className="text-xl font-semibold" style={{ color: C.text }}>Central Febracis</h1><p className="text-xs mt-1" style={{ color: C.textMuted }}>Eventos e turmas de Salvador · vendas, confirmações e local</p></div>
+      {central.isLoading ? <div className="flex items-center justify-center gap-2 py-20 text-sm" style={{ color: C.textFaint }}><RefreshCw size={14} className="girar" /> Carregando…</div>
+        : central.error ? <div className="rounded-xl p-4 text-sm" style={{ color: C.alert, border: `1px solid ${C.alert}` }}>{central.error.message}</div>
+          : <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+            {[["este_mes", "Este mês"], ["proximo_mes", "Próximo mês"]].map(([key, titulo]) => (
+              <section key={key} className="rounded-2xl p-4 min-w-0" style={{ background: "rgba(255,255,255,.015)", border: `1px solid ${C.bronzeLine}` }}>
+                <div className="flex items-center justify-between mb-4"><h2 className="text-[13px] font-semibold" style={{ color: C.text }}>{titulo}</h2><span className="text-[10px] rounded-full px-2 py-0.5" style={{ color: C.textMuted, background: C.surface }}>{colunas[key].length}</span></div>
+                <div className="flex flex-col gap-3">{colunas[key].length ? colunas[key].map((e) => <CardCentralFebracis key={e.turma_id} evento={e} onAbrir={() => setSelecionado(e)} />) : <div className="text-xs text-center py-10" style={{ color: C.textFaint }}>Nenhum evento neste período.</div>}</div>
+              </section>
+            ))}
+          </div>}
+      {selecionado && <PainelDetalheEvento key={selecionado.turma_id} evento={selecionado} podeEditar={permissao.data === true} usuarioId={sessao?.user?.id} onFechar={() => setSelecionado(null)} onSalvo={central.refetch} />}
     </div>
   );
 }
