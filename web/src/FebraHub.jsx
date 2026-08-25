@@ -31,8 +31,8 @@ import {
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingSaudeCaptacao, useMarketingCaptacaoDiaria,
-  usePedagogicoKpis, usePedagogicoPresencaKpis, usePedagogicoPresencaTempo,
-  usePedagogicoRecompraCurso, usePedagogicoPresencaCurso,
+  usePedagogicoKpis, usePedagogicoKpisPeriodo, usePedagogicoPresencaKpis, usePedagogicoPresencaTempo,
+  usePedagogicoRecompraCurso, usePedagogicoNaoFizeramCurso,
   usePedagogicoMaestrosCompleto, usePedagogicoMaestrosKpis, usePedagogicoMaestroAnotacoes,
   usePedagogicoRetencaoCasos, usePedagogicoRetencao, usePedagogicoRetencaoMotivos,
   usePedagogicoPainel,
@@ -87,10 +87,19 @@ const HUBS = [
   { key: "comercial",  nome: "Comercial",  Icone: TrendingUp,    desc: "Pódio de consultoras e placar da semana" },
   { key: "financeiro", nome: "Financeiro", Icone: Wallet,        desc: "Receita por curso e cobertura" },
   { key: "marketing",  nome: "Marketing",  Icone: Megaphone,     desc: "Origem de leads e campanhas" },
-  /* Operação do Marketing, como a Central Pedagógica é a do Pedagógico:
-     `setor` existe porque a chave não é o próprio setor. */
-  { key: "central-eventos", setor: "marketing", nome: "Central de Eventos", Icone: CalendarDays,
-    desc: "Agenda, checklist de divulgação e o que está atrasado" },
+  /* Operação do Marketing, como a Central Pedagógica é a do Pedagógico.
+     DOIS setores abrem este hub, e é o único assim: quem é do marketing
+     entra porque a Central é parte do trabalho dele; e existe o setor
+     estreito `central-eventos`, para quem opera evento SEM ver lead,
+     campanha e investimento — o caso da social media (migration 146).
+
+     Se fosse um setor só, dar a Central obrigaria a dar o Hub de
+     Marketing junto. Se fosse só `central-eventos`, todo mundo do
+     marketing precisaria de dois setores e esquecer um deixaria a pessoa
+     sem a Central. */
+  { key: "central-eventos", setores: ["marketing", "central-eventos"],
+    nome: "Central Febracis", Icone: CalendarDays,
+    desc: "Eventos e turmas de Salvador" },
   { key: "pedagogico", nome: "Pedagógico", Icone: GraduationCap, desc: "Turmas, matrículas e conclusão" },
   /* A Central é operação, não setor: quem enxerga é quem tem o setor
      'pedagogico'. `setor` existe só por isso — nos outros, a chave já é o
@@ -4401,22 +4410,23 @@ const rotuloTri = (p) => {
   return s || "—";
 };
 
-/* Colunas da taxa de comparecimento por trimestre. Amostras pequenas ficam
-   vazadas e cinza para preservar a leitura sem esconder o dado. */
-function ColunasPresenca({ serie }) {
+/* Linha da taxa de comparecimento por trimestre. Pontos com amostra pequena
+   ficam vazados para preservar a leitura sem esconder o dado. */
+function LinhaPresenca({ serie }) {
   const [detalhe, setDetalhe] = useState(null);
   if (serie.length < 2) return <Estado vazio vazioTitulo="Série insuficiente" vazioDica="Poucos trimestres com presença medida para desenhar o gráfico." />;
   const W = 720, H = 196, padL = 40, padR = 14, padT = 20, padB = 30;
   const plotW = W - padL - padR, plotH = H - padT - padB, plotBottom = padT + plotH;
   const n = serie.length;
-  const base = (serie.some((p) => !p.pequena) ? serie.filter((p) => !p.pequena) : serie).map((p) => p.taxa);
-  let vMax = Math.min(100, Math.ceil((Math.max(...base) + 6) / 5) * 5);
-  if (vMax <= 0) vMax = 10;
-  const passoX = plotW / n;
-  const largura = Math.max(8, Math.min(30, passoX * 0.52));
-  const x = (i) => padL + i * passoX + (passoX - largura) / 2;
-  const y = (v) => Math.max(padT, Math.min(plotBottom, plotBottom - (v / vMax) * plotH));
-  const yticks = [0, Math.round(vMax / 2), vMax];
+  const base = serie.map((p) => p.taxa);
+  const vMin = Math.max(0, Math.floor((Math.min(...base) - 8) / 5) * 5);
+  let vMax = Math.min(100, Math.ceil((Math.max(...base) + 8) / 5) * 5);
+  if (vMax <= vMin) vMax = Math.min(100, vMin + 10);
+  const x = (i) => n === 1 ? padL + plotW / 2 : padL + (i * plotW) / (n - 1);
+  const y = (v) => Math.max(padT, Math.min(plotBottom, plotBottom - ((v - vMin) / (vMax - vMin)) * plotH));
+  const yticks = [vMin, Math.round((vMin + vMax) / 2), vMax];
+  const pontos = serie.map((p, i) => `${x(i)},${y(p.taxa)}`).join(" ");
+  const area = `${x(0)},${plotBottom} ${pontos} ${x(n - 1)},${plotBottom}`;
   const passo = Math.max(1, Math.round((n - 1) / 5));
   const xi = [];
   for (let i = 0; i < n; i += passo) xi.push(i);
@@ -4429,7 +4439,17 @@ function ColunasPresenca({ serie }) {
   });
   return (
     <div onMouseLeave={() => setDetalhe(null)}>
-    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Taxa de comparecimento por trimestre" style={{ width: "100%", height: "auto", display: "block" }}>
+    <style>{`
+      .presPonto .presTooltip { opacity: 0; transition: opacity .1s ease; }
+      .presPonto:hover .presTooltip { opacity: 1; }
+    `}</style>
+    <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Evolução do comparecimento por trimestre" style={{ width: "100%", height: "auto", display: "block" }}>
+      <defs>
+        <linearGradient id="presencaArea" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={C.up} stopOpacity=".24" />
+          <stop offset="100%" stopColor={C.up} stopOpacity=".015" />
+        </linearGradient>
+      </defs>
       {yticks.map((v, i) => {
         const yy = y(v);
         return (
@@ -4439,25 +4459,34 @@ function ColunasPresenca({ serie }) {
           </g>
         );
       })}
+      <polygon points={area} fill="url(#presencaArea)" />
+      <polyline points={pontos} fill="none" stroke={C.up} strokeWidth="2.3" strokeLinejoin="round" strokeLinecap="round" />
       {serie.map((p, i) => {
-        const topo = y(p.taxa);
+        const tx = x(i) > W - 205 ? x(i) - 195 : x(i) + 10;
+        const ty = y(p.taxa) < 104 ? y(p.taxa) + 12 : y(p.taxa) - 94;
         return (
-          <g key={p.rotulo + i}>
-            <rect
-              x={x(i)} y={topo} width={largura} height={Math.max(1, plotBottom - topo)} rx="1"
-              fill={p.pequena ? "transparent" : (detalhe?.p === p ? C.bright : C.up)}
-              fillOpacity={p.pequena ? 1 : (detalhe?.p === p ? 0.9 : 0.68)}
-              stroke={p.pequena ? C.faint : "none"}
-              strokeWidth={p.pequena ? 1 : 0}
-              style={{ cursor: "crosshair", transition: "fill .12s ease, fill-opacity .12s ease" }}
-              onMouseEnter={(e) => mostrarDetalhe(e, p)}
-              onMouseMove={(e) => mostrarDetalhe(e, p)}
-            />
+        <g key={p.rotulo + i} className="presPonto">
+          <circle cx={x(i)} cy={y(p.taxa)} r="10" fill="transparent" style={{ cursor: "crosshair" }}>
+            <title>{`${p.rotulo}\nComparecimento: ${p.taxa.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%\nMatrículas: ${numero(p.amostra)}\nCompareceram: ${numero(p.compareceram)}${p.pequena ? "\nAmostra pequena: menos de 30 matrículas" : ""}`}</title>
+          </circle>
+          <circle cx={x(i)} cy={y(p.taxa)} r="3.2"
+            fill={p.pequena ? C.void : C.up} stroke={p.pequena ? C.faint : C.bright}
+            strokeWidth={p.pequena ? 1.5 : 1.2} pointerEvents="none" />
+          <g className="presTooltip" transform={`translate(${tx} ${ty})`} pointerEvents="none">
+            <rect width="185" height={p.pequena ? 92 : 80} rx="7" fill="#15151a" stroke={C.cardLine} />
+            <text x="10" y="15" fontSize="9" fontWeight="800" fill={C.muted} fontFamily={SANS}>{p.rotulo}</text>
+            <text x="10" y="32" fontSize="10" fill={C.faint} fontFamily={SANS}>Comparecimento</text>
+            <text x="175" y="32" fontSize="12" fontWeight="700" textAnchor="end" fill={C.up} fontFamily={GROTESK}>{p.taxa.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%</text>
+            <text x="10" y="49" fontSize="10" fill={C.faint} fontFamily={SANS}>Matrículas</text>
+            <text x="175" y="49" fontSize="11" fontWeight="700" textAnchor="end" fill={C.bright} fontFamily={GROTESK}>{numero(p.amostra)}</text>
+            <text x="10" y="66" fontSize="10" fill={C.faint} fontFamily={SANS}>Compareceram</text>
+            <text x="175" y="66" fontSize="11" fontWeight="700" textAnchor="end" fill={C.bright} fontFamily={GROTESK}>{numero(p.compareceram)}</text>
+            {p.pequena && <text x="10" y="83" fontSize="9" fill={C.warn} fontFamily={SANS}>Amostra pequena · menos de 30</text>}
           </g>
-        );
-      })}
+        </g>
+      );})}
       {xi.map((i) => (
-        <text key={i} x={x(i) + largura / 2} y={H - 9} fontSize="10" textAnchor="middle" fill={C.faint} fontFamily={SANS}>{serie[i].rotulo}</text>
+        <text key={i} x={x(i)} y={H - 9} fontSize="10" textAnchor="middle" fill={C.faint} fontFamily={SANS}>{serie[i].rotulo}</text>
       ))}
     </svg>
     {detalhe && (
@@ -4487,6 +4516,10 @@ function ColunasPresenca({ serie }) {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 18, marginTop: 5 }}>
           <span style={{ fontSize: 11, color: C.faint }}>Matrículas</span>
           <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: C.bright }}>{numero(detalhe.p.amostra)}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 18, marginTop: 5 }}>
+          <span style={{ fontSize: 11, color: C.faint }}>Compareceram</span>
+          <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: C.bright }}>{numero(detalhe.p.compareceram)}</span>
         </div>
         {detalhe.p.pequena && (
           <div style={{ borderTop: `1px solid ${C.hair}`, marginTop: 8, paddingTop: 7, fontSize: 10, color: C.warn }}>
@@ -4519,6 +4552,28 @@ function RankingCurso({ linhas, cor, sufixo, vazioTitulo, vazioDica }) {
           <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,.06)", overflow: "hidden" }}>
             <div style={{ width: `${(l.valor / max) * 100}%`, height: "100%", borderRadius: 3, background: cor }} />
           </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RankingQuantidade({ linhas, cor }) {
+  const max = Math.max(...linhas.map((l) => l.valor), 1);
+  return (
+    <div>
+      {linhas.map((l, i) => (
+        <div key={l.rotulo + i} style={{ padding: "8px 20px", borderBottom: `1px solid ${C.hair}` }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 5 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.rotulo}>{l.rotulo}</span>
+            <span style={{ flexShrink: 0, fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, color: cor }}>
+              {numero(l.valor)} alunos
+            </span>
+          </div>
+          <div style={{ height: 5, borderRadius: 3, background: "rgba(255,255,255,.05)", overflow: "hidden" }}>
+            <div style={{ width: `${(l.valor / max) * 100}%`, height: "100%", borderRadius: 3, background: cor, opacity: .78 }} />
+          </div>
+          {l.vencidos > 0 && <div style={{ marginTop: 4, fontSize: 10, color: C.faint }}>{numero(l.vencidos)} com prazo vencido</div>}
         </div>
       ))}
     </div>
@@ -5558,11 +5613,19 @@ function SecaoAvaliacaoEventos({ notificar }) {
    medidos (não existem na fonte). Comparecimento usa apenas fato_presenca e
    turmas cuja cobertura torna a ausência mensurável. */
 function HubPedagogico() {
-  const kpis = usePedagogicoKpis();
+  const { inicio, fim, rotulo, modo } = usePeriodo();
+  const periodoAnterior = useMemo(() => intervaloAnterior({ inicio, fim, modo }), [inicio, fim, modo]);
+  const anoAnterior = useMemo(() => ({
+    inicio: `${Number(String(inicio).slice(0, 4)) - 1}${String(inicio).slice(4)}`,
+    fim: `${Number(String(fim).slice(0, 4)) - 1}${String(fim).slice(4)}`,
+  }), [inicio, fim]);
+  const kpisPeriodo = usePedagogicoKpisPeriodo(inicio, fim);
+  const kpisPeriodoAnterior = usePedagogicoKpisPeriodo(periodoAnterior.inicio, periodoAnterior.fim);
+  const kpisAnoAnterior = usePedagogicoKpisPeriodo(anoAnterior.inicio, anoAnterior.fim);
   const presKpis = usePedagogicoPresencaKpis();
   const presTempo = usePedagogicoPresencaTempo();
   const recompraCurso = usePedagogicoRecompraCurso();
-  const presCurso = usePedagogicoPresencaCurso();
+  const naoFizeramCurso = usePedagogicoNaoFizeramCurso();
   const retencaoCasos = usePedagogicoRetencaoCasos();
   const retencao = usePedagogicoRetencao();
   const retencaoMotivos = usePedagogicoRetencaoMotivos();
@@ -5573,11 +5636,23 @@ function HubPedagogico() {
   // Após gravar: recarrega as views afetadas e fecha o modal.
   const aposSalvar = () => { qc.invalidateQueries(); setRetEdit(null); };
 
-  const k = kpis.data?.[0] ?? {};
+  const kp = kpisPeriodo.data?.[0] ?? {};
+  const kpAnterior = kpisPeriodoAnterior.data?.[0] ?? {};
+  const kpAnoAnterior = kpisAnoAnterior.data?.[0] ?? {};
   const pk = presKpis.data?.[0] ?? {};
-  const cursosPorAluno = k.cursos_por_aluno != null
-    ? Number(k.cursos_por_aluno).toLocaleString("pt-BR", { maximumFractionDigits: 1 })
+  // A migration 152 simplificou os nomes para `taxa_comparecimento` e
+  // `turmas`; os fallbacks mantêm compatibilidade com a view anterior.
+  const turmasComparecimento = pk.turmas ?? pk.turmas_cobertas;
+  const cursosPorAluno = kp.cursos_por_aluno != null
+    ? Number(kp.cursos_por_aluno).toLocaleString("pt-BR", { maximumFractionDigits: 1 })
     : "—";
+  const diferenca = (atual, anterior) => atual == null || anterior == null ? null : Number(atual) - Number(anterior);
+  const deltaRecompra = diferenca(kp.taxa_recompra, kpAnterior.taxa_recompra);
+  const deltaComparecimento = diferenca(kp.taxa_comparecimento, kpAnterior.taxa_comparecimento);
+  const deltaRisco = diferenca(kp.alunos_risco_90d, kpAnterior.alunos_risco_90d);
+  const deltaCursos = diferenca(kp.cursos_por_aluno, kpAnoAnterior.cursos_por_aluno);
+  const detalheRisco = deltaRisco == null ? null : `${deltaRisco > 0 ? "+" : deltaRisco < 0 ? "−" : ""}${numero(Math.abs(deltaRisco))} aluno${Math.abs(deltaRisco) === 1 ? "" : "s"} ${modo === "mes" ? "no mês" : modo === "7d" ? "nos 7 dias" : modo === "hoje" ? "hoje" : "no ano"}`;
+  const fmtDeltaNumero = (v, casas = 1) => Math.abs(v).toLocaleString("pt-BR", { minimumFractionDigits: casas, maximumFractionDigits: casas });
 
   // Série trimestral: amostra pequena (<30 matrículas) fica de-enfatizada.
   const serieTri = useMemo(() =>
@@ -5588,6 +5663,7 @@ function HubPedagogico() {
         rotulo: rotuloTri(r.periodo),
         taxa: pctTaxa(r.taxa_comparecimento),
         amostra: Number(r.matriculas ?? 0),
+        compareceram: Number(r.compareceram ?? 0),
         pequena: Number(r.matriculas ?? 0) < 30,
       }))
       .sort((a, b) => String(a.periodo).localeCompare(String(b.periodo))),
@@ -5603,20 +5679,23 @@ function HubPedagogico() {
       .slice(0, 6),
     [recompraCurso.data]);
 
-  // Cursos com mais falta: mostra a % que FALTOU (100 − comparecimento), piores no topo.
-  const maisFalta = useMemo(() =>
-    (presCurso.data ?? [])
-      .map((r) => ({ rotulo: r.curso ?? "—", valor: 100 - pctTaxa(r.taxa_comparecimento), amostra: Number(r.matriculas ?? 0) }))
-      .filter((r) => r.amostra > 0)
+  const naoFizeram = useMemo(() =>
+    (naoFizeramCurso.data ?? [])
+      .map((r) => ({ rotulo: r.curso ?? "—", valor: Number(r.alunos ?? 0), vencidos: Number(r.vencidos ?? 0) }))
+      .filter((r) => r.valor > 0)
       .sort((a, b) => b.valor - a.valor)
       .slice(0, 6),
-    [presCurso.data]);
+    [naoFizeramCurso.data]);
 
   // Retenção: casos recentes primeiro; motivos por frequência (retidos+cancel).
   const casos = useMemo(() =>
     [...(retencaoCasos.data ?? [])].sort((a, b) => String(b.data_ligacao ?? "").localeCompare(String(a.data_ligacao ?? ""))),
     [retencaoCasos.data]);
-  const pendentes = useMemo(() => casos.filter((c) => String(c.desfecho ?? "").trim().toLowerCase() === "pendente").length, [casos]);
+  // Continua sendo usado apenas no bloco manual de Retenção. O KPI de risco
+  // do topo vem da regra automática em vw_pedagogico_risco_evasao.
+  const pendentes = useMemo(() =>
+    casos.filter((c) => String(c.desfecho ?? "").trim().toLowerCase() === "pendente").length,
+    [casos]);
   const motivos = useMemo(() =>
     [...(retencaoMotivos.data ?? [])].sort((a, b) => (Number(b.retidos ?? 0) + Number(b.cancelados ?? 0)) - (Number(a.retidos ?? 0) + Number(a.cancelados ?? 0))),
     [retencaoMotivos.data]);
@@ -5642,22 +5721,28 @@ function HubPedagogico() {
 
       {/* ---- KPIs de saúde ---- */}
       <div className="pedKpis" style={{ marginBottom: 12 }}>
-        <ChipKpi compacto hero Icone={Repeat} label="Recompra (grade)" valor={fmtPct(k.taxa_recompra, 1)} nota="cursos CIS + GGB" />
-        <ChipKpi compacto Icone={UserCheck} label="Comparecimento" valor={fmtPct(pk.taxa_comparecimento_geral)}
-          sub={pk.turmas_cobertas ? `${numero(pk.turmas_cobertas)} turmas mensuráveis` : "fonte de presença"} />
-        <ChipKpi compacto Icone={Users} label="Alunos únicos" valor={k.alunos_unicos != null ? numero(k.alunos_unicos) : "—"} nota="na base" />
-        <ChipKpi compacto Icone={BookOpen} label="Cursos por aluno" valor={cursosPorAluno} nota="média" />
+        <ChipKpi compacto hero Icone={Repeat} label="Recompra (grade)" valor={kpisPeriodo.isLoading || kpisPeriodo.error ? "—" : fmtPct(kp.taxa_recompra, 1)}
+          delta={deltaRecompra == null ? null : `${fmtDeltaNumero(deltaRecompra)} p.p.`} up={deltaRecompra >= 0} deltaNota="vs período anterior" deltaAbaixo />
+        <ChipKpi compacto Icone={UserCheck} label="Comparecimento" valor={kpisPeriodo.isLoading || kpisPeriodo.error ? "—" : fmtPct(kp.taxa_comparecimento)}
+          delta={deltaComparecimento == null ? null : `${fmtDeltaNumero(deltaComparecimento)} p.p.`} up={deltaComparecimento >= 0} deltaNota="vs período anterior" deltaAbaixo
+          sub={kp.turmas_mensuraveis ? `${numero(kp.turmas_mensuraveis)} turmas · ${rotulo}` : `sem turma · ${rotulo}`} />
+        <ChipKpi compacto Icone={AlertTriangle} label="Alunos em risco de evasão"
+          valor={kpisPeriodo.isLoading || kpisPeriodo.error ? "—" : <span style={{ color: Number(kp.alunos_risco_90d ?? 0) > 0 ? C.down : C.up }}>{numero(kp.alunos_risco_90d ?? 0)}</span>}
+          nota={detalheRisco ?? rotulo}
+          sub="regra: mais de 90 dias sem nova matrícula" />
+        <ChipKpi compacto Icone={BookOpen} label="Cursos por aluno" valor={kpisPeriodo.isLoading || kpisPeriodo.error ? "—" : cursosPorAluno}
+          delta={deltaCursos == null ? null : fmtDeltaNumero(deltaCursos)} up={deltaCursos >= 0} deltaNota="vs ano anterior" deltaAbaixo />
       </div>
 
       {/* ---- Comparecimento no tempo (largura total) ---- */}
-      <Bloco titulo="Comparecimento no tempo" canto="taxa por trimestre">
+      <Bloco titulo="Evolução do comparecimento" canto="taxa por trimestre">
         <Estado carregando={presTempo.isLoading} erro={presTempo.error} vazio={serieTri.length < 2}
           vazioTitulo="Sem série de presença" vazioDica="Aparece com o setor pedagógico conectado.">
-          <ColunasPresenca serie={serieTri} />
+          <LinhaPresenca serie={serieTri} />
           {temPequena && (
             <div style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 10.5, color: C.faint, marginTop: 4 }}>
               <span style={{ width: 8, height: 8, borderRadius: 2, border: `1.2px solid ${C.faint}`, flexShrink: 0 }} />
-              colunas vazadas: trimestres com menos de 30 matrículas — amostra pequena
+              pontos vazados: trimestres com menos de 30 matrículas — amostra pequena
             </div>
           )}
         </Estado>
@@ -5665,16 +5750,16 @@ function HubPedagogico() {
 
       {/* ---- Cursos: fidelizam · faltam ---- */}
       <div className="pedBot" style={{ marginBottom: 12 }}>
-        <Bloco titulo="Cursos que mais fidelizam" canto="recompra do aluno" sem altura={250}>
+        <Bloco titulo="Cursos que mais geram recompra" canto="outro curso em até 90 dias" sem altura={250}>
           <Estado carregando={recompraCurso.isLoading} erro={recompraCurso.error} vazio={!fideliza.length}
-            vazioTitulo="Sem recompra por curso" vazioDica="Aparece com o setor pedagógico conectado.">
+            vazioTitulo="Sem recompra pós-curso" vazioDica="Exige presença confirmada e 90 dias completos de observação.">
             <RankingCurso linhas={fideliza} cor={C.gold} sufixo="alunos" />
           </Estado>
         </Bloco>
-        <Bloco titulo="Cursos com mais falta" canto="% que faltou · piores no topo" sem altura={250}>
-          <Estado carregando={presCurso.isLoading} erro={presCurso.error} vazio={!maisFalta.length}
-            vazioTitulo="Sem falta por curso" vazioDica="Aparece com o setor pedagógico conectado.">
-            <RankingCurso linhas={maisFalta} cor={C.warn} sufixo="matrículas" />
+        <Bloco titulo="Cursos com mais alunos que ainda não fizeram" canto="comprou · nunca teve presença" sem altura={250}>
+          <Estado carregando={naoFizeramCurso.isLoading} erro={naoFizeramCurso.error} vazio={!naoFizeram.length}
+            vazioTitulo="Sem alunos represados" vazioDica="Só entram cursos com fonte de presença confiável.">
+            <RankingQuantidade linhas={naoFizeram} cor={C.warn} />
           </Estado>
         </Bloco>
       </div>
@@ -5717,7 +5802,7 @@ function HubPedagogico() {
             avaliação de eventos — mas só para EVENTO. Conclusão e nota de
             curso seguem sem medição, e juntar as três numa frase só faria o
             aviso mentir do outro lado. */}
-        <b style={{ color: C.muted }}>Transparência.</b> A presença cobre {pk.turmas_cobertas ? numero(pk.turmas_cobertas) : "—"} turmas
+        <b style={{ color: C.muted }}>Transparência.</b> A presença cobre {turmasComparecimento ? numero(turmasComparecimento) : "—"} turmas
         mensuráveis na fonte de presença; turmas sem cobertura suficiente ficam de fora do comparecimento. O NPS de <b style={{ color: C.muted }}>evento</b> é
         medido pela avaliação por QR code — o resultado fica na Central Pedagógica. Conclusão de curso e nota do aluno
         continuam sem medição: não estão no Salesforce.
@@ -8656,7 +8741,10 @@ function Shell({ perfil }) {
     };
   }, [modo, ano, mesIdx, anos, minMes, maxMes, geral]);
 
-  const visiveis = admin ? HUBS : HUBS.filter((h) => setores.includes(h.setor ?? h.key));
+  /* `setores` (plural) para hubs que aceitam mais de um; `setor` para o
+     que tem um só; e a chave quando ela própria é o setor. */
+  const visiveis = admin ? HUBS : HUBS.filter((h) =>
+    (h.setores ?? [h.setor ?? h.key]).some((s) => setores.includes(s)));
   const hub = HUBS.find((h) => h.key === tela);
 
   const conteudo = () => {

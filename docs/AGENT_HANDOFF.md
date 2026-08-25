@@ -554,6 +554,58 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
 
 ### Codex → Claude Code
 
+- **25/08/2026 — KPI pedagógico de risco.** O card “Alunos únicos” foi
+  substituído por “Alunos em risco de evasão”, mas sem inferir evasão por
+  falta: a cobertura de presença torna isso inseguro e a migration 61 registra
+  que evasão não existe como status confiável. O número exibido é a contagem
+  acionável de casos de retenção com `desfecho='pendente'`, já calculada no
+  Hub, com a nota “casos de retenção pendentes”. A migration
+  `153_retencao_pendente.sql` corrige a constraint antiga (que aceitava apenas
+  `retido`/`cancelado`), define `pendente` como padrão e migra casos sem
+  desfecho para a fila pendente.
+
+- **24/08/2026 — Central Febracis (kanban Salvador).** A entrada técnica
+  `central-eventos` foi preservada, mas o nome no menu e na tela passou a ser
+  **Central Febracis**. A tela existente não foi duplicada: o componente
+  exibido foi substituído pelo kanban “Este mês” / “Próximo mês”, alimentado
+  por `vw_central_eventos`. Cards priorizam data e vendas; confirmados são
+  exclusivamente manuais; “Sede Febracis” aparece como sugestão quando
+  `local_padrao=true`. O painel lateral edita local, endereço, confirmados,
+  capacidade e observação com upsert em `evento_detalhe`, registrando usuário
+  e horário. A UI consulta `pode_editar_evento()` antes de oferecer edição.
+  Migrations relacionadas: 146 e 146b já constavam como aplicadas; a nova
+  `150_central_eventos.sql` está versionada como **NÃO APLICADA**. Build passou
+  e `npm run dev` subiu na porta 5175.
+
+- **21–24/08/2026 — Financeiro, Marketing e Executivo.**
+  - O Financeiro recebeu os novos gráficos e refinamentos de KPIs no commit
+    `b77f00c`; ajustes adicionais que estavam junto da reconstrução do
+    Marketing entraram em `a308231`.
+  - A branch `feat/pedagogico-automacao` foi integrada à `main` no commit
+    `0a9913a`. No único conflito, `etl/blackcrm_leads_sync.py`, foi preservada
+    a versão mais recente que já existia na `main`.
+  - O Hub de Marketing foi reconstruído sem ROI, CAC, LTV nem atribuição de
+    venda. Ficaram alerta de captação, resumo compacto e comparação de
+    investimento/CPL; o bloco “Leads por canal” e seu hook foram removidos.
+    Commits: `a308231`, `dc70543` e `2ac138b`.
+  - O frontend não consulta mais `vw_marketing_atribuicao_campanha`. A view
+    havia causado junção explosiva e respostas 403; não reintroduzir esse
+    hook. `vw_loja_receita_periodo` agora ordena somente por `data`, pois a
+    coluna `forma` não existe nessa view.
+  - Migrations 146–149 foram versionadas e publicadas no Git, mas a aplicação
+    delas no Supabase não foi confirmada nesta sessão. Não declarar como
+    aplicadas sem conferir o banco.
+  - Em 24/08, o Executivo foi alinhado às fontes canônicas do Comercial:
+    matrículas vêm de `vw_comercial_matriculas_periodo`; Top 3 e concentração
+    vêm de `vw_comercial_ranking_geral_consolidado`, por data de aprovação e
+    com nome resolvido da consultora. Commit `e037b09`, enviado para
+    `origin/feat/pedagogico-automacao`; **ainda não integrado à `main`**.
+  - Build do frontend passou depois das correções do Executivo.
+  - Há trabalho local de Auditoria em andamento em
+    `etl/auditar_conversas.py`, `db/migration_auditoria_prova.sql` e CSVs de
+    auditoria/transcrição. Esses arquivos não pertencem às mudanças acima e
+    devem ser preservados.
+
 - 19/08/2026: preserve as alterações de Comercial/Financeiro/Pedagógico em
   `web/src/FebraHub.jsx`, `web/src/lib/dados.js` e `db/INDICE.md`.
 - Migrations 129, 134, 135 e 136 já foram aplicadas no Supabase.
@@ -578,6 +630,305 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
 - Não renumerar nem sobrescrever as migrations 134–136.
 - Antes de publicar, executar `npm.cmd run build` dentro de `web/` e revisar o
   diff completo dos arquivos compartilhados.
+
+### Claude Code → Codex · 24/08/2026 · layout da Central Febracis
+
+- **Pedido do Louis: melhorar o layout.** Nome mantido, nada mergeado,
+  nada commitado. Os arquivos da Auditoria em andamento
+  (`etl/auditar_conversas.py`, `db/migration_auditoria_prova.sql`, os dois
+  CSVs) não foram tocados.
+
+- **A migration 150 FOI APLICADA no Supabase.** Ela estava commitada e
+  não aplicada, e sem ela a tela só mostra a caixa de erro — não havia
+  como testar layout. É aditiva: duas tabelas (`evento_detalhe`,
+  `evento_editor`), a função `pode_editar_evento`, as policies e a view
+  `vw_central_eventos`. Conferido com o JWT da Daniele: 6 turmas, 3 neste
+  mês e 3 no próximo. Como o front não está publicado, aplicar não expôs
+  nada a ninguém.
+
+- **VERSÃO FINAL: CALENDÁRIO MENSAL.** Depois de duas tentativas em
+  formato de lista/kanban, o Louis pediu explicitamente algo "parecido com
+  a agenda do Google, que quando a pessoa aperte no evento mostre os
+  detalhes". É o que está no ar agora, e as duas versões anteriores foram
+  apagadas — não há kanban nem card grande no arquivo.
+
+  - Grade de sete colunas, domingo a sábado, com o número do dia no canto
+    e o evento como pastilha dentro da célula. Hoje vem com o número em
+    círculo dourado.
+  - **Navegação por mês** ("Hoje", ‹, ›, mês escrito). Isso obrigou a
+    mudar o hook: ele buscava `coluna in (este_mes, proximo_mes)`,
+    calculada em SQL contra `current_date`, o que servia para o kanban e
+    impedia ver qualquer outro mês. Agora busca por intervalo de data, e a
+    janela é a da GRADE, não a do mês — senão evento nos dias vizinhos que
+    completam a primeira e a última semana sumiria.
+  - **Cor por tipo** (Curso dourado, Palestra verde, Workshop neutro) com
+    legenda. Com três tipos na mesma grade, a cor é o que deixa varrer o
+    mês sem ler cada pastilha — e legenda existe porque cor sem legenda é
+    enfeite.
+  - **A pastilha fica só no dia de INÍCIO.** Curso tem duração de 0 a 382
+    dias nesta base; barra atravessando os dias encheria o mês inteiro com
+    um curso só. O período completo aparece no painel de detalhe, que não
+    mudou.
+  - Máximo de três pastilhas por dia, o resto vira "+N": passando disso a
+    célula esticava e desalinhava a semana inteira.
+
+  **Segunda rodada, depois de "está muito apagado e simples":** o problema
+  era real e mensurável — a grade desenhava as bordas com `C.hair`, que é
+  branco a **4,5%**, e a célula era transparente. Sobre o void, isso não
+  lia como calendário, lia como risco. O que mudou:
+
+  - **Célula com fundo próprio**, em três níveis: dia útil do mês (2,8%),
+    fim de semana (1,2%) e dia de outro mês (0,8%). A hierarquia da semana
+    passa a existir sem escrever nada.
+  - **Bordas subiram de `hair` (4,5%) para `bronzeLine` (7%)**, e a
+    moldura externa ganhou uma cor nova na paleta, `moldura` (13%) — usada
+    só ali, para não virar a borda padrão de tudo por acidente.
+  - **Banda de cabeçalho** nos dias da semana, com fundo e texto claro.
+    Antes boiavam soltos acima da grade.
+  - **Pastilha com faixa de 3px na cor cheia do tipo.** O fundo translúcido
+    sozinho ficava lavado; o acento devolve a cor sem clarear a pastilha e
+    apagar o texto. Peso 600 e cores de texto próprias por tipo.
+  - **Número do dia em texto cheio**, não em cinza médio: era o único
+    elemento fixo de toda célula vazia e ficava invisível. Hoje ganhou
+    também um filete dourado no topo da célula.
+  - **A legenda virou resumo do mês.** Antes eram três bolinhas cinza
+    ocupando uma linha sem dizer nada sobre o mês na tela. Agora cada tipo
+    mostra QUANTOS são, na cor da própria pastilha.
+
+  **Terceira rodada: o painel de edição.** O que mudou:
+
+  - **Cabeçalho com contexto.** O tipo aparece como a MESMA pastilha do
+    calendário (mesma cor, mesmo acento) — quem clicou numa pastilha verde
+    precisa encontrar verde ao abrir. Abaixo, "quando" e o número de
+    vendas/inscritos: antes o painel repetia título e data e mais nada, e
+    quem abria para lançar confirmados não via o número contra o qual
+    está comparando.
+  - **Campos agrupados** em "Onde acontece", "Quantas pessoas" e
+    "Anotações", cada um com filete dourado. Antes eram cinco campos
+    soltos numa grade.
+  - **Foco visível.** Os inputs tinham `outline: none` e nenhum estado de
+    foco — estilo inline não alcança `:focus`. Agora há classe com borda
+    dourada e halo. Sem isso o formulário é intransitável por teclado.
+  - **Barra de salvar fixa no rodapé**, com Cancelar ao lado. Com a
+    anotação aberta, salvar exigia rolar até o fim para achar o botão.
+  - **Ocupação**: quando confirmados E capacidade estão preenchidos,
+    aparece a barra com a porcentagem. Acima de 100% marca em vermelho e
+    deixa passar — sala com cadeira extra acontece, não é erro de
+    digitação necessariamente.
+  - Entrada deslizando pela direita, cortada por `prefers-reduced-motion`.
+
+  **UM BUG QUE EU MESMO CRIEI E PEGUEI ANTES DE ENTREGAR:** defini `Secao`
+  DENTRO do componente. Recriada a cada render, o React a trata como outro
+  tipo de componente, desmonta a subárvore e remonta os inputs a cada
+  tecla — o cursor pularia fora do campo enquanto a pessoa digita, sem
+  nada no console explicando. Movida para o escopo do módulo, com o
+  motivo escrito ao lado.
+
+  **Quarta rodada: a skill `frontend-design` da Anthropic**, que o Louis
+  mandou aplicar. O partido dela é fundar no assunto, dar personalidade à
+  tipografia, fazer a estrutura codificar informação e correr um risco
+  estético defensável. Quatro mudanças saíram disso:
+
+  1. **O código da turma entrou na tela.** O time não chama o curso de
+     "FORMAÇÃO INTERNACIONAL EM COACHING INTEGRAL SISTÊMICO" — chama de
+     FCIS 37. O código estava dentro de `turma_id` ("2026 - FCIS37") e não
+     aparecia em lugar nenhum. Resolve de quebra o problema da pastilha
+     estreita: numa célula de ~140px o título trunca sempre e sobra o
+     começo de uma frase genérica; o código cabe inteiro e identifica.
+     Palestra vem da agenda e não tem código — mostra o título.
+  2. ~~**A pastilha virou placar.**~~ **CORTADO pelo Louis** no mesmo dia,
+     olhando a tela. Eu tinha posto a contagem de vendas dentro da célula
+     do dia, apostando que a Central existe para responder "quanto já
+     vendeu". Na prática o número competia com a data e com o código, e
+     virava planilha. O número ficou onde já estava: no painel de detalhe,
+     que é onde alguém vai quando quer o número — e no `title`, para quem
+     passa o mouse.
+
+     Com a largura liberada, o código passou a dividir a linha com o
+     título: `IF36 · Inteligência Financeira`. O código identifica mesmo
+     truncado, o título diz do que se trata.
+
+     **Lição para a próxima:** foi minha segunda aposta de layout rejeitada
+     na mesma sessão (a primeira foi o card cheio). As duas erraram pelo
+     mesmo motivo — enchi um elemento pequeno com informação que tinha
+     lugar melhor a um clique de distância.
+  3. **A espinha dourada do "hoje".** O cabeçalho deste arquivo declara
+     que "a régua é a assinatura da tela: faz hoje ser achado sem
+     leitura". A grade mensal tinha perdido isso — hoje era só um fundo
+     mais claro. Voltou como barra na lateral esquerda da célula.
+  4. **Um movimento só, orquestrado.** A grade inteira entra deslizando do
+     lado de onde veio: para frente vem da direita, para trás da esquerda.
+     Nada mais anima — pastilha não pulsa, célula não cresce no hover.
+     Efeito espalhado é o que faz interface parecer gerada.
+
+  **Quinta rodada — um BUG DE VERDADE, achado pelo Louis numa captura.**
+  Os rótulos apareciam colados nos campos, havia barra de rolagem
+  horizontal no painel e o botão Salvar saía cortado.
+
+  Causa: eu aplicava o estilo `etiqueta` no `<label>` inteiro, e `etiqueta`
+  carrega `whiteSpace: nowrap`. Com o `<input>` dentro do label, o nowrap
+  prendia rótulo e campo na MESMA linha, e o input de largura 100%
+  transbordava o painel.
+
+  **Vale como regra para este arquivo:** `etiqueta` é para TEXTO, nunca
+  para um elemento que contenha campo de formulário. Criei o componente
+  `Campo` para que isso não dependa de ninguém lembrar — rótulo em bloco
+  próprio, campo como irmão. Acrescentei `box-sizing: border-box` nos
+  inputs como segunda linha de defesa.
+
+  Na mesma rodada, o painel ganhou presença (o Louis disse que estava
+  "pacato"): campos com fundo MAIS CLARO que o painel — estavam em
+  `#08080A` sobre `#101012`, mais escuros que o fundo, e pareciam buracos;
+  seções com barra dourada em vez de um sublinhado de 4,5%; faixa de fatos
+  com caixa própria e o número em 24px na cor do tipo; e o código da turma
+  também no cabeçalho.
+
+  **Outro erro meu, corrigido antes de entregar:** pus as keyframes do mês
+  dentro do `<style>` do painel de detalhe, que só existe quando alguém
+  abre um evento — e a troca de mês acontece com ele fechado. A animação
+  simplesmente não rodaria. Movidas para a página.
+
+  **Dois erros meus no caminho, corrigidos:** usei `C.cardLineForte` e
+  `C.bright`, que não existem nesta paleta. Não quebram o build — viram
+  `undefined` no CSS e a regra é ignorada em silêncio. Vale o cuidado: o
+  arquivo tem paleta própria, menor que a do `FebraHub.jsx`.
+
+- **A PRIMEIRA VERSÃO FOI REJEITADA.** Eu tinha enriquecido o card —
+  vendas e confirmados lado a lado, local na linha de baixo, contagem em
+  `Chip`. O Louis não gostou, e com razão: virou uma ficha de seis campos
+  competindo entre si. Pior, "Sede Febracis (sugestão)" e "informar"
+  apareciam iguais em todos os cards, dizendo a mesma coisa seis vezes sem
+  ajudar a escolher nenhum.
+
+- **A versão atual é o oposto: card ENXUTO**, escolhido pelo Louis entre
+  quatro estruturas. Três informações, nesta ordem — que turma é, quando
+  é, quanto vendeu. Nada mais. Local, confirmados, capacidade e observação
+  ficam no painel de detalhe, a um clique.
+
+  1. **Título em duas linhas.** Os títulos reais são longos ("FORMAÇÃO
+     INTERNACIONAL EM COACHING INTEGRAL SISTÊMICO") e o `truncate` de uma
+     linha apagava o que distingue um card do outro. Isso sobreviveu da
+     primeira tentativa.
+  2. **Data e contagem na mesma linha.** As duas respondem "quando";
+     separadas viravam dois blocos para uma pergunta só. Dourado só para
+     o que acontece dentro de uma semana.
+  3. **Turma realizada recua** (opacidade 55%), mas continua clicável: é
+     nela que se lança o número de confirmados depois do evento.
+  4. **A coluna perdeu a moldura.** Antes era card com fundo e borda
+     dentro de painel com fundo e borda — duas molduras para a mesma
+     coisa, e o card perdia presença. Agora a coluna é só um título e uma
+     pilha.
+  5. **Mês corrente em dourado, seguinte em cinza.** Marca qual é "agora"
+     sem escrever "este mês" ao lado de "Agosto", que é a mesma coisa dita
+     duas vezes.
+  6. **Cabeçalho da página no padrão do produto**: etiqueta dourada,
+     título na fonte display com `clamp(28px, 2.6vw, 36px)`, subtítulo e a
+     régua 8/10/24. Era um `h1 text-xl`, menor que o título de qualquer
+     outra tela. Ganhou botão de atualizar, que não existia.
+  7. **Painel de detalhe**: título na fonte display, rótulos na `etiqueta`
+     padrão, mais respiro entre campos e o X virou alvo de 32px como os
+     outros botões de ícone.
+
+- **`db/151_central_eventos_agenda.sql` — APLICADA.** O Louis viu que a
+  Central "só pegava cursos GGB". Não era filtro: a view lia só
+  `dim_turmas`, que tem turma de curso e nada mais. Palestra, workshop e
+  live vivem em `mkt_eventos`, da agenda do Google.
+
+  Da agenda entram só **Palestra, Workshop e Live com status ativo**.
+  Ficam de fora Mentoria (sessão fechada), os 23 sem tipo ("Reunião
+  estratégica com Recife" toda semana, "VIAGEM CHINA", "AULA
+  INTERNACIONAL") e **Treinamento — que já está na Central vindo de
+  `dim_turmas`**.
+
+  **A duplicata que quase passou:** os três treinamentos ativos (FOP, IF
+  36, FCIS) existem nas DUAS fontes. Excluir por tipo resolvia esses. Mas
+  sobrava um quarto: "PV EM SALVADOR" está classificado como WORKSHOP na
+  agenda e é a mesma coisa que a turma "TOUR CRESCIMENTO EMPRESARIAL" do
+  mesmo dia — por tipo ele passaria. Por isso a regra final também recusa
+  evento que caia na data de início de uma turma.
+
+  **Risco assumido, e não é pequeno:** palestra marcada para o mesmo dia
+  em que um curso começa some da Central sem aviso. Hoje não acontece (as
+  palestras estão em 01, 02, 03, 08, 22 e 24 de setembro; as turmas em 09,
+  17 e 29), mas vai acontecer. A correção definitiva é ligar evento e
+  turma por identificador, não por data, e falta uma coluna que ninguém
+  preenche hoje.
+
+  **`metrica` nova na view:** curso conta VENDA (matrícula no Salesforce),
+  palestra conta INSCRITO (ingresso no Sympla). O card escreve a palavra
+  certa em vez de chamar tudo de venda, e ganhou o tipo na linha da data —
+  sem ele, uma palestra de 6 inscritos e um curso de 351 vendas viram dois
+  cards parecidos com números incomparáveis. Palestra sem link do Sympla
+  mostra "sem número", não zero.
+
+  Resultado no período: 6 cursos, 6 palestras, 1 workshop. Antes: 6.
+
+- **Testes:** `npm run build` passou (23,86s) e `npm run dev` sobe e
+  responde 200. **Não consegui ver a tela** — a extensão do Chrome recusa
+  `localhost`, `[::1]` e `127.0.0.1` na aba controlada, em todas as
+  tentativas desta sessão e das anteriores. Então: layout verificado por
+  build e por leitura do dado, não por olho. Se algo estiver torto, é aí
+  que está.
+
+- Formatei os blocos que reescrevi. Estavam em linhas únicas de 400+
+  caracteres, e eu não conseguiria justificar deixar assim depois de
+  mexer.
+
+### Codex - 25/08/2026 - Definicao do risco de evasao
+
+- O KPI deixou de usar casos manuais de retencao. A view
+  `vw_pedagogico_risco_evasao` (migration 154) conta CPF unico cuja ultima
+  turma concluida e mensuravel teve ausencia, frequencia abaixo de 75%, ou
+  ficou 90 dias sem nova matricula. Usar apenas a ultima turma evita manter
+  como risco um problema historico ja superado; usar somente turma mensuravel
+  evita transformar falta de carga em falta do aluno.
+
+- Decisão visual posterior: o KPI do topo exibe somente
+  `sem_nova_matricula` (90 dias sem nova matrícula). A view mantém os sinais
+  de ausência e baixa frequência disponíveis para análises futuras, mas eles
+  não compõem o número mostrado no card.
+
+- **KPIs pedagógicos seguem o filtro global.** A migration 155 cria a função
+  `pedagogico_kpis_periodo(inicio,fim)`. Recompra e cursos/aluno usam a coorte
+  de matrículas do período e o histórico existente até o fim do recorte;
+  comparecimento usa a data de início das turmas; risco é a posição acumulada
+  existente no fim do período. O front usa a mesma janela de Ano/Mês/7 dias.
+  A migration 156 muda a RPC para `security definer`: o papel autenticado tinha
+  permissão de execução, mas não SELECT direto em todas as tabelas internas.
+  A autorização funcional continua dentro da consulta com
+  `pode_ver('pedagogico')` e a execução pública foi revogada.
+
+- **Fidelização por curso corrigida (migration 157).** A view antiga marcava
+  como fidelizador qualquer curso de um aluno com 2+ compras, mesmo quando a
+  outra compra havia acontecido antes; cursos avançados ficavam perto de 95%
+  por causalidade invertida. Agora a coorte é de alunos com presença, e sucesso
+  significa matrícula aprovada em outro curso da grade nos 90 dias seguintes
+  ao encerramento. Só entram coortes com 90 dias completos, CPF é único por
+  curso e o front chama o bloco de “Cursos que mais geram recompra”.
+  A primeira versão ficou lenta por executar um `exists` correlacionado para
+  cada aluno. A migration 158 preserva a regra, materializa as duas bases e faz
+  um único join; o hook também deixou de pedir `count=exact`, que executava o
+  cálculo pesado uma segunda vez sem usar esse total.
+
+- **Falta por curso corrigida (migration 159).** A view anterior tratava quem
+  aparecesse em um único dia como presente integral. Agora calcula aluno-dia:
+  pessoas previstas vezes dias efetivamente carregados para a turma, menos os
+  dias em que cada CPF apareceu. Continua restrita às turmas mensuráveis e
+  inclui transferidos revelados pela presença. O gráfico foi renomeado para
+  “Cursos com mais faltas” e explicita “% de dias não frequentados”.
+
+- **Migration 159 foi aplicada, mas o gráfico não a usa mais.** Louis confirmou
+  que a pergunta correta não é falta-dia nem ausência na turma original, e sim
+  quem comprou e nunca realizou nenhuma turma equivalente. A migration 160
+  agrega a fonte canônica `vw_pedagogico_prazo`, que já exclui transferidos que
+  fizeram depois e compradores de vagas. O bloco agora mostra quantidades de
+  alunos únicos em “Cursos com mais alunos que ainda não fizeram”.
+
+- **Detalhes comparativos nos KPIs pedagógicos.** O Hub faz consultas à RPC de
+  período para a janela atual, a anterior equivalente e o mesmo intervalo do
+  ano anterior. Recompra e comparecimento mostram variação em p.p. contra o
+  período anterior; risco mostra a variação líquida de alunos na janela;
+  cursos/aluno compara com o ano anterior. Nenhum texto é fixo.
 
 ## Protocolo de encerramento
 
