@@ -40,3 +40,53 @@ select option {
   background-color: #17171c;
   color: #f2ede1;
 }
+/* Brilho de borda guiado pelo cursor. As variáveis são atualizadas direto no
+   DOM pelo componente para não renderizar React a cada movimento. */
+.borderGlow {
+  position: relative;
+  min-width: 0;
+  height: 100%;
+  padding: 1px;
+  border-radius: var(--glow-border-radius);
+  background: var(--glow-bg);
+  isolation: isolate;
+}
+
+.borderGlow::before,
+.borderGlow::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  opacity: var(--glow-opacity);
+  transition: opacity 120ms ease;
+}
+
+.borderGlow::before {
+  z-index: -1;
+  inset: calc(var(--glow-radius) * -.55);
+  border-radius: calc(var(--glow-border-radius) + var(--glow-radius));
+  background: radial-gradient(circle var(--glow-radius) at var(--glow-x) var(--glow-y), var(--glow-solid), transparent 72%);
+  filter: blur(calc(var(--glow-radius) * .34));
+}
+
+.borderGlow::after {
+  z-index: 1;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background:
+    radial-gradient(circle calc(var(--glow-radius) * 1.25) at var(--glow-x) var(--glow-y), var(--glow-solid), transparent 70%),
+    conic-gradient(from calc(180deg - var(--glow-cone)) at var(--glow-x) var(--glow-y), var(--glow-colors), var(--glow-solid));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+.borderGlowContent,
+.borderGlowContent > * {
+  height: 100%;
+  min-width: 0;
+}
+
+.borderGlowAnimated::after { animation: borderGlowGiro 5s linear infinite; }
+@keyframes borderGlowGiro { to { filter: hue-rotate(360deg); } }

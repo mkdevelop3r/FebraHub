@@ -2,7 +2,8 @@ import { Component, useState, useMemo, useRef, useEffect, createContext, useCont
 import { BrowserRouter, Routes, Route, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import Avaliacao from "./Rotas/Avaliacao.jsx";
-import CentralEventos from "./Rotas/CentralEventos.jsx";
+import CentralFebracis, { CentralEventosLegado } from "./Rotas/CentralEventos.jsx";
+import BorderGlow from "./BorderGlow.jsx";
 import {
   TrendingUp, Wallet, Megaphone, GraduationCap, ShoppingBag, CalendarDays,
   LayoutDashboard, Lock, Mail, AlertTriangle, Package, LogOut, Power,
@@ -97,9 +98,12 @@ const HUBS = [
      Marketing junto. Se fosse só `central-eventos`, todo mundo do
      marketing precisaria de dois setores e esquecer um deixaria a pessoa
      sem a Central. */
-  { key: "central-eventos", setores: ["marketing", "central-eventos"],
+  { key: "central-febracis", publico: true,
     nome: "Central Febracis", Icone: CalendarDays,
-    desc: "Eventos e turmas de Salvador" },
+    desc: "Calendário de cursos, eventos e palestras" },
+  { key: "central-eventos", setores: ["marketing", "central-eventos"],
+    nome: "Central de Eventos", Icone: ClipboardList,
+    desc: "Demandas do Marketing para os eventos do mês" },
   { key: "pedagogico", nome: "Pedagógico", Icone: GraduationCap, desc: "Turmas, matrículas e conclusão" },
   /* A Central é operação, não setor: quem enxerga é quem tem o setor
      'pedagogico'. `setor` existe só por isso — nos outros, a chave já é o
@@ -5721,17 +5725,25 @@ function HubPedagogico() {
 
       {/* ---- KPIs de saúde ---- */}
       <div className="pedKpis" style={{ marginBottom: 12 }}>
+        <BorderGlow edgeSensitivity={30} glowColor="40 80 80" backgroundColor="transparent" borderRadius={28} glowRadius={40} glowIntensity={1} coneSpread={25} animated={false} colors={['#c084fc', '#f472b6', '#38bdf8']}>
         <ChipKpi compacto hero Icone={Repeat} label="Recompra (grade)" valor={kpisPeriodo.isLoading || kpisPeriodo.error ? "—" : fmtPct(kp.taxa_recompra, 1)}
           delta={deltaRecompra == null ? null : `${fmtDeltaNumero(deltaRecompra)} p.p.`} up={deltaRecompra >= 0} deltaNota="vs período anterior" deltaAbaixo />
+        </BorderGlow>
+        <BorderGlow edgeSensitivity={30} glowColor="40 80 80" backgroundColor="transparent" borderRadius={28} glowRadius={40} glowIntensity={1} coneSpread={25} animated={false} colors={['#c084fc', '#f472b6', '#38bdf8']}>
         <ChipKpi compacto Icone={UserCheck} label="Comparecimento" valor={kpisPeriodo.isLoading || kpisPeriodo.error ? "—" : fmtPct(kp.taxa_comparecimento)}
           delta={deltaComparecimento == null ? null : `${fmtDeltaNumero(deltaComparecimento)} p.p.`} up={deltaComparecimento >= 0} deltaNota="vs período anterior" deltaAbaixo
           sub={kp.turmas_mensuraveis ? `${numero(kp.turmas_mensuraveis)} turmas · ${rotulo}` : `sem turma · ${rotulo}`} />
+        </BorderGlow>
+        <BorderGlow edgeSensitivity={30} glowColor="40 80 80" backgroundColor="transparent" borderRadius={28} glowRadius={40} glowIntensity={1} coneSpread={25} animated={false} colors={['#c084fc', '#f472b6', '#38bdf8']}>
         <ChipKpi compacto Icone={AlertTriangle} label="Alunos em risco de evasão"
           valor={kpisPeriodo.isLoading || kpisPeriodo.error ? "—" : <span style={{ color: Number(kp.alunos_risco_90d ?? 0) > 0 ? C.down : C.up }}>{numero(kp.alunos_risco_90d ?? 0)}</span>}
           nota={detalheRisco ?? rotulo}
           sub="regra: mais de 90 dias sem nova matrícula" />
+        </BorderGlow>
+        <BorderGlow edgeSensitivity={30} glowColor="40 80 80" backgroundColor="transparent" borderRadius={28} glowRadius={40} glowIntensity={1} coneSpread={25} animated={false} colors={['#c084fc', '#f472b6', '#38bdf8']}>
         <ChipKpi compacto Icone={BookOpen} label="Cursos por aluno" valor={kpisPeriodo.isLoading || kpisPeriodo.error ? "—" : cursosPorAluno}
           delta={deltaCursos == null ? null : fmtDeltaNumero(deltaCursos)} up={deltaCursos >= 0} deltaNota="vs ano anterior" deltaAbaixo />
+        </BorderGlow>
       </div>
 
       {/* ---- Comparecimento no tempo (largura total) ---- */}
@@ -8743,7 +8755,8 @@ function Shell({ perfil }) {
 
   /* `setores` (plural) para hubs que aceitam mais de um; `setor` para o
      que tem um só; e a chave quando ela própria é o setor. */
-  const visiveis = admin ? HUBS : HUBS.filter((h) =>
+  const visiveis = admin ? HUBS : HUBS.filter((h) => h.publico
+    ||
     (h.setores ?? [h.setor ?? h.key]).some((s) => setores.includes(s)));
   const hub = HUBS.find((h) => h.key === tela);
 
@@ -8756,7 +8769,8 @@ function Shell({ perfil }) {
       case "pedagogico": return <HubPedagogico />;
       case "central":    return <CentralPedagogica />;
       case "auditoria":  return <HubAuditoria />;
-      case "central-eventos": return <CentralEventos />;
+      case "central-febracis": return <CentralFebracis />;
+      case "central-eventos": return <CentralEventosLegado />;
       case "eventos":    return <HubEventos />;
       case "loja":       return <HubLoja />;
       case "estoque":    return <SemFonte hub={hub} />;
@@ -8951,7 +8965,7 @@ function Shell({ perfil }) {
           {/* A Central de Eventos traz o próprio cabeçalho — com o seletor de
               mês e o botão de atualizar dentro dele. Renderizar o do Shell
               junto duplicaria o título na tela. */}
-          {tela !== "central-eventos" && (
+          {tela !== "central-febracis" && (
           <div style={{
             display: "flex", alignItems: "flex-end", justifyContent: "space-between",
             gap: 20, flexWrap: "wrap", marginBottom: 24,

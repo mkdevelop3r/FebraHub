@@ -930,6 +930,19 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
   período anterior; risco mostra a variação líquida de alunos na janela;
   cursos/aluno compara com o ano anterior. Nenhum texto é fixo.
 
+- **Central Febracis sumiu para editoras (migration 161).** A migration 150
+  cadastrava Carmen, Bruno, Elis e Daniele em `evento_editor`, mas a leitura e
+  o menu continuavam dependendo de `marketing`/`central-eventos`. Carmen e Elis
+  podiam tecnicamente editar sem conseguir abrir a tela. A 161 concede
+  `central-eventos` em `perfil_setores` a todo `evento_editor`; o front também
+  reconhece a lista explícita imediatamente no menu.
+
+- **Correção conceitual: são duas Centrais.** `central-febracis` é o calendário
+  institucional de cursos, eventos e palestras, visível no menu de todos.
+  `central-eventos` voltou a renderizar `CentralEventosLegado`: é a gestão das
+  demandas do time de Marketing para os eventos do mês. Não renomear ou
+  substituir uma pela outra novamente.
+
 ## Protocolo de encerramento
 
 1. Atualizar este arquivo com o resultado da tarefa.
