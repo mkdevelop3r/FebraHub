@@ -1195,7 +1195,7 @@ function Sino({ pendentes, atrasadas, publico, mes }) {
 }
 
 /* ============ PÁGINA ============ */
-function CentralEventosLegado() {
+export function CentralEventosLegado() {
   const agora = new Date();
   const [ano, setAno] = useState(agora.getFullYear());
   const [mes, setMes] = useState(agora.getMonth());
@@ -1593,7 +1593,10 @@ const CORES_TIPO = {
   Workshop:  { fundo: "rgba(255,255,255,0.10)", texto: "#E8E6E0", acento: "#9C9CA6" },
   Live:      { fundo: "rgba(194,102,90,0.20)",  texto: "#F0AFA8", acento: C.alert },
 };
-const corDoTipo = (tipo) => CORES_TIPO[tipo] ?? CORES_TIPO.Workshop;
+// A view anterior à migration 151 não expunha `tipo` e continha somente
+// cursos. Se o schema cache ainda servir essa versão, o fallback correto é
+// Curso (dourado), não Workshop (branco).
+const corDoTipo = (tipo) => CORES_TIPO[tipo] ?? CORES_TIPO.Curso;
 
 /* SEM NUMERO NA PASTILHA. Eu tinha posto a contagem de vendas dentro da
    celula do dia, apostando que a Central existe para responder "quanto ja
