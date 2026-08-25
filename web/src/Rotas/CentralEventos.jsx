@@ -25,7 +25,7 @@ import {
   CalendarDays, ChevronLeft, ChevronRight, CircleCheck, Circle,
   AlertTriangle, Copy, Check, Users, UserCheck, Zap, HelpCircle,
   RefreshCw, X, ListChecks, Ban, Undo2, CalendarClock, Bell, Ticket,
-  MapPin, Pencil, Save, Lock,
+  Save, Lock,
 } from "lucide-react";
 import {
   mktUnidadesAtivas, mktTiposComChecklist, mktEventosDoMes,
@@ -48,6 +48,10 @@ const C = {
   void: "#08080A",
   surface: "rgba(255,255,255,.028)",
   bronzeLine: "rgba(255,255,255,.07)",
+  /* Contorno de moldura, mais firme que `bronzeLine`. A grade do
+     calendario precisa se fechar como objeto; com 7% ela dissolvia no
+     fundo. Usar so aqui, para nao virar a nova borda padrao de tudo. */
+  moldura: "rgba(255,255,255,.13)",
   hair: "rgba(255,255,255,.045)",
   gold: "#E4C06A",
   goldDim: "#B8934A",
@@ -1527,51 +1531,207 @@ const fmtPeriodoCentral = (inicio, fim) => {
     ? fmt(inicio) : `${fmt(inicio)} a ${fmt(fim)}`;
 };
 
-const contagemEvento = (dias) => {
-  const n = Number(dias);
-  if (n < 0) return { texto: "realizado", cor: C.textFaint };
-  if (n === 0) return { texto: "hoje", cor: C.gold };
-  return { texto: `em ${n} dia${n === 1 ? "" : "s"}`, cor: n <= 7 ? C.gold : C.textMuted };
+/* ============ CALENDARIO ============
+   Grade mensal no formato que todo mundo ja sabe ler, o da agenda do
+   Google: sete colunas de domingo a sabado, o numero do dia no canto, e o
+   evento como pastilha dentro da celula. Clicar na pastilha abre o
+   detalhe que ja existia.
+
+   POR QUE A PASTILHA FICA SO NO DIA DE INICIO
+   Curso tem duracao de 0 a 382 dias nesta base — ha programa que corre o
+   ano inteiro. Desenhar barra atravessando os dias encheria o mes todo
+   com um curso so, e a pergunta que a Central responde e "o que comeca
+   quando". O periodo completo aparece no painel de detalhe. */
+
+const DIAS_SEMANA = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+
+/* CODIGO DA TURMA — o vocabulario da casa.
+   O time nao chama o curso de "FORMACAO INTERNACIONAL EM COACHING INTEGRAL
+   SISTEMICO": chama de FCIS 37. O codigo estava dentro de `turma_id`
+   ("2026 - FCIS37") e nao aparecia em lugar nenhum da tela.
+
+   Ele resolve de quebra o problema da pastilha estreita: numa celula de
+   ~140px o titulo trunca sempre, e o que sobra e o comeco de uma frase
+   generica ("FORMACAO INTERNAC..."). O codigo cabe inteiro e identifica.
+
+   Palestra e workshop vem da agenda e nao tem codigo — devolve null, e a
+   pastilha mostra so o titulo. */
+const codigoTurma = (turmaId) => {
+  if (!turmaId || turmaId.startsWith("mkt:")) return null;
+  const semAno = turmaId.replace(/^\d{4}\s*-\s*/, "");
+  return semAno.split(" - ")[0].trim() || null;
 };
 
-function CardCentralFebracis({ evento, onAbrir }) {
-  const quando = contagemEvento(evento.dias_para_inicio);
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+/* A grade sempre comeca no domingo anterior ao dia 1 e termina no sabado
+   seguinte ao ultimo dia. Seis semanas fixas manteriam a altura estavel
+   entre meses, mas deixariam uma linha vazia na maioria deles; prefiro a
+   grade do tamanho do mes. */
+function gradeDoMes(refDate) {
+  const primeiro = new Date(refDate.getFullYear(), refDate.getMonth(), 1);
+  const ultimo = new Date(refDate.getFullYear(), refDate.getMonth() + 1, 0);
+
+  const inicio = new Date(primeiro);
+  inicio.setDate(primeiro.getDate() - primeiro.getDay());
+
+  const fim = new Date(ultimo);
+  fim.setDate(ultimo.getDate() + (6 - ultimo.getDay()));
+
+  const dias = [];
+  for (let d = new Date(inicio); d <= fim; d.setDate(d.getDate() + 1)) {
+    dias.push(new Date(d));
+  }
+  return { dias, inicio, fim, mes: refDate.getMonth() };
+}
+
+/* Cor por tipo. Nao e decoracao: com curso, palestra e workshop na mesma
+   grade, a cor e o que deixa varrer o mes sem ler cada pastilha. */
+const CORES_TIPO = {
+  Curso:     { fundo: "rgba(195,163,75,0.22)",  texto: "#F0DCA6", acento: C.gold },
+  Palestra:  { fundo: "rgba(143,174,124,0.20)", texto: "#B7DCA6", acento: C.positive },
+  Workshop:  { fundo: "rgba(255,255,255,0.10)", texto: "#E8E6E0", acento: "#9C9CA6" },
+  Live:      { fundo: "rgba(194,102,90,0.20)",  texto: "#F0AFA8", acento: C.alert },
+};
+const corDoTipo = (tipo) => CORES_TIPO[tipo] ?? CORES_TIPO.Workshop;
+
+/* SEM NUMERO NA PASTILHA. Eu tinha posto a contagem de vendas dentro da
+   celula do dia, apostando que a Central existe para responder "quanto ja
+   vendeu". O Louis olhou na tela e cortou: no meio da grade o numero
+   competia com a data e com o codigo, e transformava o calendario em
+   planilha. O numero continua no painel de detalhe, que e onde alguem vai
+   quando quer o numero — e no titulo do `title`, para quem passar o mouse.
+
+   Com a largura liberada, o codigo passa a dividir a linha com o titulo:
+   `IF36 · Inteligencia Financeira`. O codigo identifica mesmo truncado, o
+   titulo diz do que se trata, e nada disputa com eles. */
+function PastilhaEvento({ evento, onAbrir }) {
+  const cor = corDoTipo(evento.tipo);
+  const codigo = codigoTurma(evento.turma_id);
+  const numero = evento.vendas;
+  const palavra = evento.metrica === "inscrito" ? "inscritos" : "vendas";
+
   return (
-    <button type="button" onClick={onAbrir} className="w-full text-left rounded-xl p-4 transition-colors"
-      style={{ background: C.surface, border: `1px solid ${C.bronzeLine}`, color: C.text }}>
-      <div className="flex items-start justify-between gap-3 mb-3">
-        <div className="min-w-0">
-          <h3 className="font-semibold text-[14px] leading-snug truncate" title={evento.titulo}>{evento.titulo}</h3>
-          <div className="text-[11px] mt-1" style={{ color: C.textMuted }}>{fmtPeriodoCentral(evento.data_inicio, evento.data_fim)}</div>
-        </div>
-        <span className="text-[10.5px] font-semibold shrink-0" style={{ color: quando.cor }}>{quando.texto}</span>
-      </div>
-
-      <div className="flex items-end justify-between gap-3 pb-3 mb-3" style={{ borderBottom: `1px solid ${C.hair}` }}>
-        <div>
-          <div className="text-[9px] uppercase tracking-[.11em]" style={{ color: C.textFaint }}>Vendas</div>
-          <div className="text-[22px] font-bold tabular-nums" style={{ fontFamily: FONT_DISPLAY, color: C.gold }}>{Number(evento.vendas ?? 0).toLocaleString("pt-BR")}</div>
-        </div>
-        <Pencil size={13} style={{ color: C.textFaint }} />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <div className="text-[9px] uppercase tracking-[.11em] mb-1" style={{ color: C.textFaint }}>Confirmados</div>
-          {evento.confirmados == null
-            ? <span className="text-[11px]" style={{ color: C.textFaint }}>— informar</span>
-            : <span className="text-[13px] font-semibold tabular-nums">{Number(evento.confirmados).toLocaleString("pt-BR")}</span>}
-        </div>
-        <div className="min-w-0">
-          <div className="text-[9px] uppercase tracking-[.11em] mb-1" style={{ color: C.textFaint }}>Local</div>
-          <span className="text-[11px] leading-snug flex items-start gap-1 min-w-0"
-            style={{ color: evento.local_padrao ? C.textFaint : C.textMuted, fontStyle: evento.local_padrao ? "italic" : "normal" }}>
-            <MapPin size={11} className="shrink-0 mt-0.5" />
-            <span className="truncate">{evento.local}{evento.local_padrao ? " · sugestão" : ""}</span>
-          </span>
-        </div>
-      </div>
+    <button type="button" onClick={onAbrir}
+      title={`${evento.tipo} · ${evento.titulo}${numero == null ? "" : ` · ${numero} ${palavra}`}`}
+      className="w-full flex items-baseline gap-1 truncate transition-colors"
+      style={{
+        background: cor.fundo,
+        color: cor.texto,
+        fontSize: 11, lineHeight: 1.35,
+        padding: "3px 6px 3px 6px",
+        borderRadius: 4,
+        borderLeft: `3px solid ${cor.acento}`,
+      }}>
+      {codigo && (
+        <span className="shrink-0" style={{ fontWeight: 700 }}>{codigo}</span>
+      )}
+      <span className="truncate text-left" style={{ opacity: codigo ? .75 : 1, fontWeight: codigo ? 500 : 600 }}>
+        {evento.titulo}
+      </span>
     </button>
+  );
+}
+
+function CelulaDia({ data, doMes, eventos, hoje, onAbrir }) {
+  const ehHoje = iso(data) === hoje;
+  const fimDeSemana = data.getDay() === 0 || data.getDay() === 6;
+  /* Ate tres pastilhas por dia. Passando disso a celula esticava e
+     desalinhava a semana inteira; o resto vira "+N", que abre o dia
+     quando alguem clicar. */
+  const visiveis = eventos.slice(0, 3);
+  const resto = eventos.length - visiveis.length;
+
+  return (
+    <div className="p-1.5 flex flex-col gap-1 min-w-0"
+      style={{
+        minHeight: 112,
+        borderTop: `1px solid ${C.bronzeLine}`,
+        borderLeft: `1px solid ${C.bronzeLine}`,
+        /* A celula tem fundo proprio. Transparente sobre o void, a grade
+           virava um risco de 4,5% de branco e nao lia como calendario.
+           Fim de semana afunda, dia de outro mes afunda mais ainda — e
+           continua visivel, porque some-lo quebraria a leitura da semana. */
+        background: ehHoje
+          ? "rgba(195,163,75,0.09)"
+          : !doMes
+            ? "rgba(255,255,255,0.008)"
+            : fimDeSemana
+              ? "rgba(255,255,255,0.012)"
+              : "rgba(255,255,255,0.028)",
+        /* A ESPINHA DOURADA. O arquivo ja declara, no cabecalho, que "a
+           regua e a assinatura da tela: faz hoje ser achado sem leitura".
+           A grade mensal tinha perdido isso — hoje era so um fundo um
+           pouco mais claro. A barra na lateral esquerda devolve: acha-se
+           antes de ler qualquer numero. */
+        boxShadow: ehHoje ? `inset 3px 0 0 0 ${C.gold}` : "none",
+        opacity: doMes ? 1 : 0.5,
+      }}>
+
+      <div className="flex justify-end mb-0.5">
+        <span className="tabular-nums inline-flex items-center justify-center"
+          style={{
+            fontFamily: FONT_DISPLAY, fontSize: 12.5,
+            width: 22, height: 22, borderRadius: 999,
+            /* Numero do dia em texto cheio, nao em cinza medio: era o
+               unico elemento fixo de toda celula vazia e ficava invisivel. */
+            color: ehHoje ? C.void : doMes ? C.text : C.textMuted,
+            background: ehHoje ? C.gold : "transparent",
+            fontWeight: ehHoje ? 700 : 600,
+          }}>
+          {data.getDate()}
+        </span>
+      </div>
+
+      {visiveis.map((e) => (
+        <PastilhaEvento key={e.turma_id} evento={e} onAbrir={() => onAbrir(e)} />
+      ))}
+      {resto > 0 && (
+        <button type="button" onClick={() => onAbrir(eventos[visiveis.length])}
+          className="text-left px-1.5" style={{ fontSize: 10.5, color: C.textFaint }}>
+          +{resto}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/* FORA do componente, de proposito. Definida dentro, `Secao` seria uma
+   funcao nova a cada render — o React trataria como outro tipo de
+   componente, desmontaria a subarvore e remontaria os inputs a cada
+   tecla. Efeito pratico: o cursor pula fora do campo enquanto a pessoa
+   digita, e o motivo nao aparece em lugar nenhum. */
+function Secao({ titulo, children }) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-3.5">
+        {/* Barra dourada curta antes do texto. Antes a secao era so um
+            filete de 4,5% de branco com letra minuscula por cima — do
+            tamanho de um sublinhado, e sumia. */}
+        <span style={{ width: 3, height: 12, borderRadius: 2, background: C.gold }} />
+        <span style={{ ...etiqueta, fontSize: 10.5, color: C.gold }}>{titulo}</span>
+        <span className="flex-1" style={{ height: 1, background: C.hair }} />
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/* O ROTULO NAO PODE ENVOLVER O CAMPO com o estilo `etiqueta`.
+   Era o bug da tela: `etiqueta` carrega `whiteSpace: nowrap`, e aplicado
+   no <label> que contem o <input> ele prendia rotulo e campo na MESMA
+   linha. O input de largura 100% entao transbordava o painel — dai a
+   barra de rolagem horizontal e o botao Salvar cortado pela metade.
+
+   Aqui o rotulo e um bloco proprio, acima, e o campo e irmao dele. */
+function Campo({ rotulo, children, className = "" }) {
+  return (
+    <label className={`block ${className}`}>
+      <span className="block mb-2" style={{ ...etiqueta, color: C.textMuted }}>
+        {rotulo}
+      </span>
+      {children}
+    </label>
   );
 }
 
@@ -1586,7 +1746,18 @@ function PainelDetalheEvento({ evento, podeEditar, usuarioId, onFechar, onSalvo 
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState(null);
   const campo = (key) => (e) => setForm((v) => ({ ...v, [key]: e.target.value }));
-  const inputStyle = { width: "100%", background: C.void, border: `1px solid ${C.bronzeLine}`, borderRadius: 8, padding: "9px 10px", color: C.text, fontSize: 12.5, outline: "none" };
+  /* Estilo do campo mora numa classe, nao so em `style`: estilo inline
+     nao alcanca `:focus`, e sem foco visivel o formulario fica morto ao
+     teclado — quem navega por Tab nao sabe onde esta. */
+  /* Fundo mais claro que o painel, nao mais escuro. Em #08080A sobre um
+     painel #101012 o campo virava um buraco: nao se via onde clicar. */
+  const inputStyle = {
+    width: "100%", maxWidth: "100%", boxSizing: "border-box",
+    background: "rgba(255,255,255,.045)",
+    border: `1px solid ${C.bronzeLine}`, borderRadius: 8,
+    padding: "10px 12px", color: C.text, fontSize: 13,
+    outline: "none",
+  };
 
   const salvar = async () => {
     setSalvando(true); setErro(null);
@@ -1607,25 +1778,211 @@ function PainelDetalheEvento({ evento, podeEditar, usuarioId, onFechar, onSalvo 
     finally { setSalvando(false); }
   };
 
+  const cor = corDoTipo(evento.tipo);
+  const quando = Number(evento.dias_para_inicio);
+  const numero = evento.vendas;
+  const palavra = evento.metrica === "inscrito" ? "inscritos" : "vendas";
+
+  /* Ocupacao so aparece quando os DOIS numeros existem. Com um so, a conta
+     nao existe — e escrever "12 de —" seria pior que nao escrever. */
+  const ocupacao = (form.confirmados !== "" && form.capacidade !== "" && Number(form.capacidade) > 0)
+    ? Math.round((Number(form.confirmados) / Number(form.capacidade)) * 100)
+    : null;
+
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" style={{ background: "rgba(0,0,0,.58)" }} onMouseDown={(e) => e.target === e.currentTarget && onFechar()}>
-      <aside className="h-full w-full max-w-[480px] overflow-y-auto p-6" style={{ background: "#101012", borderLeft: `1px solid ${C.bronzeLine}` }}>
-        <div className="flex items-start justify-between gap-3 mb-6">
-          <div><div className="text-[10px] uppercase tracking-[.12em] mb-1" style={{ color: C.gold }}>Central Febracis</div><h2 className="text-lg font-semibold" style={{ color: C.text }}>{evento.titulo}</h2><div className="text-xs mt-1" style={{ color: C.textMuted }}>{fmtPeriodoCentral(evento.data_inicio, evento.data_fim)}</div></div>
-          <button onClick={onFechar} aria-label="Fechar" style={{ color: C.textMuted }}><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex justify-end"
+      style={{ background: "rgba(0,0,0,.62)" }}
+      onMouseDown={(e) => e.target === e.currentTarget && onFechar()}>
+
+      <style>{`
+        .campoCentral:focus {
+          border-color: ${C.goldDim} !important;
+          box-shadow: 0 0 0 3px rgba(195,163,75,.14);
+        }
+        .campoCentral::placeholder { color: ${C.textFaint}; }
+        @keyframes entrarPainel {
+          from { transform: translateX(24px); opacity: .4; }
+          to   { transform: none; opacity: 1; }
+        }
+        .painelCentral { animation: entrarPainel .22s ease-out; }
+        @media (prefers-reduced-motion: reduce) { .painelCentral { animation: none; } }
+      `}</style>
+
+      <aside className="painelCentral h-full w-full max-w-[520px] flex flex-col"
+        style={{ background: "#101012", borderLeft: `1px solid ${C.moldura}` }}>
+
+        {/* ---------- cabecalho ---------- */}
+        <div className="px-6 pt-6 pb-5" style={{ borderBottom: `1px solid ${C.hair}` }}>
+          <div className="flex items-start justify-between gap-4 mb-4">
+            <div className="min-w-0">
+              {/* O tipo vem como a MESMA pastilha do calendario. Quem clicou
+                  numa pastilha verde tem de encontrar verde aqui, senao
+                  perde a linha entre o que clicou e o que abriu. */}
+              <span className="inline-block mb-2.5"
+                style={{
+                  ...etiqueta, fontSize: 10, color: cor.texto,
+                  background: cor.fundo, borderLeft: `3px solid ${cor.acento}`,
+                  padding: "4px 9px", borderRadius: 5,
+                }}>
+                {evento.tipo}
+              </span>
+              {codigoTurma(evento.turma_id) && (
+                <span className="ml-2 tabular-nums" style={{
+                  ...etiqueta, fontSize: 10.5, color: C.textMuted,
+                }}>
+                  {codigoTurma(evento.turma_id)}
+                </span>
+              )}
+              <h2 className="leading-snug" style={{
+                fontFamily: FONT_DISPLAY, fontSize: 21, fontWeight: 600, color: C.text,
+              }}>
+                {evento.titulo}
+              </h2>
+            </div>
+            <button onClick={onFechar} aria-label="Fechar"
+              className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+              style={{ background: C.surface, color: C.textMuted, border: `1px solid ${C.bronzeLine}` }}>
+              <X size={15} />
+            </button>
+          </div>
+
+          {/* Fatos que nao se editam, numa faixa so: quando, e quanto ja
+              vendeu ou inscreveu. Antes o painel repetia titulo e data e
+              mais nada — quem abria para lancar confirmados nao via o
+              numero contra o qual esta comparando. */}
+          {/* Faixa de fatos com fundo proprio. Solta sobre o painel, ela
+              se confundia com o formulario que vem logo abaixo; com caixa,
+              fica claro que ali NADA se edita. */}
+          <div className="flex flex-wrap rounded-lg overflow-hidden"
+            style={{ border: `1px solid ${C.bronzeLine}`, background: "rgba(255,255,255,.025)" }}>
+            <div className="px-4 py-3 min-w-0 flex-1">
+              <div style={{ ...etiqueta, fontSize: 9, color: C.textFaint }}>Quando</div>
+              <div className="text-[13px] mt-1.5" style={{ color: C.text }}>
+                {fmtPeriodoCentral(evento.data_inicio, evento.data_fim)}
+              </div>
+              <div className="text-[11.5px] mt-0.5"
+                style={{ color: quando >= 0 && quando <= 7 ? C.gold : C.textFaint,
+                  fontWeight: quando >= 0 && quando <= 7 ? 700 : 400 }}>
+                {quando < 0 ? "realizado" : quando === 0 ? "hoje" : `em ${quando} dias`}
+              </div>
+            </div>
+            <div className="px-4 py-3 min-w-0" style={{ borderLeft: `1px solid ${C.bronzeLine}` }}>
+              <div style={{ ...etiqueta, fontSize: 9, color: C.textFaint }}>{palavra}</div>
+              <div className="mt-1 tabular-nums" style={{
+                color: numero == null ? C.textFaint : cor.texto,
+                fontFamily: numero == null ? undefined : FONT_DISPLAY,
+                fontSize: numero == null ? 13 : 24,
+                fontWeight: numero == null ? 400 : 700,
+                lineHeight: 1.1,
+              }}>
+                {numero == null ? "sem número" : Number(numero).toLocaleString("pt-BR")}
+              </div>
+            </div>
+          </div>
         </div>
 
-        {!podeEditar && <div className="flex items-center gap-2 rounded-lg p-3 mb-5 text-xs" style={{ background: C.surface, color: C.textMuted }}><Lock size={13} /> Somente leitura para o seu perfil.</div>}
-        <div className="grid grid-cols-2 gap-4">
-          <label className="col-span-2 text-[11px]" style={{ color: C.textMuted }}>Local<input disabled={!podeEditar} value={form.local} onChange={campo("local")} placeholder={evento.local_padrao ? "Sede Febracis (sugestão)" : "Informe o local"} style={{ ...inputStyle, marginTop: 6, opacity: podeEditar ? 1 : .65 }} /></label>
-          <label className="col-span-2 text-[11px]" style={{ color: C.textMuted }}>Endereço<input disabled={!podeEditar} value={form.endereco} onChange={campo("endereco")} style={{ ...inputStyle, marginTop: 6, opacity: podeEditar ? 1 : .65 }} /></label>
-          <label className="text-[11px]" style={{ color: C.textMuted }}>Confirmados<input disabled={!podeEditar} type="number" min="0" value={form.confirmados} onChange={campo("confirmados")} style={{ ...inputStyle, marginTop: 6, opacity: podeEditar ? 1 : .65 }} /></label>
-          <label className="text-[11px]" style={{ color: C.textMuted }}>Capacidade<input disabled={!podeEditar} type="number" min="0" value={form.capacidade} onChange={campo("capacidade")} style={{ ...inputStyle, marginTop: 6, opacity: podeEditar ? 1 : .65 }} /></label>
-          <label className="col-span-2 text-[11px]" style={{ color: C.textMuted }}>Observação<textarea disabled={!podeEditar} rows="5" value={form.observacao} onChange={campo("observacao")} style={{ ...inputStyle, marginTop: 6, resize: "vertical", opacity: podeEditar ? 1 : .65 }} /></label>
+        {/* ---------- formulario ---------- */}
+        <div className="px-6 py-5 flex-1 overflow-y-auto flex flex-col gap-6">
+          {!podeEditar && (
+            <div className="flex items-center gap-2 rounded-lg p-3 text-xs"
+              style={{ background: C.surface, color: C.textMuted, border: `1px solid ${C.bronzeLine}` }}>
+              <Lock size={13} className="shrink-0" /> Somente leitura para o seu perfil.
+            </div>
+          )}
+
+          <Secao titulo="Onde acontece">
+            <Campo rotulo="Local">
+              <input className="campoCentral" disabled={!podeEditar} value={form.local}
+                onChange={campo("local")}
+                placeholder={evento.local_padrao ? "Sede Febracis (sugestão)" : "Informe o local"}
+                style={{ ...inputStyle, opacity: podeEditar ? 1 : .6 }} />
+            </Campo>
+            <Campo rotulo="Endereço" className="mt-4">
+              <input className="campoCentral" disabled={!podeEditar} value={form.endereco}
+                onChange={campo("endereco")} placeholder="Rua, número, bairro"
+                style={{ ...inputStyle, opacity: podeEditar ? 1 : .6 }} />
+            </Campo>
+          </Secao>
+
+          <Secao titulo="Quantas pessoas">
+            <div className="grid grid-cols-2 gap-4">
+              <Campo rotulo="Confirmados">
+                <input className="campoCentral" disabled={!podeEditar} type="number" min="0"
+                  value={form.confirmados} onChange={campo("confirmados")} placeholder="—"
+                  style={{ ...inputStyle, opacity: podeEditar ? 1 : .6 }} />
+              </Campo>
+              <Campo rotulo="Capacidade">
+                <input className="campoCentral" disabled={!podeEditar} type="number" min="0"
+                  value={form.capacidade} onChange={campo("capacidade")} placeholder="—"
+                  style={{ ...inputStyle, opacity: podeEditar ? 1 : .6 }} />
+              </Campo>
+            </div>
+
+            {ocupacao != null && (
+              <div className="mt-3">
+                <div className="flex items-baseline justify-between mb-1.5">
+                  <span style={{ ...etiqueta, fontSize: 9.5, color: C.textFaint }}>Ocupação</span>
+                  <span className="tabular-nums text-[12px]"
+                    style={{ color: ocupacao > 100 ? C.alert : C.textMuted }}>
+                    {ocupacao}%
+                  </span>
+                </div>
+                {/* Passar de 100% nao e necessariamente erro de digitacao —
+                    sala com cadeira extra acontece. Marca em vermelho e
+                    deixa passar. */}
+                <div style={{ height: 4, borderRadius: 999, background: C.surface, overflow: "hidden" }}>
+                  <div style={{
+                    width: `${Math.min(ocupacao, 100)}%`, height: "100%",
+                    background: ocupacao > 100 ? C.alert : C.gold,
+                  }} />
+                </div>
+              </div>
+            )}
+          </Secao>
+
+          <Secao titulo="Anotações">
+            <textarea className="campoCentral" disabled={!podeEditar} rows="5"
+              value={form.observacao} onChange={campo("observacao")}
+              placeholder="O que a equipe precisa saber sobre este evento"
+              style={{ ...inputStyle, resize: "vertical", opacity: podeEditar ? 1 : .6 }} />
+          </Secao>
+
+          {evento.atualizado_em && (
+            <div className="text-[11px]" style={{ color: C.textFaint }}>
+              Última edição por {evento.atualizado_por || "usuário não identificado"},
+              em {fmtDataHora(evento.atualizado_em)}.
+            </div>
+          )}
         </div>
-        {evento.atualizado_em && <div className="text-[10.5px] mt-4" style={{ color: C.textFaint }}>Última edição por {evento.atualizado_por || "usuário não identificado"}, em {fmtDataHora(evento.atualizado_em)}.</div>}
-        {erro && <div className="text-xs mt-4" style={{ color: C.alert }}>{erro}</div>}
-        {podeEditar && <button onClick={salvar} disabled={salvando} className="mt-6 w-full rounded-lg py-2.5 flex items-center justify-center gap-2 text-sm font-semibold" style={{ background: C.gold, color: C.void, opacity: salvando ? .6 : 1 }}><Save size={14} />{salvando ? "Salvando…" : "Salvar informações"}</button>}
+
+        {/* ---------- rodape fixo ---------- */}
+        {/* O botao sai do fim do formulario e vira barra fixa: com a
+            anotacao aberta, salvar exigia rolar ate o fim para achar o
+            botao que confirma o que ja estava preenchido. */}
+        {podeEditar && (
+          <div className="px-6 py-4" style={{ borderTop: `1px solid ${C.hair}`, background: "#0C0C0E" }}>
+            {erro && (
+              <div className="flex items-start gap-2 text-xs mb-3" style={{ color: C.alert }}>
+                <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {erro}
+              </div>
+            )}
+            <div className="flex items-center gap-3">
+              <button onClick={salvar} disabled={salvando}
+                className="flex-1 rounded-lg py-2.5 flex items-center justify-center gap-2 text-sm font-bold"
+                style={{
+                  background: C.gold, color: C.void,
+                  opacity: salvando ? .6 : 1,
+                  cursor: salvando ? "default" : "pointer",
+                }}>
+                <Save size={14} /> {salvando ? "Salvando…" : "Salvar"}
+              </button>
+              <button onClick={onFechar} className="rounded-lg py-2.5 px-4 text-sm"
+                style={{ background: "transparent", color: C.textMuted, border: `1px solid ${C.bronzeLine}` }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        )}
       </aside>
     </div>
   );
@@ -1633,28 +1990,218 @@ function PainelDetalheEvento({ evento, podeEditar, usuarioId, onFechar, onSalvo 
 
 export default function CentralEventos() {
   const sessao = useSessao();
-  const central = useCentralFebracis();
   const permissao = usePodeEditarEvento();
   const [selecionado, setSelecionado] = useState(null);
-  const colunas = useMemo(() => ({
-    este_mes: (central.data ?? []).filter((e) => e.coluna === "este_mes"),
-    proximo_mes: (central.data ?? []).filter((e) => e.coluna === "proximo_mes"),
-  }), [central.data]);
+
+  /* Mes visivel. Guarda o dia 1 para nao esbarrar no problema classico de
+     somar mes a partir do dia 31. */
+  const [mesRef, setMesRef] = useState(() => {
+    const h = new Date();
+    return new Date(h.getFullYear(), h.getMonth(), 1);
+  });
+  /* UM movimento, nao varios. A grade inteira entra deslizando do lado de
+     onde veio — para frente vem da direita, para tras vem da esquerda.
+     Nada mais nesta tela anima: pastilha nao pulsa, celula nao cresce no
+     hover. Efeito espalhado e o que faz interface parecer gerada. */
+  const [direcao, setDirecao] = useState(0);
+
+  const grade = useMemo(() => gradeDoMes(mesRef), [mesRef]);
+  const hoje = iso(new Date());
+
+  const central = useCentralFebracis(iso(grade.inicio), iso(grade.fim));
+
+  /* Indice dia -> eventos. Sem ele, cada uma das ~35 celulas varreria a
+     lista inteira a cada render. */
+  const porDia = useMemo(() => {
+    const mapa = new Map();
+    for (const e of central.data ?? []) {
+      const chave = String(e.data_inicio).slice(0, 10);
+      if (!mapa.has(chave)) mapa.set(chave, []);
+      mapa.get(chave).push(e);
+    }
+    return mapa;
+  }, [central.data]);
+
+  const andarMes = (passo) => {
+    setDirecao(passo);
+    setMesRef((m) => new Date(m.getFullYear(), m.getMonth() + passo, 1));
+  };
+
+  const irParaHoje = () => {
+    const h = new Date();
+    const alvo = new Date(h.getFullYear(), h.getMonth(), 1);
+    setDirecao(alvo < mesRef ? -1 : 1);
+    setMesRef(alvo);
+  };
+
+  const noMesCorrente =
+    mesRef.getMonth() === new Date().getMonth() &&
+    mesRef.getFullYear() === new Date().getFullYear();
+
+  const botaoIcone = {
+    width: 32, height: 32, borderRadius: 8,
+    background: C.surface, color: C.textMuted,
+    border: `1px solid ${C.bronzeLine}`,
+  };
 
   return (
-    <div className="mx-auto w-full" style={{ maxWidth: 1180 }}>
-      <div className="mb-6"><h1 className="text-xl font-semibold" style={{ color: C.text }}>Central Febracis</h1><p className="text-xs mt-1" style={{ color: C.textMuted }}>Eventos e turmas de Salvador · vendas, confirmações e local</p></div>
-      {central.isLoading ? <div className="flex items-center justify-center gap-2 py-20 text-sm" style={{ color: C.textFaint }}><RefreshCw size={14} className="girar" /> Carregando…</div>
-        : central.error ? <div className="rounded-xl p-4 text-sm" style={{ color: C.alert, border: `1px solid ${C.alert}` }}>{central.error.message}</div>
-          : <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            {[["este_mes", "Este mês"], ["proximo_mes", "Próximo mês"]].map(([key, titulo]) => (
-              <section key={key} className="rounded-2xl p-4 min-w-0" style={{ background: "rgba(255,255,255,.015)", border: `1px solid ${C.bronzeLine}` }}>
-                <div className="flex items-center justify-between mb-4"><h2 className="text-[13px] font-semibold" style={{ color: C.text }}>{titulo}</h2><span className="text-[10px] rounded-full px-2 py-0.5" style={{ color: C.textMuted, background: C.surface }}>{colunas[key].length}</span></div>
-                <div className="flex flex-col gap-3">{colunas[key].length ? colunas[key].map((e) => <CardCentralFebracis key={e.turma_id} evento={e} onAbrir={() => setSelecionado(e)} />) : <div className="text-xs text-center py-10" style={{ color: C.textFaint }}>Nenhum evento neste período.</div>}</div>
-              </section>
+    <div className="subir mx-auto w-full" style={{ maxWidth: 1180, paddingBottom: 48 }}>
+
+      {/* As keyframes moram AQUI, e nao no painel de detalhe: o painel so
+          existe quando alguem abre um evento, e a troca de mes acontece
+          com ele fechado. */}
+      <style>{`
+        @keyframes mesEntraDireita {
+          from { opacity: 0; transform: translateX(14px); }
+          to   { opacity: 1; transform: none; }
+        }
+        @keyframes mesEntraEsquerda {
+          from { opacity: 0; transform: translateX(-14px); }
+          to   { opacity: 1; transform: none; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .mesGrade { animation: none !important; }
+        }
+      `}</style>
+
+      <div className="flex items-end justify-between gap-x-6 gap-y-4 flex-wrap" style={{ marginBottom: 10 }}>
+        <div>
+          <p className="uppercase tracking-widest"
+            style={{ color: C.gold, fontSize: 13, marginBottom: 8, fontWeight: 700 }}>
+            Marketing · Febracis Salvador
+          </p>
+          <h2 className="leading-tight" style={{
+            color: C.text, fontFamily: FONT_DISPLAY,
+            fontSize: "clamp(28px, 2.6vw, 36px)", fontWeight: 700,
+          }}>
+            Central Febracis
+          </h2>
+        </div>
+
+        {/* Navegacao igual a da agenda do Google, na ordem que a pessoa ja
+            conhece: "Hoje", setas, e o mes escrito. */}
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={irParaHoje} disabled={noMesCorrente}
+            className="px-3 h-8 rounded-lg text-[12px] font-semibold"
+            style={{
+              ...botaoIcone, width: "auto",
+              color: noMesCorrente ? C.textFaint : C.text,
+              cursor: noMesCorrente ? "default" : "pointer",
+            }}>
+            Hoje
+          </button>
+          <button onClick={() => andarMes(-1)} aria-label="Mês anterior"
+            className="flex items-center justify-center" style={botaoIcone}>
+            <ChevronLeft size={15} />
+          </button>
+          <button onClick={() => andarMes(1)} aria-label="Próximo mês"
+            className="flex items-center justify-center" style={botaoIcone}>
+            <ChevronRight size={15} />
+          </button>
+          <span className="ml-1" style={{
+            fontFamily: FONT_DISPLAY, fontSize: 17, fontWeight: 600, color: C.text,
+          }}>
+            {MESES[mesRef.getMonth()]} de {mesRef.getFullYear()}
+          </span>
+          <button onClick={central.refetch} aria-label="Atualizar"
+            className="flex items-center justify-center" style={botaoIcone}>
+            <RefreshCw size={14} className={central.isFetching ? "girar" : ""} />
+          </button>
+        </div>
+      </div>
+
+      <p className="leading-relaxed" style={{ color: C.textMuted, marginBottom: 20, fontSize: 15 }}>
+        Cursos, palestras e workshops de Salvador. Clique no evento para ver e editar os detalhes.
+      </p>
+
+      {/* Resumo do mes E legenda na mesma faixa. Antes a legenda era so
+          tres bolinhas cinza: ocupava uma linha inteira sem dizer nada
+          sobre o mes que esta na tela. Aqui cada tipo mostra QUANTOS sao,
+          e a cor da contagem e a mesma da pastilha — a legenda deixa de
+          ser um aviso e vira o proprio numero. */}
+      <div className="flex items-center gap-2 flex-wrap mb-4">
+        {["Curso", "Palestra", "Workshop"].map((t) => {
+          const cor = corDoTipo(t);
+          const qtd = (central.data ?? []).filter(
+            (e) => e.tipo === t && new Date(e.data_inicio + "T00:00:00").getMonth() === mesRef.getMonth()
+          ).length;
+          return (
+            <span key={t} className="inline-flex items-center gap-2 rounded-lg"
+              style={{
+                padding: "6px 11px 6px 9px",
+                background: cor.fundo,
+                borderLeft: `3px solid ${cor.acento}`,
+                borderRadius: 6,
+              }}>
+              <span className="tabular-nums" style={{
+                fontFamily: FONT_DISPLAY, fontSize: 15, fontWeight: 700, color: cor.texto,
+              }}>
+                {qtd}
+              </span>
+              <span style={{ ...etiqueta, fontSize: 10, color: cor.texto, opacity: .85 }}>
+                {t}{qtd === 1 ? "" : "s"}
+              </span>
+            </span>
+          );
+        })}
+      </div>
+
+      {central.error ? (
+        <div className="flex items-start gap-2.5 rounded-xl p-3.5 text-sm"
+          style={{ background: "rgba(194,102,90,0.1)", border: `1px solid ${C.alert}`, color: C.text }}>
+          <AlertTriangle size={15} style={{ color: C.alert, marginTop: 1 }} className="shrink-0" />
+          <span className="min-w-0 break-words">{central.error.message}</span>
+        </div>
+      ) : (
+        <div className="rounded-xl overflow-hidden" style={{
+          border: `1px solid ${C.moldura}`,
+          borderTop: "none", borderLeft: "none",
+          background: C.void,
+          position: "relative",
+        }}>
+          {/* Banda de cabecalho, como na agenda do Google: fundo proprio
+              e texto claro. Sem ela, os dias da semana boiavam soltos
+              acima da grade. */}
+          <div className="grid grid-cols-7" style={{ background: "rgba(255,255,255,.05)" }}>
+            {DIAS_SEMANA.map((d) => (
+              <div key={d} className="py-2.5 text-center"
+                style={{
+                  ...etiqueta, fontSize: 10, color: C.textMuted,
+                  borderLeft: `1px solid ${C.bronzeLine}`,
+                  borderBottom: `1px solid ${C.bronzeLine}`,
+                }}>
+                {d}
+              </div>
             ))}
-          </div>}
-      {selecionado && <PainelDetalheEvento key={selecionado.turma_id} evento={selecionado} podeEditar={permissao.data === true} usuarioId={sessao?.user?.id} onFechar={() => setSelecionado(null)} onSalvo={central.refetch} />}
+          </div>
+
+          <div className="grid grid-cols-7 mesGrade"
+            key={`${mesRef.getFullYear()}-${mesRef.getMonth()}`}
+            style={{ animation: direcao === 0 ? "none" : `${direcao > 0 ? "mesEntraDireita" : "mesEntraEsquerda"} .26s ease-out` }}>
+            {grade.dias.map((d) => (
+              <CelulaDia key={iso(d)} data={d} hoje={hoje}
+                doMes={d.getMonth() === grade.mes}
+                eventos={porDia.get(iso(d)) ?? []}
+                onAbrir={setSelecionado} />
+            ))}
+          </div>
+
+          {/* Carregando por cima da grade, nao no lugar dela: trocar o mes
+              nao deve fazer a tela saltar para uma tarja e voltar. */}
+          {central.isLoading && (
+            <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm"
+              style={{ background: "rgba(8,8,10,.55)", color: C.textFaint }}>
+              <RefreshCw size={14} className="girar" /> Carregando…
+            </div>
+          )}
+        </div>
+      )}
+
+      {selecionado && (
+        <PainelDetalheEvento key={selecionado.turma_id} evento={selecionado}
+          podeEditar={permissao.data === true} usuarioId={sessao?.user?.id}
+          onFechar={() => setSelecionado(null)} onSalvo={central.refetch} />
+      )}
     </div>
   );
 }

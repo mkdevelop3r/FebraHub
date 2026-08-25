@@ -390,6 +390,17 @@ export const useMarketingCplCampanha = () =>
 // KPIs de recompra (fidelização): uma linha agregada — alunos únicos,
 // matrículas, cursos por aluno, taxa de recompra.
 export const usePedagogicoKpis = () => useView("vw_pedagogico_kpis");
+export const usePedagogicoKpisPeriodo = (inicio, fim) => useQuery({
+  queryKey: ["pedagogico_kpis_periodo", inicio, fim],
+  enabled: Boolean(inicio && fim),
+  staleTime: 60 * 1000,
+  retry: 2,
+  queryFn: async () => {
+    const { data, error } = await supabase.rpc("pedagogico_kpis_periodo", { p_inicio: inicio, p_fim: fim });
+    if (error) throw error;
+    return data ?? [];
+  },
+});
 // KPIs de presença: comparecimento geral + turmas mensuráveis em fato_presenca.
 export const usePedagogicoPresencaKpis = () => useView("vw_pedagogico_presenca_kpis");
 // Taxa de comparecimento por trimestre da TURMA. `matriculas` é o tamanho da
@@ -398,10 +409,14 @@ export const usePedagogicoPresencaTempo = () =>
   useView("vw_pedagogico_presenca_tempo", { ordem: ["periodo"] });
 // Cursos que mais fidelizam (taxa_recompra por curso). `alunos` = amostra.
 export const usePedagogicoRecompraCurso = () =>
-  useView("vw_pedagogico_recompra_curso", { ordem: ["curso"] });
+  useView("vw_pedagogico_recompra_curso", { ordem: ["curso"], contarExato: false, staleTime: 10 * 60 * 1000, retry: 1 });
 // Cursos com mais falta, exclusivamente sobre fato_presenca.
 export const usePedagogicoPresencaCurso = () =>
-  useView("vw_pedagogico_presenca_curso", { ordem: ["curso"] });
+  useView("vw_pedagogico_presenca_curso", { ordem: ["curso"], contarExato: false, staleTime: 10 * 60 * 1000, retry: 1 });
+export const usePedagogicoNaoFizeramCurso = () =>
+  useView("vw_pedagogico_nao_fizeram_curso", { ordem: ["curso"], contarExato: false, staleTime: 10 * 60 * 1000, retry: 1 });
+export const usePedagogicoRiscoEvasao = () =>
+  useView("vw_pedagogico_risco_evasao");
 // Painel de Maestros: os clientes VIP (compraram MAESTRIA). `_completo` já
 // junta as anotações editáveis (apelido/empresa/faturamento/observacoes) aos
 // campos do maestro; a chave é `cpf` (= aluno_id em maestro_anotacao). PII
@@ -848,16 +863,26 @@ const erroSupabase = (error) => {
 
 /* Central Febracis — kanban das turmas de Salvador. A consulta já nasce
    limitada às duas colunas visíveis. */
-export function useCentralFebracis() {
+/* Recebe a JANELA da grade do calendário (não o mês): a visão mensal
+   mostra os dias vizinhos que completam a primeira e a última semana, e
+   evento que cai neles precisa aparecer.
+
+   Antes isto buscava por `coluna in (este_mes, proximo_mes)`, calculada em
+   SQL contra `current_date` — servia para o kanban de duas colunas e
+   impedia navegar para qualquer outro mês. Por data, qualquer mês
+   funciona, e o cache do React Query separa um do outro pela chave. */
+export function useCentralFebracis(inicio, fim) {
   return useQuery({
-    queryKey: ["central_febracis"],
+    queryKey: ["central_febracis", inicio, fim],
+    enabled: Boolean(inicio && fim),
     staleTime: 60 * 1000,
     retry: 2,
     queryFn: async () => {
       const { data, error } = await supabase
         .from("vw_central_eventos")
         .select("*")
-        .in("coluna", ["este_mes", "proximo_mes"])
+        .gte("data_inicio", inicio)
+        .lte("data_inicio", fim)
         .order("data_inicio", { ascending: true });
       erroSupabase(error);
       return data ?? [];
