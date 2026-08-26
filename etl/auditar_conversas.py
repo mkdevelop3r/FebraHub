@@ -77,6 +77,22 @@ O CANAL É ASSÍNCRONO. Considere isto ao avaliar:
 - Mensagens marcadas DISPARO AUTOMÁTICO não foram escritas pela consultora:
   servem de contexto, mas NÃO contam como mérito nem como falha dela.
 
+ANTES DE TUDO, CLASSIFIQUE O TIPO DE ATENDIMENTO em "tipo_atendimento".
+Isto NÃO muda as notas — serve para a gestão saber se o roteiro consultivo era
+aplicável àquela conversa. Avalie as etapas normalmente em qualquer caso.
+
+- "consultivo": o lead chega com interesse vago ou frio. Precisa ser conduzido:
+  entender o que ele faz, aonde quer chegar, o que o impede. O roteiro se aplica
+  inteiro.
+- "pedido": o lead chega DECIDIDO ou perguntando preço/promoção/forma de
+  pagamento. Ele já sabe o que quer; cabe à consultora facilitar a compra.
+  Sondar objetivos futuros aqui pode ser desnecessário.
+- "operacional": não é venda. Aluno já matriculado tirando dúvida de data,
+  local, cadastro, upgrade, ou conversa de pós-venda e confirmação.
+
+Em "tipo_justificativa", uma frase dizendo o que na conversa levou a essa
+classificação — de preferência apontando como o lead abriu o contato.
+
 AVALIE 10 ETAPAS. Nota 1 (cumprida) ou 0 (falhou). Use null apenas em
 tratamento_objecoes, quando o cliente não levantou nenhuma objeção.
 
@@ -113,24 +129,23 @@ sem_proximo_passo.
 
 PROVA OBRIGATÓRIA. Para cada etapa, além da nota, devolva:
 - "obs": uma frase objetiva dizendo por que a nota é essa.
-- "trecho": CITAÇÃO LITERAL da conversa, copiada sem alterar uma palavra
-  (até 200 caracteres). O que citar depende do caso:
+- "msgs": os NÚMEROS das mensagens que sustentam a nota, como lista de
+  inteiros. Cada mensagem da conversa vem numerada (#1, #2, #3...). NÃO copie
+  o texto — devolva só o número. O texto é extraído automaticamente depois.
 
-  NOTA 1 (cumpriu): cite a mensagem em que a consultora cumpriu a etapa.
+  NOTA 1 (cumpriu): [n] da mensagem em que a consultora cumpriu a etapa.
 
-  NOTA 0 por execução ruim: cite a mensagem que mostra a falha — a pergunta
+  NOTA 0 por execução ruim: [n] da mensagem que mostra a falha — a pergunta
   fechada, o discurso genérico, o encerramento passivo.
 
-  NOTA 0 por AUSÊNCIA (a etapa simplesmente não aconteceu): NÃO devolva vazio.
-  Cite as DUAS mensagens seguidas da consultora entre as quais a etapa deveria
-  ter entrado, separadas por " → ". Quase sempre é o ponto em que ela saltou da
-  saudação ou do motivo do contato direto para a oferta. Exemplo do formato:
-  "Oi Ana, aqui é a Beatriz da Febracis → O treinamento custa R$ 1.997 em 12x"
-  Isso mostra o salto, que é a prova da ausência.
+  NOTA 0 por AUSÊNCIA: [n, m] das DUAS mensagens seguidas DA CONSULTORA entre
+  as quais a etapa deveria ter entrado. Quase sempre é onde ela saltou da
+  saudação ou do motivo do contato direto para a oferta. As duas juntas mostram
+  o salto, que é a prova da ausência.
 
-  Só use "" quando a conversa for curta demais para ter duas mensagens da
-  consultora. Este campo é lido pela consultora na devolutiva: nunca invente
-  frase que não está na conversa.
+  Use números DIFERENTES para etapas diferentes sempre que possível: a mesma
+  mensagem servindo de prova para tudo enfraquece a devolutiva.
+  Lista vazia [] só quando a conversa for curta demais.
 Isto é usado em devolutiva com a consultora: ela vai ler. Não parafraseie, não
 invente frase que não está na conversa e não julgue a pessoa — descreva o que
 foi dito.
@@ -138,16 +153,18 @@ foi dito.
 NÃO CALCULE NOTA NEM SCORE. O cálculo é feito fora, a partir das suas notas.
 
 Responda SÓ com este JSON, sem texto em volta e sem blocos de código:
-{"etapas":{"apresentacao":{"nota":<1|0>,"obs":"<frase>","trecho":"<citação literal>"},
-"motivo_contato":{"nota":<1|0>,"obs":"","trecho":""},
-"perfil_profissional":{"nota":<1|0>,"obs":"","trecho":""},
-"objetivos_futuro":{"nota":<1|0>,"obs":"","trecho":""},
-"desafios_dores":{"nota":<1|0>,"obs":"","trecho":""},
-"apresentacao_treinamento":{"nota":<1|0>,"obs":"","trecho":""},
-"validacao_interesse":{"nota":<1|0>,"obs":"","trecho":""},
-"tratamento_objecoes":{"nota":<1|0|null>,"obs":"","trecho":""},
-"fechamento":{"nota":<1|0>,"obs":"","trecho":""},
-"proximos_passos":{"nota":<1|0>,"obs":"","trecho":""}},
+{"tipo_atendimento":"<consultivo|pedido|operacional>",
+"tipo_justificativa":"<frase>",
+"etapas":{"apresentacao":{"nota":<1|0>,"obs":"<frase>","msgs":[]},
+"motivo_contato":{"nota":<1|0>,"obs":"","msgs":[]},
+"perfil_profissional":{"nota":<1|0>,"obs":"","msgs":[]},
+"objetivos_futuro":{"nota":<1|0>,"obs":"","msgs":[]},
+"desafios_dores":{"nota":<1|0>,"obs":"","msgs":[]},
+"apresentacao_treinamento":{"nota":<1|0>,"obs":"","msgs":[]},
+"validacao_interesse":{"nota":<1|0>,"obs":"","msgs":[]},
+"tratamento_objecoes":{"nota":<1|0|null>,"obs":"","msgs":[]},
+"fechamento":{"nota":<1|0>,"obs":"","msgs":[]},
+"proximos_passos":{"nota":<1|0>,"obs":"","msgs":[]}},
 "criticos":{"apresentou_antes_de_sondar":<bool>,"nao_identificou_profissao":<bool>,
 "nao_identificou_objetivos":<bool>,"nao_identificou_desafios":<bool>,
 "perguntas_superficiais":<bool>,"discurso_generico":<bool>,"nao_conectou_solucao":<bool>,
@@ -188,6 +205,7 @@ def montar_conversa(msgs, transcricoes):
     """Devolve (texto_da_conversa, consultora, humanas, audio_pendente)."""
     linhas, consultora, humanas, pendente = [], None, 0, 0
     consultora_uid = None
+    numeradas = []
     for m in sorted(msgs, key=lambda x: x.get("dateAdded") or ""):
         if m.get("messageType", "").startswith("TYPE_ACTIVITY"):
             continue                                  # evento de funil, não é fala
@@ -215,15 +233,23 @@ def montar_conversa(msgs, transcricoes):
         if eh_saida:
             if origem == "bulk_actions":
                 quem = "DISPARO AUTOMÁTICO"           # entra como contexto, não como mérito
+            elif uid in GGB:
+                quem = GGB[uid]
+                humanas += 1                          # só consultora conhecida conta
             else:
-                quem = consultora or "CONSULTORA"
-                humanas += 1
+                # saída de userId desconhecido: agente de IA, bot de grupo, outro
+                # setor. Entra como contexto, mas NÃO conta como atendimento humano
+                # nem credita ninguém — foi o que fez conversa de grupo ser auditada.
+                quem = "AUTOMÁTICO / NÃO IDENTIFICADO"
         else:
             quem = "LEAD"
 
         data = (m.get("dateAdded") or "")[:16].replace("T", " ")
-        linhas.append(f"[{data}] {quem}: {corpo}")
-    return "\n".join(linhas), consultora, consultora_uid, humanas, pendente
+        # numera para a IA poder apontar a mensagem sem precisar copiá-la
+        numeradas.append({"n": len(numeradas) + 1, "quem": quem,
+                          "data": data, "texto": corpo})
+        linhas.append(f"#{len(numeradas)} [{data}] {quem}: {corpo}")
+    return "\n".join(linhas), consultora, consultora_uid, humanas, pendente, numeradas
 
 
 def auditar(texto, cid, contact_id, consultora):
@@ -287,6 +313,38 @@ def calcular_score(etapas):
     return valor, faixa
 
 
+def com_trechos(etapas, numeradas):
+    """Troca os números apontados pela IA pelo texto real da mensagem.
+    A IA escolhe QUAL mensagem; o texto vem do que foi realmente dito."""
+    porn = {m["n"]: m for m in numeradas}
+    for dados in etapas.values():
+        if not isinstance(dados, dict):
+            continue
+        partes = []
+        for n in (dados.get("msgs") or [])[:3]:
+            m = porn.get(n if isinstance(n, int) else -1)
+            if not m:
+                continue                      # número inventado: descarta
+            texto = m["texto"].replace("[ÁUDIO TRANSCRITO] ", "")
+            if len(texto) > 180:
+                texto = texto[:177] + "..."
+            partes.append(f'{m["quem"]}: "{texto}"')
+        dados["trecho"] = "  →  ".join(partes)
+
+    # a mesma mensagem servindo de prova para várias etapas não prova nada:
+    # mantém na primeira e esvazia as demais, em vez de fingir N provas.
+    visto = set()
+    for dados in etapas.values():
+        if not isinstance(dados, dict):
+            continue
+        t = dados.get("trecho") or ""
+        if t and t in visto:
+            dados["trecho"] = ""
+        elif t:
+            visto.add(t)
+    return etapas
+
+
 def linha_csv(a, cid, consultora, user_id, humanas, n_audios):
     etapas = a.get("etapas", {})
     score, faixa = calcular_score(etapas)
@@ -303,6 +361,8 @@ def linha_csv(a, cid, consultora, user_id, humanas, n_audios):
         "pontos_criticos": " | ".join(criticos),
         "ordem_respeitada": a.get("ordem_respeitada"),
         "temperatura_lead": a.get("temperatura_lead"),
+        "tipo_atendimento": a.get("tipo_atendimento"),
+        "tipo_justificativa": a.get("tipo_justificativa"),
     }
     for chave in PESOS:
         nota = (etapas.get(chave) or {}).get("nota")
@@ -339,11 +399,14 @@ if __name__ == "__main__":
             print(f"{cid}: ! {detalhe_erro(e)}")
             continue
 
-        texto, consultora, consultora_uid, humanas, pendente = montar_conversa(msgs, transcricoes)
+        texto, consultora, consultora_uid, humanas, pendente, numeradas = montar_conversa(msgs, transcricoes)
 
         if pendente:
             print(f"{cid}: pulada — {pendente} áudio(s) sem transcrição")
             pulados.append((cid, f"{pendente} áudio pendente")); continue
+        if not consultora_uid:
+            print(f"{cid}: pulada — nenhuma consultora identificada")
+            pulados.append((cid, "sem consultora")); continue
         if humanas < MIN_MSGS_HUMANAS:
             print(f"{cid}: pulada — só {humanas} mensagem(ns) humana(s)")
             pulados.append((cid, f"{humanas} msgs humanas")); continue
@@ -356,13 +419,16 @@ if __name__ == "__main__":
             continue
 
         linha = linha_csv(a, cid, consultora, consultora_uid, humanas, n_audios)
-        # prova: a conversa como a IA leu, e a justificativa de cada etapa
+        # prova: a conversa como a IA leu, e a justificativa de cada etapa.
+        # O trecho é montado AQUI, a partir dos números que a IA apontou —
+        # assim é impossível parafrasear ou citar frase que não existe.
         linha["_transcricao"] = texto
-        linha["_etapas"] = a.get("etapas", {})
+        linha["_etapas"] = com_trechos(a.get("etapas", {}), numeradas)
         resultados.append(linha)
         marca = "COMPLETO" if linha["atendimento_completo"] == "sim" else \
                 f"{len(linha['pontos_criticos'].split(' | '))} críticos"
         print(f"{cid}: {consultora} · score {linha['score']} ({linha['faixa']}) · "
+              f"{linha.get('tipo_atendimento') or '?'} · "
               f"{humanas} msgs, {n_audios} áudios · {marca}")
         time.sleep(0.5)
 
