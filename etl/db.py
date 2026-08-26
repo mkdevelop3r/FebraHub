@@ -49,6 +49,8 @@ def para_fato(linha, canal):
         "pontos_criticos": [c.strip() for c in criticos.split("|") if c.strip()],
         "ordem_respeitada": linha.get("ordem_respeitada"),
         "temperatura_lead": linha.get("temperatura_lead"),
+        "tipo_atendimento": linha.get("tipo_atendimento"),
+        "tipo_justificativa": linha.get("tipo_justificativa"),
         "falhas": linha.get("falhas"),
         "conclusao": linha.get("conclusao"),
         "auditado_em": datetime.datetime.now(datetime.timezone.utc).isoformat(),
