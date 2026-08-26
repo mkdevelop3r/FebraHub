@@ -943,6 +943,82 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
   demandas do time de Marketing para os eventos do mês. Não renomear ou
   substituir uma pela outra novamente.
 
+- **26/08/2026 — acesso da Central de Eventos restaurado.** A migration 162
+  separou as telas, mas errou ao remover `central-eventos` de Carmen e Elis.
+  A 163 devolve o setor adicional a todos os `evento_editor`; o menu também
+  reconhece explicitamente Carmen, Bruno, Elis e Daniele. As telas continuam
+  separadas — isto restaura acesso, não volta a uni-las.
+
+### Claude Code → Codex · 26/08/2026 · prova da auditoria no Hub
+
+- **O hub tinha veredito e não tinha prova.** Score, falha por etapa e
+  placar — tudo agregado, e nenhum caminho até UMA conversa. Esta passagem
+  construiu esse caminho: lista de auditorias no fim do hub e, ao clicar,
+  o painel com a justificativa de cada etapa e a citação que a sustenta.
+
+- **`db/152_auditoria_prova_lista.sql` — APLICADA.** Duas views novas:
+  `vw_auditoria_lista` (uma linha por auditoria, com `tem_prova`) e
+  `vw_auditoria_conversa` (a transcrição, uma vez só).
+
+  **Não alterei `vw_auditoria_prova`**, de propósito: o rodapé da migration
+  da prova avisa que recriar a view derruba o `where pode_ver()`. Faltavam
+  colunas de cabeçalho (faixa, tipo_atendimento, etapas_cumpridas), e
+  buscá-las numa view nova saiu mais barato que arriscar o gate.
+
+  A view de conversa separada resolve um desperdício real:
+  `vw_auditoria_prova` repete `conversa_completa` em CADA linha de etapa —
+  10 etapas por auditoria, conversas de até 10.632 caracteres. A mesma
+  transcrição viajaria dez vezes só para desenhar a lista de etapas.
+
+- **Front:** `web/src/Rotas/AuditoriaProva.jsx`, montado no fim do
+  `HubAuditoria` e herdando os filtros de cima (canal, consultora,
+  período) — abrir uma auditoria é continuação do que já estava na tela.
+
+  O que o dado real obrigou:
+
+  1. **O salto tem N partes, não duas.** O enunciado falava em duas
+     mensagens; a apresentação de uma das auditorias tem TRÊS separadas
+     por `→`. O parser divide em N.
+  2. **Mensagem tem quebra de linha.** Tanto no `trecho` quanto na
+     transcrição. A citação usa `pre-wrap`, e o leitor da conversa anexa
+     linha sem cabeçalho à mensagem anterior — senão continuação virava
+     mensagem sem número.
+  3. **Trecho que não casa com a regex vem cru na tela.** Prova não se
+     descarta por não bater com uma expressão regular.
+  4. **`trecho` vazio é `''`, não null** — quatro etapas da auditoria que
+     usei de referência. A tela diz "sem trecho isolado" e não inventa.
+  5. **`nota` null = não se aplica**, e aparece assim, cinza, sem contar
+     como falha.
+
+- **A conversa só é buscada quando alguém expande** (`enabled` no hook).
+  Abrir uma auditoria não deve baixar 10 KB de transcrição que ninguém
+  pediu para ver.
+
+- **`ETAPAS_ROTULO` saiu do `FebraHub.jsx` para `lib/etapas.js`.** Ganhou
+  um segundo consumidor; duas cópias divergiriam no dia em que uma etapa
+  fosse renomeada, e importar uma da outra criaria ciclo entre a tela e o
+  hub que a renderiza. O `FebraHub.jsx` agora importa de lá.
+
+- **DADO PESSOAL — dois CSVs foram para o `.gitignore`.**
+  `etl/transcricoes.csv` (68 KB) e `etl/auditorias_whatsapp.csv` estavam
+  soltos, não rastreados, com `contact_id`, URL de áudio e a transcrição do
+  que o lead falou. Um commit distraído poria isso num histórico do qual
+  não sai mais. **Não commitei nenhum dos dois, e não commitei nada do
+  trabalho em andamento da Auditoria** (`auditar_conversas.py`, `db.py`,
+  as migrations `migration_*.sql` e a `163`).
+
+- **Ainda aberto, para quem for tratar:** a migration da prova deixou as
+  policies de RLS COMENTADAS. `fato_auditoria_etapa` e
+  `fato_auditoria_transcricao` estão com RLS ligada e ZERO policies —
+  leitura direta devolve nada. As views funcionam porque não são
+  `security_invoker`, então hoje não falta nada; mas é o mesmo arranjo que
+  a 127 foi consertar, e vale decidir se fica assim de propósito.
+
+- Testes: `npm run build` passou (25,65s) e `npm run dev` serve o módulo
+  novo. Gate conferido nos dois sentidos: com o JWT da Claudiana (admin)
+  as views devolvem 12/12/120 linhas; com o da Daniele, que não tem o
+  setor, devolvem 0 e 0, sem erro.
+
 ## Protocolo de encerramento
 
 1. Atualizar este arquivo com o resultado da tarefa.

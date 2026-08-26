@@ -51,6 +51,8 @@ import {
   useIntegracaoStatus,
   porMes, moeda, numero,
 } from "./lib/dados";
+import { ETAPAS_ROTULO, rotuloEtapa } from "./lib/etapas";
+import ProvaAuditoria from "./Rotas/AuditoriaProva.jsx";
 
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -7811,23 +7813,9 @@ function LinhaInscrito({ r, ultima, aberta, onAbrir, onMarcar }) {
    score (0-100, ponderado pelos pesos), etapas cumpridas (contagem, 0-N) e
    sondagem completa (objetivos E desafios na mesma conversa). */
 
-// Rótulo humano de cada etapa do roteiro. A chave é o valor cru de
-// dim_peso_etapa.etapa — o banco fala snake_case, a tela fala português.
-const ETAPAS_ROTULO = {
-  apresentacao: "Apresentação",
-  quebra_gelo: "Quebra-gelo",
-  conhecimento_previo: "Conhecimento prévio",
-  motivo_contato: "Motivo do contato",
-  perfil_profissional: "Perfil profissional",
-  objetivos_futuro: "Objetivos de futuro",
-  desafios_dores: "Desafios e dores",
-  apresentacao_treinamento: "Apresentação do treinamento",
-  validacao_interesse: "Validação de interesse",
-  tratamento_objecoes: "Tratamento de objeções",
-  fechamento: "Fechamento",
-  proximos_passos: "Próximos passos",
-};
-const rotuloEtapa = (e) => ETAPAS_ROTULO[e] ?? String(e ?? "—").replace(/_/g, " ");
+// Rótulo humano de cada etapa: agora em lib/etapas.js, porque o painel de
+// prova (Rotas/AuditoriaProva.jsx) lê o mesmo mapa. Duas cópias divergiriam
+// no dia em que uma etapa fosse renomeada.
 
 /* Critério de cada etapa, exibido no painel lateral. Texto da fonte:
    docs/criterios_etapas_roteiro_carmen.md, extraído do "Roteiro de Ligação e
@@ -8246,6 +8234,19 @@ function HubAuditoria() {
               <ConformidadeVenda pontos={pontos} mes={mesDispersao} canalIgnorado={canal} />
               <TabelaPesos linhas={pesos} rotuloCanal={rotuloCanal} />
             </div>
+          </div>
+
+          {/* A PROVA. Tudo acima é agregado — score médio, falha por etapa,
+              placar. Nada disso leva a UMA conversa, e é a conversa que a
+              gestão precisa abrir quando alguém contesta a nota.
+
+              Fica no fim de propósito: a leitura do hub vai do geral para
+              o específico, e esta lista é o último degrau. Herda os
+              filtros de cima (canal, consultora, período) para que abrir
+              uma auditoria seja continuação do que já estava na tela, e
+              não um recorte novo. */}
+          <div style={{ marginTop: 26 }}>
+            <ProvaAuditoria canal={canal} consultora={quemAtiva} desde={desde} />
           </div>
         </>
       )}
@@ -8698,6 +8699,7 @@ function Shell({ perfil }) {
   // estiver entre os múltiplos setores.
   const setores = perfil.setores?.length ? perfil.setores : [perfil.setor].filter(Boolean);
   const admin = perfil.papel === "admin" || setores.includes("geral");
+  const responsavelEventos = ["Carmen Acassia", "Bruno Cordeiro", "Elis Figueiredo", "Daniele Oliveira"].includes(perfil.nome);
   const [tela, setTela] = useState(admin ? "executivo" : (perfil.setor || setores[0]));
   const [modo, setModo] = useState("ano");
   const [ano, setAno] = useState(() => new Date().getFullYear());
@@ -8756,6 +8758,8 @@ function Shell({ perfil }) {
   /* `setores` (plural) para hubs que aceitam mais de um; `setor` para o
      que tem um só; e a chave quando ela própria é o setor. */
   const visiveis = admin ? HUBS : HUBS.filter((h) => h.publico
+    ||
+    (h.key === "central-eventos" && responsavelEventos)
     ||
     (h.setores ?? [h.setor ?? h.key]).some((s) => setores.includes(s)));
   const hub = HUBS.find((h) => h.key === tela);
