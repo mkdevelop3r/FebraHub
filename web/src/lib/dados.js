@@ -337,6 +337,17 @@ export const useLojaKpisAno = () =>
 export const useLojaKpisPeriodo = () =>
   useView("vw_loja_kpis_periodo", { ordem: ["periodo"] });
 
+/* Moldura do seletor de período (migration 164): uma linha, { min_mes,
+   max_mes }. É a ÚNICA view sem `pode_ver` do projeto, e de propósito — o
+   intervalo navegável do calendário não é dado de setor. Antes ele saía das
+   quatro views de fluxo abaixo, todas travadas em financeiro/loja: quem era
+   de marketing, comercial ou pedagógico recebia vazio e o seletor colapsava
+   no mês de hoje (um mês, um ano, setas mortas). Só a régua vem daqui — o
+   número dentro do mês continua atrás do gate de sempre.
+   Limite muda uma vez por mês; não faz sentido revalidar a cada 5 min. */
+export const usePeriodoLimites = () =>
+  useView("vw_periodo_limites", { staleTime: 60 * 60 * 1000, contarExato: false });
+
 /* Views com dimensão de data. Entregam as linhas com `data`; o front
    recorta pelo período e reagrega. Só métricas de FLUXO — estado
    (inadimplência, horizontes) é snapshot e não tem recorte. */
