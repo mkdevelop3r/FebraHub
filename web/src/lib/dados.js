@@ -337,6 +337,17 @@ export const useLojaKpisAno = () =>
 export const useLojaKpisPeriodo = () =>
   useView("vw_loja_kpis_periodo", { ordem: ["periodo"] });
 
+/* Moldura do seletor de período (migration 164): uma linha, { min_mes,
+   max_mes }. É a ÚNICA view sem `pode_ver` do projeto, e de propósito — o
+   intervalo navegável do calendário não é dado de setor. Antes ele saía das
+   quatro views de fluxo abaixo, todas travadas em financeiro/loja: quem era
+   de marketing, comercial ou pedagógico recebia vazio e o seletor colapsava
+   no mês de hoje (um mês, um ano, setas mortas). Só a régua vem daqui — o
+   número dentro do mês continua atrás do gate de sempre.
+   Limite muda uma vez por mês; não faz sentido revalidar a cada 5 min. */
+export const usePeriodoLimites = () =>
+  useView("vw_periodo_limites", { staleTime: 60 * 60 * 1000, contarExato: false });
+
 /* Views com dimensão de data. Entregam as linhas com `data`; o front
    recorta pelo período e reagrega. Só métricas de FLUXO — estado
    (inadimplência, horizontes) é snapshot e não tem recorte. */
@@ -834,6 +845,60 @@ export const useAuditoriaConsultora = () =>
   useView("vw_auditoria_consultora", { ordem: ["canal", "consultora"] });
 export const useConformidadeVenda = () =>
   useView("vw_conformidade_venda", { ordem: ["mes", "consultora"] });
+
+/* ---------- A PROVA (migrations da prova + 152) ----------
+   O hub mostrava só agregado; não havia caminho até UMA conversa. Estes
+   três hooks são esse caminho: a lista, a justificativa por etapa, e a
+   transcrição.
+
+   São TRÊS e não um de propósito. `vw_auditoria_prova` repete
+   `conversa_completa` em cada linha de etapa — dez etapas por auditoria,
+   conversas de até 10.632 caracteres — e baixar isso só para desenhar a
+   lista de etapas seria pagar dez vezes pelo mesmo texto. A conversa vem
+   da view própria, e só quando alguém expande.
+
+   As três views carregam `pode_ver('auditoria')` no `where`: quem não tem
+   o setor recebe zero linhas, sem erro. É dado pessoal — a transcrição
+   traz nome do lead e o que ele falou. */
+export const useAuditoriaLista = () =>
+  useView("vw_auditoria_lista", { ordem: ["data_ref", "auditoria_id"] });
+
+export function useAuditoriaProva(auditoriaId) {
+  return useQuery({
+    queryKey: ["auditoria_prova", auditoriaId],
+    enabled: Boolean(auditoriaId),
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vw_auditoria_prova")
+        .select("etapa, peso, ordem, nota, observacao, trecho")
+        .eq("auditoria_id", auditoriaId)
+        .order("ordem", { ascending: true, nullsFirst: false });
+      erroSupabase(error);
+      return data ?? [];
+    },
+  });
+}
+
+/* `enabled` fica sob controle de quem chama: a conversa só é buscada
+   quando a pessoa expande. Sem isso, abrir uma auditoria baixaria 10 KB
+   de transcrição que ninguém pediu para ver. */
+export function useAuditoriaConversa(auditoriaId, ativo) {
+  return useQuery({
+    queryKey: ["auditoria_conversa", auditoriaId],
+    enabled: Boolean(auditoriaId && ativo),
+    staleTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vw_auditoria_conversa")
+        .select("texto, audios, caracteres, canal")
+        .eq("auditoria_id", auditoriaId)
+        .maybeSingle();
+      erroSupabase(error);
+      return data ?? null;
+    },
+  });
+}
 
 /* ============================================================
    CENTRAL DE EVENTOS — operação do Marketing

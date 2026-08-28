@@ -26,6 +26,7 @@ import {
   useFinanceiroReceitaMensal, useFinanceiroCaixaMensal,
   useFinanceiroInadimp, useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
+  usePeriodoLimites,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroReceitaCategoriaDetalhe, useFinanceiroDespesaCategoriaPeriodo,
   useLojaReceitaPeriodo, useLojaReceitaTotalMes, useLojaReceitaConsolidada,
   useLojaSerie, useLojaKpisAno, useLojaKpisPeriodo,
@@ -51,6 +52,8 @@ import {
   useIntegracaoStatus,
   porMes, moeda, numero,
 } from "./lib/dados";
+import { ETAPAS_ROTULO, rotuloEtapa } from "./lib/etapas";
+import ProvaAuditoria from "./Rotas/AuditoriaProva.jsx";
 
 const qc = new QueryClient({
   defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } },
@@ -218,35 +221,54 @@ function useCategoriasDisponiveis() {
   }, [r.data]);
 }
 
+/* Até onde o seletor de período pode navegar — a MOLDURA, não o dado.
+
+   O intervalo saía das quatro views de fluxo (financeiro/loja), e as quatro
+   têm `pode_ver` no `where`. Para quem não é financeiro, loja, geral ou
+   admin, as quatro voltavam vazias, `min` ficava null e o fallback prendia
+   ano e mês no mês corrente: "Agosto 2026", sozinho, com as setas mortas.
+   Marketing, comercial, pedagógico e central-eventos, todos. O dado nunca
+   faltou — a régua é que estava atrás do gate.
+
+   Agora a régua vem de `vw_periodo_limites` (migration 164): duas datas, sem
+   trava de setor. As quatro views continuam sendo lidas como FALLBACK, para
+   o caso de o front subir antes de a migration ser aplicada — quem já
+   enxergava o intervalo inteiro continua enxergando. Nenhum gate afrouxou:
+   o valor dentro do mês segue vindo das views travadas. */
 function useRangeDatas() {
+  const lim = usePeriodoLimites();
   const a = useFinanceiroReceitaCategoriaPeriodo();
   const b = useFinanceiroDespesaCategoriaPeriodo();
   const c = useLojaReceitaPeriodo();
-  // A loja (gestora RLS) não enxerga as views financeiras, então os anos dela
-  // saíam só de `c`, que traz só 2026. A série longa da loja cobre 2022-2026,
-  // então entra como fonte dos anos (e do minMes). Cada view usa sua coluna de
-  // data: `data` nas _periodo, `mes` na série. Para quem não é da loja ela vem
-  // vazia (RLS), sem efeito nos outros hubs.
+  // Série longa da loja: cobre 2022-2026 e é a única fonte do período antigo
+  // dela. Cada view usa sua coluna de data: `data` nas _periodo, `mes` na série.
   const d = useLojaSerie();
   return useMemo(() => {
     const h = new Date();
-    const maxMes = chaveMes(h.getFullYear(), h.getMonth());
+    const mesCorrente = chaveMes(h.getFullYear(), h.getMonth());
     let min = null;
-    const anos = new Set();
+    const marcar = (k) => { if (k && (!min || k < min)) min = k; };
+
+    // 1) Régua canônica. `max_mes` a view já limita ao mês corrente; o piso é
+    //    o que interessa aqui, e o teto continua sendo "hoje" (abaixo).
+    marcar(String(lim.data?.[0]?.min_mes ?? "").slice(0, 7) || null);
+
+    // 2) Fallback pelas views de fluxo, se a 164 ainda não estiver no banco.
     const somar = (src, campo) => {
-      for (const r of src ?? []) {
-        const dt = String(r[campo] ?? "").slice(0, 10);
-        if (!dt) continue;
-        if (!min || dt < min) min = dt;
-        anos.add(Number(dt.slice(0, 4)));
-      }
+      for (const r of src ?? []) marcar(String(r[campo] ?? "").slice(0, 7) || null);
     };
     for (const src of [a.data, b.data, c.data]) somar(src, "data");
     somar(d.data, "mes");
-    const minMes = min ? min.slice(0, 7) : maxMes;
-    const lista = anos.size ? [...anos].sort((x, y) => y - x) : [h.getFullYear()];
-    return { minMes, maxMes: maxMes < minMes ? minMes : maxMes, anos: lista };
-  }, [a.data, b.data, c.data, d.data]);
+
+    const minMes = min ?? mesCorrente;
+    const maxMes = mesCorrente < minMes ? minMes : mesCorrente;
+    // Anos contíguos do piso até hoje. Antes era o conjunto de anos com
+    // linha, o que dava no mesmo para quem via tudo e dava [2026] para quem
+    // não via nada — e era esse o bug.
+    const lista = [];
+    for (let y = Number(maxMes.slice(0, 4)); y >= Number(minMes.slice(0, 4)); y -= 1) lista.push(y);
+    return { minMes, maxMes, anos: lista };
+  }, [lim.data, a.data, b.data, c.data, d.data]);
 }
 
 const PeriodoCtx = createContext(null);
@@ -7811,23 +7833,9 @@ function LinhaInscrito({ r, ultima, aberta, onAbrir, onMarcar }) {
    score (0-100, ponderado pelos pesos), etapas cumpridas (contagem, 0-N) e
    sondagem completa (objetivos E desafios na mesma conversa). */
 
-// Rótulo humano de cada etapa do roteiro. A chave é o valor cru de
-// dim_peso_etapa.etapa — o banco fala snake_case, a tela fala português.
-const ETAPAS_ROTULO = {
-  apresentacao: "Apresentação",
-  quebra_gelo: "Quebra-gelo",
-  conhecimento_previo: "Conhecimento prévio",
-  motivo_contato: "Motivo do contato",
-  perfil_profissional: "Perfil profissional",
-  objetivos_futuro: "Objetivos de futuro",
-  desafios_dores: "Desafios e dores",
-  apresentacao_treinamento: "Apresentação do treinamento",
-  validacao_interesse: "Validação de interesse",
-  tratamento_objecoes: "Tratamento de objeções",
-  fechamento: "Fechamento",
-  proximos_passos: "Próximos passos",
-};
-const rotuloEtapa = (e) => ETAPAS_ROTULO[e] ?? String(e ?? "—").replace(/_/g, " ");
+// Rótulo humano de cada etapa: agora em lib/etapas.js, porque o painel de
+// prova (Rotas/AuditoriaProva.jsx) lê o mesmo mapa. Duas cópias divergiriam
+// no dia em que uma etapa fosse renomeada.
 
 /* Critério de cada etapa, exibido no painel lateral. Texto da fonte:
    docs/criterios_etapas_roteiro_carmen.md, extraído do "Roteiro de Ligação e
@@ -8246,6 +8254,19 @@ function HubAuditoria() {
               <ConformidadeVenda pontos={pontos} mes={mesDispersao} canalIgnorado={canal} />
               <TabelaPesos linhas={pesos} rotuloCanal={rotuloCanal} />
             </div>
+          </div>
+
+          {/* A PROVA. Tudo acima é agregado — score médio, falha por etapa,
+              placar. Nada disso leva a UMA conversa, e é a conversa que a
+              gestão precisa abrir quando alguém contesta a nota.
+
+              Fica no fim de propósito: a leitura do hub vai do geral para
+              o específico, e esta lista é o último degrau. Herda os
+              filtros de cima (canal, consultora, período) para que abrir
+              uma auditoria seja continuação do que já estava na tela, e
+              não um recorte novo. */}
+          <div style={{ marginTop: 26 }}>
+            <ProvaAuditoria canal={canal} consultora={quemAtiva} desde={desde} />
           </div>
         </>
       )}
@@ -8698,6 +8719,7 @@ function Shell({ perfil }) {
   // estiver entre os múltiplos setores.
   const setores = perfil.setores?.length ? perfil.setores : [perfil.setor].filter(Boolean);
   const admin = perfil.papel === "admin" || setores.includes("geral");
+  const responsavelEventos = ["Carmen Acassia", "Bruno Cordeiro", "Elis Figueiredo", "Daniele Oliveira"].includes(perfil.nome);
   const [tela, setTela] = useState(admin ? "executivo" : (perfil.setor || setores[0]));
   const [modo, setModo] = useState("ano");
   const [ano, setAno] = useState(() => new Date().getFullYear());
@@ -8756,6 +8778,8 @@ function Shell({ perfil }) {
   /* `setores` (plural) para hubs que aceitam mais de um; `setor` para o
      que tem um só; e a chave quando ela própria é o setor. */
   const visiveis = admin ? HUBS : HUBS.filter((h) => h.publico
+    ||
+    (h.key === "central-eventos" && responsavelEventos)
     ||
     (h.setores ?? [h.setor ?? h.key]).some((s) => setores.includes(s)));
   const hub = HUBS.find((h) => h.key === tela);

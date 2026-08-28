@@ -19,6 +19,12 @@ service_account.json
 etl/agenda_sync.log
 etl/agenda_sync.log.old
 
+# Conversa de lead exportada para depuracao da auditoria. Tem contact_id,
+# URL de audio e o que a pessoa falou. Commitar poe dado pessoal num
+# historico do qual ele nao sai mais.
+etl/transcricoes.csv
+etl/auditorias_whatsapp.csv
+
 # Node
 node_modules/
 dist/
