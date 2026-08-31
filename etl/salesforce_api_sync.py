@@ -142,6 +142,26 @@ def allowed_enrollment_types(metadata):
     raise RuntimeError("Relatorio de alunos sem filtro Tipo de Matricula.")
 
 
+def resolve_picklist_values(sf, object_name, field_name, report_labels):
+    """Converte rotulos exibidos no relatorio nos valores gravados pela API."""
+    description = sf.get(
+        f"/services/data/v{API_VERSION}/sobjects/{object_name}/describe"
+    )
+    field = next((item for item in description.get("fields", [])
+                  if item.get("name") == field_name), None)
+    if not field:
+        raise RuntimeError(f"Campo {object_name}.{field_name} nao encontrado.")
+    values = {
+        item.get("value")
+        for item in field.get("picklistValues", [])
+        if item.get("label") in report_labels or item.get("value") in report_labels
+    }
+    values.discard(None)
+    if not values:
+        raise RuntimeError(f"Nenhum valor do picklist {field_name} corresponde ao relatorio.")
+    return values
+
+
 def assert_report(metadata, expected_name, expected_date_column):
     if metadata.get("name") != expected_name:
         raise RuntimeError(
@@ -360,7 +380,12 @@ def main():
                   "Opportunity.Data_de_Aprova_o__c")
     assert_report(metadata_payments, "Sync Base pagamentos 17h15",
                   "Opportunity.Data_de_Aprova_o__c")
-    allowed = allowed_enrollment_types(metadata_students)
+    report_labels = allowed_enrollment_types(metadata_students)
+    allowed = resolve_picklist_values(
+        sf, "Opportunity", "Tipo_de_Matricula__c", report_labels
+    )
+    log(f"Filtro de matricula: {len(report_labels)} rotulos, "
+        f"{len(allowed)} valores de API")
 
     start = date.today() - timedelta(days=LOOKBACK_DAYS)
     students = transform_students(opportunity_rows(sf, start), allowed)
