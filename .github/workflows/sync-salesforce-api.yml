@@ -1,0 +1,34 @@
+name: Validar Salesforce API
+
+on:
+  workflow_dispatch:
+    inputs:
+      incluir_presenca:
+        description: Validar tambem o credenciamento/presenca
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  validar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r etl/requirements.txt
+      - name: Consultar e validar sem gravar
+        env:
+          SALESFORCE_AUTH_URL: ${{ secrets.SALESFORCE_AUTH_URL }}
+          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SALESFORCE_LOGIN_URL: ${{ secrets.SALESFORCE_LOGIN_URL }}
+          SALESFORCE_UNIDADE: FEBRACIS SALVADOR 2
+          SALESFORCE_REPORT_ALUNOS: 00OV20000091YSHMA2
+          SALESFORCE_REPORT_PAGAMENTOS: 00OV20000091Z1lMAE
+        run: >-
+          python etl/salesforce_api_sync.py
+          ${{ inputs.incluir_presenca && '--include-presence' || '' }}
