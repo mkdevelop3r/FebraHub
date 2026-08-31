@@ -1,0 +1,399 @@
+"""Sincroniza Salesforce -> Supabase sem depender de e-mail ou CSV.
+
+Autenticacao headless: OAuth Client Credentials de um External Client App.
+Por padrao apenas consulta e valida. Use --write para gravar no Supabase.
+"""
+
+import argparse
+import os
+import re
+import sys
+from datetime import date, datetime, timedelta, timezone
+from urllib.parse import unquote
+
+import requests
+
+
+API_VERSION = os.getenv("SALESFORCE_API_VERSION", "67.0")
+UNIDADE = os.getenv("SALESFORCE_UNIDADE", "FEBRACIS SALVADOR 2")
+REPORT_ALUNOS = os.getenv("SALESFORCE_REPORT_ALUNOS", "00OV20000091YSHMA2")
+REPORT_PAGAMENTOS = os.getenv("SALESFORCE_REPORT_PAGAMENTOS", "00OV20000091Z1lMAE")
+LOOKBACK_DAYS = int(os.getenv("SALESFORCE_LOOKBACK_DAYS", "120"))
+
+
+def log(message):
+    print(message, flush=True)
+
+
+def load_env():
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    if not os.path.exists(path):
+        return
+    with open(path, encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                key, value = line.split("=", 1)
+                os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
+class Salesforce:
+    def __init__(self):
+        instance = (os.getenv("SALESFORCE_INSTANCE_URL") or "").rstrip("/")
+        token = os.getenv("SALESFORCE_ACCESS_TOKEN")
+        if not token:
+            auth_url = os.getenv("SALESFORCE_AUTH_URL")
+            if auth_url:
+                client_id, client_secret, refresh_token, auth_instance = (
+                    parse_sfdx_auth_url(auth_url)
+                )
+                response = requests.post(
+                    f"{auth_instance}/services/oauth2/token",
+                    data={"grant_type": "refresh_token", "client_id": client_id,
+                          "client_secret": client_secret or None,
+                          "refresh_token": refresh_token},
+                    timeout=60,
+                )
+                response.raise_for_status()
+                auth = response.json()
+                token = auth["access_token"]
+                instance = auth.get("instance_url", auth_instance).rstrip("/")
+            else:
+                client_id = os.environ.get("SALESFORCE_CLIENT_ID")
+                client_secret = os.environ.get("SALESFORCE_CLIENT_SECRET")
+                if not client_id or not client_secret:
+                    raise RuntimeError(
+                        "Defina SALESFORCE_AUTH_URL ou SALESFORCE_CLIENT_ID e "
+                        "SALESFORCE_CLIENT_SECRET."
+                    )
+                login_url = (os.getenv("SALESFORCE_LOGIN_URL") or
+                             "https://login.salesforce.com").rstrip("/")
+                response = requests.post(
+                    f"{login_url}/services/oauth2/token",
+                    data={"grant_type": "client_credentials",
+                          "client_id": client_id, "client_secret": client_secret},
+                    timeout=60,
+                )
+                response.raise_for_status()
+                auth = response.json()
+                token = auth["access_token"]
+                instance = auth["instance_url"].rstrip("/")
+        if not instance:
+            raise RuntimeError("SALESFORCE_INSTANCE_URL nao definida.")
+        self.instance = instance
+        self.headers = {"Authorization": f"Bearer {token}",
+                        "Accept": "application/json"}
+
+    def get(self, path, params=None):
+        url = path if path.startswith("http") else f"{self.instance}{path}"
+        response = requests.get(url, headers=self.headers, params=params, timeout=120)
+        response.raise_for_status()
+        return response.json()
+
+    def query(self, soql):
+        data = self.get(f"/services/data/v{API_VERSION}/query", {"q": soql})
+        records = list(data.get("records", []))
+        while not data.get("done", True):
+            data = self.get(data["nextRecordsUrl"])
+            records.extend(data.get("records", []))
+        return records
+
+    def report_description(self, report_id):
+        return self.get(
+            f"/services/data/v{API_VERSION}/analytics/reports/{report_id}/describe"
+        )["reportMetadata"]
+
+
+def parse_sfdx_auth_url(value):
+    """Extrai client id/secret/refresh token sem registrar nenhum segredo."""
+    if not value.startswith("force://") or "@" not in value:
+        raise RuntimeError("SALESFORCE_AUTH_URL invalida.")
+    credentials, host = value[len("force://"):].rsplit("@", 1)
+    parts = credentials.split(":", 2)
+    if len(parts) != 3 or not parts[0] or not parts[2] or not host:
+        raise RuntimeError("SALESFORCE_AUTH_URL incompleta.")
+    client_id, client_secret, refresh_token = map(unquote, parts)
+    instance = host if host.startswith("http") else f"https://{host}"
+    return client_id, client_secret, refresh_token, instance.rstrip("/")
+
+
+def nested(record, path, default=None):
+    value = record
+    for key in path.split("."):
+        if not isinstance(value, dict):
+            return default
+        value = value.get(key)
+    return default if value is None else value
+
+
+def iso_day(value):
+    return str(value or "")[:10] or None
+
+
+def digits(value):
+    return re.sub(r"\D", "", str(value or ""))
+
+
+def allowed_enrollment_types(metadata):
+    for item in metadata.get("reportFilters", []):
+        if item.get("column") == "Opportunity.Tipo_de_Matricula__c":
+            return {part.strip() for part in item.get("value", "").split(",")
+                    if part.strip()}
+    raise RuntimeError("Relatorio de alunos sem filtro Tipo de Matricula.")
+
+
+def assert_report(metadata, expected_name, expected_date_column):
+    if metadata.get("name") != expected_name:
+        raise RuntimeError(
+            f"Relatorio inesperado: {metadata.get('name')!r}; esperado {expected_name!r}."
+        )
+    date_column = nested(metadata, "standardDateFilter.column")
+    if date_column != expected_date_column:
+        raise RuntimeError(
+            f"{expected_name}: filtro de data mudou para {date_column!r}; abortando."
+        )
+
+
+def opportunity_rows(sf, start):
+    fields = (
+        "Id,Name,AccountId,Account.Name,Account.CPFun__c,"
+        "Account.PersonEmail,Account.PersonMobilePhone,Owner.Name,"
+        "Data_de_Aprova_o__c,CloseDate,StageName,CreatedDate,Amount,LeadSource,"
+        "Tipo_de_Matricula__c,NomeCurso__r.Name,Turma__r.Name,"
+        "Unidade_Geradora_Venda__r.Name,Treinador__r.Name,"
+        "utm_campaign__c,UltimaOrigemLead__c"
+    )
+    soql = (
+        f"SELECT {fields} FROM Opportunity "
+        f"WHERE Data_de_Aprova_o__c >= {start.isoformat()} "
+        "AND StageName = 'Aprovada' "
+        f"AND Unidade_Geradora_Venda__r.Name = '{UNIDADE}'"
+    )
+    return sf.query(soql)
+
+
+def transform_students(records, allowed):
+    rows = []
+    for record in records:
+        enrollment_type = record.get("Tipo_de_Matricula__c") or ""
+        if enrollment_type not in allowed:
+            continue
+        course = nested(record, "NomeCurso__r.Name", "")
+        sale_id = record["Id"]
+        email = str(nested(record, "Account.PersonEmail", "") or "").strip().lower()
+        cpf = digits(nested(record, "Account.CPFun__c", ""))
+        rows.append({
+            "matricula_id": f"{sale_id}|{course}"[:120],
+            "aluno_id": cpf or email,
+            "curso_id": course or None,
+            "data_matricula": iso_day(record.get("Data_de_Aprova_o__c") or
+                                       record.get("CreatedDate")),
+            "status_matricula": record.get("StageName"),
+            "data_conclusao": None,
+            "original_id_venda": sale_id,
+            "consultor_id": nested(record, "Owner.Name"),
+            "tipo_matricula": enrollment_type or None,
+            "data_fechamento_venda": iso_day(record.get("CloseDate")),
+            "turma": nested(record, "Turma__r.Name"),
+            "valor": record.get("Amount"),
+            "origem_lead": record.get("LeadSource"),
+            "unidade_geradora_venda": nested(
+                record, "Unidade_Geradora_Venda__r.Name"),
+            "fase": None,
+            "ganho": None,
+            "treinador": nested(record, "Treinador__r.Name"),
+            "email_cliente": email or None,
+            "telefone_cliente": digits(nested(record, "Account.PersonMobilePhone")) or None,
+            "utm_campaign": record.get("utm_campaign__c"),
+            "ultima_origem_lead": record.get("UltimaOrigemLead__c"),
+        })
+    return rows
+
+
+def payment_rows(sf, start):
+    fields = (
+        "Id,Idpagamento__c,Name,Valor_cada_Parcela__c,Status__c,Payment_Id__c,"
+        "Venda__c,Venda__r.Name,Venda__r.AccountId,Venda__r.Owner.Name,"
+        "Venda__r.Data_de_pagamento__c,Venda__r.Data_de_Aprova_o__c,"
+        "Venda__r.CloseDate,Venda__r.Tipo_de_Matricula__c,Venda__r.Amount,"
+        "Venda__r.QuantidadeParcelas__c,Venda__r.StageName,"
+        "Venda__r.Unidade_Geradora_Venda__r.Name"
+    )
+    soql = (
+        f"SELECT {fields} FROM Forma_Pag_Venda__c "
+        f"WHERE Venda__r.Data_de_Aprova_o__c >= {start.isoformat()} "
+        "AND Venda__r.StageName = 'Aprovada' "
+        f"AND Venda__r.Unidade_Geradora_Venda__r.Name = '{UNIDADE}'"
+    )
+    return sf.query(soql)
+
+
+def transform_payments(records, allowed):
+    rows = []
+    for record in records:
+        enrollment_type = nested(record, "Venda__r.Tipo_de_Matricula__c", "")
+        if enrollment_type not in allowed:
+            continue
+        approved = iso_day(nested(record, "Venda__r.Data_de_Aprova_o__c"))
+        paid = iso_day(nested(record, "Venda__r.Data_de_pagamento__c")) or approved
+        rows.append({
+            "pagamento_id": record.get("Idpagamento__c") or record["Id"],
+            "aluno_id": nested(record, "Venda__r.AccountId"),
+            "curso_id": None,
+            "consultor_id": nested(record, "Venda__r.Owner.Name"),
+            "data_pagamento": paid,
+            "valor": nested(record, "Venda__r.Amount"),
+            "status_pagamento": record.get("Status__c"),
+            "forma_pagamento": record.get("Name"),
+            "original_id_venda": record.get("Venda__c"),
+            "nome_venda": nested(record, "Venda__r.Name"),
+            "tipo_matricula": enrollment_type or None,
+            "quantidade_parcelas": nested(record, "Venda__r.QuantidadeParcelas__c"),
+            "valor_parcela": record.get("Valor_cada_Parcela__c"),
+            "periodo_fiscal": None,
+            "unidade_geradora_venda": nested(
+                record, "Venda__r.Unidade_Geradora_Venda__r.Name"),
+            "payment_id": record.get("Payment_Id__c"),
+            "data_aprovacao": approved,
+            "data_fechamento": iso_day(nested(record, "Venda__r.CloseDate")),
+        })
+    return rows
+
+
+def presence_rows(sf):
+    fields = (
+        "Id,Cliente__r.Name,Unidade_Geradora_da_Venda__c,Unidade__c,"
+        "Curso__r.Name,Name,CreatedDate,Turma_do_Credenciamento__c,CPF__c"
+    )
+    soql = (
+        f"SELECT {fields} FROM Presenca__c WHERE CreatedDate >= 2021-01-01T00:00:00Z "
+        "AND Unidade__c IN ('FEBRACIS SALVADOR 2','FEBRACIS SALVADOR')"
+    )
+    records = sf.query(soql)
+    return [{
+        "nome": nested(r, "Cliente__r.Name"),
+        "unidade_venda": r.get("Unidade_Geradora_da_Venda__c"),
+        "unidade": r.get("Unidade__c"),
+        "curso": nested(r, "Curso__r.Name"),
+        "presenca_txt": r.get("Name"),
+        "data_registro": r.get("CreatedDate"),
+        "turma": r.get("Turma_do_Credenciamento__c"),
+        "cpf": digits(r.get("CPF__c")) or None,
+    } for r in records]
+
+
+class Supabase:
+    def __init__(self):
+        self.url = os.environ["SUPABASE_URL"].rstrip("/")
+        key = os.environ["SUPABASE_SERVICE_KEY"]
+        self.headers = {"apikey": key, "Authorization": f"Bearer {key}",
+                        "Content-Type": "application/json"}
+
+    def request(self, method, path, **kwargs):
+        headers = {**self.headers, **kwargs.pop("headers", {})}
+        response = requests.request(method, f"{self.url}/rest/v1/{path}",
+                                    headers=headers, timeout=180, **kwargs)
+        response.raise_for_status()
+        return response
+
+    def upsert(self, table, rows, key):
+        for index in range(0, len(rows), 500):
+            self.request("POST", table, params={"on_conflict": key},
+                         headers={**self.headers,
+                                  "Prefer": "resolution=merge-duplicates,return=minimal"},
+                         json=rows[index:index + 500])
+
+    def keys_in_window(self, table, key, date_column, start, end):
+        result, offset = set(), 0
+        while True:
+            response = self.request(
+                "GET", table,
+                params=[("select", key), (date_column, f"gte.{start}"),
+                        (date_column, f"lte.{end}"), ("limit", 1000),
+                        ("offset", offset)],
+            ).json()
+            result.update(str(row[key]) for row in response if row.get(key))
+            if len(response) < 1000:
+                return result
+            offset += 1000
+
+    def delete_keys(self, table, key, keys):
+        for value in keys:
+            self.request("DELETE", table, params={key: f"eq.{value}"})
+
+    def replace_window(self, table, rows, key, date_column):
+        dates = sorted(row[date_column] for row in rows if row.get(date_column))
+        if not dates:
+            raise RuntimeError(f"{table}: nenhuma data valida.")
+        start, end = dates[0], dates[-1]
+        if (date.fromisoformat(end) - date.fromisoformat(start)).days > 120:
+            raise RuntimeError(f"{table}: janela maior que 120 dias; abortando.")
+        self.upsert(table, rows, key)
+        incoming = {str(row[key]) for row in rows if row.get(key)}
+        existing = self.keys_in_window(table, key, date_column, start, end)
+        self.delete_keys(table, key, existing - incoming)
+        log(f"{table}: {len(rows)} upserts; {len(existing - incoming)} removidos")
+
+    def replace_presence_stage(self, rows):
+        self.request("DELETE", "stg_presenca", params={"cpf": "not.is.null"})
+        self.request("DELETE", "stg_presenca", params={"cpf": "is.null"})
+        for index in range(0, len(rows), 1000):
+            self.request("POST", "stg_presenca", json=rows[index:index + 1000])
+        result = self.request("POST", "rpc/promover_presenca", json={}).json()
+        self.request("DELETE", "stg_presenca", params={"cpf": "not.is.null"})
+        self.request("DELETE", "stg_presenca", params={"cpf": "is.null"})
+        log(f"presenca promovida: {result}")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--write", action="store_true",
+                        help="Grava no Supabase; sem esta flag apenas valida.")
+    parser.add_argument("--include-presence", action="store_true")
+    args = parser.parse_args()
+
+    load_env()
+    sf = Salesforce()
+    metadata_students = sf.report_description(REPORT_ALUNOS)
+    metadata_payments = sf.report_description(REPORT_PAGAMENTOS)
+    assert_report(metadata_students, "Sync Base alunos 17h15",
+                  "Opportunity.Data_de_Aprova_o__c")
+    assert_report(metadata_payments, "Sync Base pagamentos 17h15",
+                  "Opportunity.Data_de_Aprova_o__c")
+    allowed = allowed_enrollment_types(metadata_students)
+
+    start = date.today() - timedelta(days=LOOKBACK_DAYS)
+    students = transform_students(opportunity_rows(sf, start), allowed)
+    payments = transform_payments(payment_rows(sf, start), allowed)
+    log(f"API Salesforce: {len(students)} alunos; {len(payments)} pagamentos")
+    if not students or not payments:
+        raise RuntimeError("Extracao vazia; abortando.")
+
+    presence = []
+    if args.include_presence:
+        presence = presence_rows(sf)
+        log(f"API Salesforce: {len(presence)} registros de presenca")
+        if len(presence) < 1000:
+            raise RuntimeError("Presenca muito abaixo do esperado; abortando.")
+
+    if not args.write:
+        log("DRY RUN concluido; nada foi gravado.")
+        return
+
+    sb = Supabase()
+    sb.replace_window("fato_base_alunos", students, "matricula_id", "data_matricula")
+    sb.replace_window("fato_pagamento_base", payments, "pagamento_id", "data_aprovacao")
+    if args.include_presence:
+        sb.replace_presence_stage(presence)
+    now = datetime.now(timezone.utc).isoformat()
+    sb.upsert("integracao_status", [{"fonte": "salesforce_api",
+              "nome_exibicao": "Salesforce API", "ultima_sync": now,
+              "status": "ok", "atualizado_em": now}], "fonte")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        log(f"ERRO: {exc}")
+        sys.exit(1)
