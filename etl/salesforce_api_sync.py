@@ -395,8 +395,10 @@ def transform_credentialing(credentials, linked_presence, labels):
             "status": turma.get("Status__c"),
             "status_entrega": turma.get("StatusEntregaTurma__c"),
             "turma_validada": turma.get("TurmaValidada__c"),
-            "quantidade_alunos_salesforce": turma.get(
-                "QuantidadeAlunosCadastrados__c"),
+            "quantidade_alunos_salesforce": (
+                int(float(turma["QuantidadeAlunosCadastrados__c"]))
+                if turma.get("QuantidadeAlunosCadastrados__c") is not None
+                else None),
             "link_credenciamento": turma.get("LinkCredenciamento__c"),
             "atualizado_salesforce_em": row.get("LastModifiedDate"),
             "sincronizado_em": datetime.now(timezone.utc).isoformat(),
