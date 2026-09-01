@@ -687,9 +687,25 @@ def discover_class_object(sf, class_id):
         "COUNT(CPF__c) com_cpf_credenciamento "
         "FROM Credenciamento__c "
         f"WHERE Turma__c = '{class_id}'")
+    credential_types = sf.query(
+        "SELECT Tipo_de_Matricula_Atual__c tipo, COUNT(Id) total "
+        "FROM Credenciamento__c "
+        f"WHERE Turma__c = '{class_id}' "
+        "GROUP BY Tipo_de_Matricula_Atual__c ORDER BY COUNT(Id) DESC")
+    original_credential_types = sf.query(
+        "SELECT Tipo_de_Matricula__c tipo, COUNT(Id) total "
+        "FROM Credenciamento__c "
+        f"WHERE Turma__c = '{class_id}' "
+        "GROUP BY Tipo_de_Matricula__c ORDER BY COUNT(Id) DESC")
+    direct_presence_count = sf.query(
+        "SELECT COUNT(Id) total FROM Presenca__c "
+        f"WHERE Turma__c = '{class_id}'")
     log("DESCOBERTA_CREDENCIAMENTO " + json.dumps({
         "class_id": class_id,
         "total_registros": credential_count,
+        "tipos_atuais": credential_types,
+        "tipos_originais": original_credential_types,
+        "presencas_diretas": direct_presence_count,
         "campos_relevantes": credential_fields,
     }, ensure_ascii=False, sort_keys=True))
 
