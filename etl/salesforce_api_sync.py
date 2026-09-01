@@ -353,7 +353,8 @@ def credentialing_rows(sf):
     return sf.query(
         f"SELECT {fields} FROM Credenciamento__c "
         "WHERE CreatedDate >= 2021-01-01T00:00:00Z "
-        f"AND Turma__r.Unidade__r.Name IN ('{UNIDADE}','FEBRACIS SALVADOR')")
+        f"AND (Turma__r.Unidade__r.Name IN ('{UNIDADE}','FEBRACIS SALVADOR') "
+        "OR (Turma__r.Unidade__c = null AND Turma__r.Name LIKE '%SALVADOR%'))")
 
 
 def linked_presence_rows(sf):
