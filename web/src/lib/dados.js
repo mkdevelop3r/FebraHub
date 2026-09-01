@@ -458,6 +458,11 @@ export const usePedagogicoRetencaoMotivos = () =>
    linha por turma futura com os contadores do fluxo e a `pendencia` pronta. */
 export const usePedagogicoPainel = () =>
   useView("vw_pedagogico_painel", { ordem: ["data_inicio", "turma_id"], staleTime: 60 * 1000 });
+export const useCredenciamentoPorTurma = () =>
+  useView("vw_credenciamento_por_turma", {
+    ordem: ["turma", "turma_id"],
+    staleTime: 60 * 1000,
+  });
 /* FILA DE PRAZO. Aluno tem 1 ano da compra pra fazer o curso; passando disso
    paga taxa de transferência (cobrada de verdade). Toda a lógica vive no banco
    (migration 97) — o front só lê, não recalcula, não filtra setor (RLS já
