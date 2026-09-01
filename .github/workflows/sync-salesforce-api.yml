@@ -13,6 +13,11 @@ on:
         required: false
         type: boolean
         default: true
+      gravar_presenca:
+        description: Gravar exclusivamente os novos registros de presenca
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   validar:
@@ -40,3 +45,4 @@ jobs:
           python etl/salesforce_api_sync.py
           ${{ inputs.incluir_presenca && '--include-presence' || '' }}
           ${{ inputs.comparar_supabase && '--compare' || '' }}
+          ${{ inputs.gravar_presenca && '--write --target presence' || '' }}
