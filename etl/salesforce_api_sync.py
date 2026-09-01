@@ -431,6 +431,48 @@ def log_divergence(source, api_rows, db_rows, key, date_field, type_field):
     return only_api, only_db
 
 
+def log_student_sale_diagnosis(api_rows, db_rows):
+    api_by_sale = {str(row["original_id_venda"]): row for row in api_rows
+                   if row.get("original_id_venda")}
+    db_by_sale = {str(row["original_id_venda"]): row for row in db_rows
+                  if row.get("original_id_venda")}
+    api_sales = set(api_by_sale)
+    db_sales = set(db_by_sale)
+    shared_sales = api_sales & db_sales
+    changes = {field: 0 for field in (
+        "matricula_id", "curso_id", "tipo_matricula", "data_matricula", "valor")}
+    course_transitions = {}
+    for sale_id in shared_sales:
+        api_row = api_by_sale[sale_id]
+        db_row = db_by_sale[sale_id]
+        for field in changes:
+            if str(api_row.get(field) or "") != str(db_row.get(field) or ""):
+                changes[field] += 1
+        if str(api_row.get("curso_id") or "") != str(db_row.get("curso_id") or ""):
+            transition = (
+                f'{db_row.get("curso_id") or "(vazio)"} -> '
+                f'{api_row.get("curso_id") or "(vazio)"}')
+            course_transitions[transition] = course_transitions.get(transition, 0) + 1
+    course_transitions = dict(sorted(
+        course_transitions.items(), key=lambda item: (-item[1], item[0]))[:20])
+    detail = {
+        "metrica": "diagnostico_por_original_id_venda",
+        "vendas_api": len(api_sales),
+        "vendas_supabase": len(db_sales),
+        "vendas_em_ambos": len(shared_sales),
+        "vendas_so_api": len(api_sales - db_sales),
+        "vendas_so_supabase": len(db_sales - api_sales),
+        "alteracoes_nas_vendas_em_ambos": changes,
+        "principais_trocas_de_curso": course_transitions,
+    }
+    log("DIAGNOSTICO_VENDA " +
+        json.dumps(detail, ensure_ascii=False, sort_keys=True))
+    return (
+        [api_by_sale[item] for item in api_sales - db_sales],
+        [db_by_sale[item] for item in db_sales - api_sales],
+    )
+
+
 def presence_key(row, api=False):
     cpf = digits(row.get("cpf"))
     if cpf:
@@ -481,6 +523,8 @@ def compare_with_supabase(sb, students, payments, presence, start):
     students_only_api, students_only_db = log_divergence(
         "alunos", students, student_db, "matricula_id",
         "data_matricula", "tipo_matricula")
+    sales_only_api, sales_only_db = log_student_sale_diagnosis(
+        students, student_db)
     log_divergence(
         "pagamentos", payments, payment_db, "pagamento_id",
         "data_aprovacao", "tipo_matricula")
@@ -514,6 +558,20 @@ def compare_with_supabase(sb, students, payments, presence, start):
     }
     log("REGRA_NEGOCIO " +
         json.dumps(exclusive_billing, ensure_ascii=False, sort_keys=True))
+    api_real_only_billing, api_real_only_sales = max_value_by_sale(
+        sales_only_api, billing_types, excluded_courses)
+    db_real_only_billing, db_real_only_sales = max_value_by_sale(
+        sales_only_db, billing_types, excluded_courses)
+    real_exclusive_billing = {
+        "metrica": "faturamento_vendas_realmente_exclusivas",
+        "vendas_so_api": api_real_only_sales,
+        "vendas_so_supabase": db_real_only_sales,
+        "valor_so_api": api_real_only_billing,
+        "valor_so_supabase": db_real_only_billing,
+        "diferenca": round(api_real_only_billing - db_real_only_billing, 2),
+    }
+    log("REGRA_NEGOCIO " +
+        json.dumps(real_exclusive_billing, ensure_ascii=False, sort_keys=True))
 
     occupancy_types = {
         "CONSUMIDOR DE VAGAS", "MATRÍCULA", "BÔNUS", "PERMUTA",
