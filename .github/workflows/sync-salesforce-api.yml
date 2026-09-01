@@ -2,8 +2,8 @@ name: Validar Salesforce API
 
 on:
   schedule:
-    # 17h30 em Salvador (UTC-3), depois do relatorio/agendamento das 17h15.
-    - cron: '30 20 * * *'
+    # Consulta direta ao Salesforce, com atraso maximo nominal de 15 minutos.
+    - cron: '*/15 * * * *'
   workflow_dispatch:
     inputs:
       incluir_presenca:
