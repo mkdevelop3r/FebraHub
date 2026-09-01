@@ -105,6 +105,10 @@ class Salesforce:
             f"/services/data/v{API_VERSION}/analytics/reports/{report_id}/describe"
         )["reportMetadata"]
 
+    def describe_object(self, object_name):
+        return self.get(
+            f"/services/data/v{API_VERSION}/sobjects/{object_name}/describe")
+
 
 def parse_sfdx_auth_url(value):
     """Extrai client id/secret/refresh token sem registrar nenhum segredo."""
@@ -619,6 +623,52 @@ def log_event_diagnosis(students, presence, turma):
         json.dumps(detail, ensure_ascii=False, sort_keys=True))
 
 
+def discover_class_object(sf, class_id):
+    prefix = str(class_id)[:3]
+    catalog = sf.get(f"/services/data/v{API_VERSION}/sobjects")
+    matches = [item for item in catalog.get("sobjects", [])
+               if item.get("keyPrefix") == prefix]
+    if not matches:
+        raise RuntimeError(f"Nenhum objeto Salesforce com prefixo {prefix}.")
+    for item in matches:
+        object_name = item["name"]
+        description = sf.describe_object(object_name)
+        keywords = ("turma", "class", "cred", "aluno", "student", "presen",
+                    "status", "curso", "unidade", "particip")
+        fields = [{
+            "name": field.get("name"),
+            "label": field.get("label"),
+            "type": field.get("type"),
+            "referenceTo": field.get("referenceTo"),
+        } for field in description.get("fields", [])
+            if any(word in normalized(
+                f'{field.get("name", "")} {field.get("label", "")}').lower()
+                   for word in keywords)]
+        children = [{
+            "childSObject": child.get("childSObject"),
+            "field": child.get("field"),
+            "relationshipName": child.get("relationshipName"),
+        } for child in description.get("childRelationships", [])
+            if any(word in normalized(
+                f'{child.get("childSObject", "")} '
+                f'{child.get("relationshipName", "")}').lower()
+                   for word in keywords)]
+        name_field = description.get("nameField") or "Name"
+        records = sf.query(
+            f"SELECT Id,{name_field} FROM {object_name} "
+            f"WHERE Id = '{class_id}' LIMIT 1")
+        detail = {
+            "class_id": class_id,
+            "objeto": object_name,
+            "rotulo": item.get("label"),
+            "registro": records,
+            "campos_relevantes": fields,
+            "relacionamentos_filhos_relevantes": children,
+        }
+        log("DESCOBERTA_CLASS_ID " +
+            json.dumps(detail, ensure_ascii=False, sort_keys=True))
+
+
 def compare_with_supabase(sf, sb, students, payments, presence, start,
                           allowed, labels):
     student_db_all = sb.select_all(
@@ -806,6 +856,9 @@ def main():
     diagnostic_class = os.getenv("SALESFORCE_TURMA_DIAGNOSTICO")
     if diagnostic_class:
         log_event_diagnosis(students, presence, diagnostic_class)
+    diagnostic_class_id = os.getenv("SALESFORCE_CLASS_ID_DIAGNOSTICO")
+    if diagnostic_class_id:
+        discover_class_object(sf, diagnostic_class_id)
 
     sb = Supabase() if args.compare or args.write else None
     if args.compare:
