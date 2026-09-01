@@ -5,6 +5,7 @@ Por padrao apenas consulta e valida. Use --write para gravar no Supabase.
 """
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -316,6 +317,18 @@ class Supabase:
         response.raise_for_status()
         return response
 
+    def select_all(self, table, columns, filters=None):
+        result, offset = [], 0
+        filters = list(filters or [])
+        while True:
+            params = [("select", columns), ("limit", 1000), ("offset", offset)]
+            params.extend(filters)
+            batch = self.request("GET", table, params=params).json()
+            result.extend(batch)
+            if len(batch) < 1000:
+                return result
+            offset += 1000
+
     def upsert(self, table, rows, key):
         for index in range(0, len(rows), 500):
             self.request("POST", table, params={"on_conflict": key},
@@ -365,11 +378,79 @@ class Supabase:
         log(f"presenca promovida: {result}")
 
 
+def money_total(rows):
+    return round(sum(float(row.get("valor") or 0) for row in rows), 2)
+
+
+def presence_key(row, api=False):
+    cpf = digits(row.get("cpf"))
+    if cpf:
+        cpf = cpf.zfill(11)
+    turma = str(row.get("turma") or "").strip()
+    if api:
+        match = re.search(r"Dia\s*(\d+)", str(row.get("presenca_txt") or ""), re.I)
+        day = int(match.group(1)) if match else None
+    else:
+        day = row.get("dia")
+    return (cpf, turma, day) if cpf and turma and day else None
+
+
+def compare_with_supabase(sb, students, payments, presence, start):
+    student_db = sb.select_all(
+        "fato_base_alunos", "matricula_id,valor,data_matricula",
+        [("data_matricula", f"gte.{start.isoformat()}")],
+    )
+    payment_db = sb.select_all(
+        "fato_pagamento_base", "pagamento_id,valor,data_aprovacao",
+        [("data_aprovacao", f"gte.{start.isoformat()}")],
+    )
+
+    def diff(name, api_rows, db_rows, key):
+        api_keys = {str(row[key]) for row in api_rows if row.get(key)}
+        db_keys = {str(row[key]) for row in db_rows if row.get(key)}
+        result = {
+            "fonte": name,
+            "api": len(api_keys),
+            "supabase": len(db_keys),
+            "em_ambos": len(api_keys & db_keys),
+            "so_api": len(api_keys - db_keys),
+            "so_supabase": len(db_keys - api_keys),
+            "valor_api": money_total(api_rows),
+            "valor_supabase": money_total(db_rows),
+        }
+        log("RECONCILIACAO " + json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return result
+
+    results = [
+        diff("alunos", students, student_db, "matricula_id"),
+        diff("pagamentos", payments, payment_db, "pagamento_id"),
+    ]
+
+    if presence:
+        presence_db = sb.select_all("fato_presenca", "cpf,turma,dia")
+        api_keys = {key for row in presence if (key := presence_key(row, api=True))}
+        db_keys = {key for row in presence_db if (key := presence_key(row))}
+        result = {
+            "fonte": "presenca",
+            "api_bruta": len(presence),
+            "api_deduplicada": len(api_keys),
+            "supabase": len(db_keys),
+            "em_ambos": len(api_keys & db_keys),
+            "so_api": len(api_keys - db_keys),
+            "so_supabase": len(db_keys - api_keys),
+        }
+        log("RECONCILIACAO " + json.dumps(result, ensure_ascii=False, sort_keys=True))
+        results.append(result)
+    return results
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--write", action="store_true",
                         help="Grava no Supabase; sem esta flag apenas valida.")
     parser.add_argument("--include-presence", action="store_true")
+    parser.add_argument("--compare", action="store_true",
+                        help="Compara com o Supabase sem gravar.")
     args = parser.parse_args()
 
     load_env()
@@ -400,6 +481,9 @@ def main():
         log(f"API Salesforce: {len(presence)} registros de presenca")
         if len(presence) < 1000:
             raise RuntimeError("Presenca muito abaixo do esperado; abortando.")
+
+    if args.compare:
+        compare_with_supabase(Supabase(), students, payments, presence, start)
 
     if not args.write:
         log("DRY RUN concluido; nada foi gravado.")
