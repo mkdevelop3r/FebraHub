@@ -22,6 +22,10 @@ on:
         description: Nome exato da turma para reconciliacao pontual
         required: false
         type: string
+      class_id_diagnostico:
+        description: ID Salesforce da turma/pagina de credenciamento
+        required: false
+        type: string
 
 jobs:
   validar:
@@ -44,6 +48,7 @@ jobs:
           SALESFORCE_REPORT_ALUNOS: 00OV20000091YSHMA2
           SALESFORCE_REPORT_PAGAMENTOS: 00OV20000091Z1lMAE
           SALESFORCE_TURMA_DIAGNOSTICO: ${{ inputs.turma_diagnostico }}
+          SALESFORCE_CLASS_ID_DIAGNOSTICO: ${{ inputs.class_id_diagnostico }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: >-
