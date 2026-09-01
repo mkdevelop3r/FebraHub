@@ -688,7 +688,7 @@ def discover_class_object(sf, class_id):
         "FROM Credenciamento__c "
         f"WHERE Turma__c = '{class_id}'")
     credential_type_rows = sf.query(
-        "SELECT Tipo_de_Matricula_Atual__c,Tipo_de_Matricula__c,"
+        "SELECT Id,Tipo_de_Matricula_Atual__c,Tipo_de_Matricula__c,"
         "CPF_do_Cliente__c,Nome_do_Cliente__c "
         "FROM Credenciamento__c "
         f"WHERE Turma__c = '{class_id}'")
@@ -734,6 +734,9 @@ def discover_class_object(sf, class_id):
     official_roster = [row for row in credential_type_rows
                        if str(row.get("Tipo_de_Matricula_Atual__c") or "")
                        not in excluded_current_types]
+    official_credential_ids = {
+        canonical_salesforce_id(row.get("Id")) for row in official_roster
+        if row.get("Id")}
     def participant_identity(row, client_field, cpf_field):
         client = canonical_salesforce_id(row.get(client_field))
         if client:
@@ -760,6 +763,8 @@ def discover_class_object(sf, class_id):
         "cpfs_unicos_presenca": len(presence_cpfs),
         "identidades_unicas_presenca": len(presence_identities),
         "credenciamentos_unicos_na_presenca": len(presence_credentials),
+        "credenciamentos_oficiais_com_presenca": len(
+            presence_credentials & official_credential_ids),
     }
     log("DESCOBERTA_CREDENCIAMENTO " + json.dumps({
         "class_id": class_id,
