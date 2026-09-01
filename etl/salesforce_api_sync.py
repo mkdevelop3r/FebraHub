@@ -478,7 +478,10 @@ class Supabase:
         headers = {**self.headers, **kwargs.pop("headers", {})}
         response = requests.request(method, f"{self.url}/rest/v1/{path}",
                                     headers=headers, timeout=180, **kwargs)
-        response.raise_for_status()
+        if not response.ok:
+            raise RuntimeError(
+                f"Supabase {method} {path}: HTTP {response.status_code}: "
+                f"{response.text[:2000]}")
         return response
 
     def select_all(self, table, columns, filters=None):
