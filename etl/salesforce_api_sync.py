@@ -136,6 +136,10 @@ def digits(value):
     return re.sub(r"\D", "", str(value or ""))
 
 
+def canonical_salesforce_id(value):
+    return str(value or "")[:15]
+
+
 def allowed_enrollment_types(metadata):
     for item in metadata.get("reportFilters", []):
         if item.get("column") == "Opportunity.Tipo_de_Matricula__c":
@@ -432,9 +436,11 @@ def log_divergence(source, api_rows, db_rows, key, date_field, type_field):
 
 
 def log_student_sale_diagnosis(api_rows, db_rows):
-    api_by_sale = {str(row["original_id_venda"]): row for row in api_rows
+    api_by_sale = {canonical_salesforce_id(row["original_id_venda"]): row
+                   for row in api_rows
                    if row.get("original_id_venda")}
-    db_by_sale = {str(row["original_id_venda"]): row for row in db_rows
+    db_by_sale = {canonical_salesforce_id(row["original_id_venda"]): row
+                  for row in db_rows
                   if row.get("original_id_venda")}
     api_sales = set(api_by_sale)
     db_sales = set(db_by_sale)
@@ -474,7 +480,7 @@ def log_student_sale_diagnosis(api_rows, db_rows):
 
 
 def diagnose_sales_missing_from_api(sf, db_only_rows, start, allowed, labels):
-    sale_ids = sorted({str(row["original_id_venda"]) for row in db_only_rows
+    raw_sale_ids = sorted({str(row["original_id_venda"]) for row in db_only_rows
                        if row.get("original_id_venda")})
     fields = (
         "Id,StageName,Data_de_Aprova_o__c,CloseDate,Amount,"
@@ -482,18 +488,20 @@ def diagnose_sales_missing_from_api(sf, db_only_rows, start, allowed, labels):
         "Unidade_Geradora_Venda__r.Name"
     )
     current = []
-    for offset in range(0, len(sale_ids), 100):
-        quoted_ids = ",".join(f"'{item}'" for item in sale_ids[offset:offset + 100])
+    for offset in range(0, len(raw_sale_ids), 100):
+        quoted_ids = ",".join(
+            f"'{item}'" for item in raw_sale_ids[offset:offset + 100])
         current.extend(sf.query(
             f"SELECT {fields} FROM Opportunity WHERE Id IN ({quoted_ids})"))
-    current_by_id = {str(row["Id"]): row for row in current}
+    current_by_id = {canonical_salesforce_id(row["Id"]): row for row in current}
     reasons = {}
     stages = {}
     units = {}
     types = {}
     months = {}
+    sale_ids = sorted({canonical_salesforce_id(item) for item in raw_sale_ids})
     for sale_id in sale_ids:
-        record = current_by_id.get(sale_id)
+        record = current_by_id.get(canonical_salesforce_id(sale_id))
         if not record:
             reason_list = ["nao_encontrada_ou_sem_acesso"]
         else:
