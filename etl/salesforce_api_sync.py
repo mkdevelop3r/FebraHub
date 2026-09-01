@@ -590,6 +590,35 @@ def presence_key(row, api=False):
     return (cpf, turma, day) if cpf and turma and day else None
 
 
+def log_event_diagnosis(students, presence, turma):
+    target = normalized(turma)
+    event_students = [row for row in students
+                      if normalized(row.get("turma")) == target]
+    event_presence = [row for row in presence
+                      if normalized(row.get("turma")) == target]
+    eligible_types = {
+        "CONSUMIDOR DE VAGAS", "MATRÍCULA", "BÔNUS", "PERMUTA",
+        "INFLUENCIADOR", "CORTESIA", "TAXA DE TRANSFERÊNCIA ISENTO",
+    }
+    eligible = [row for row in event_students
+                if normalized(row.get("tipo_matricula")) in
+                {normalized(item) for item in eligible_types}]
+    unique_students = {str(row.get("aluno_id")) for row in eligible
+                       if row.get("aluno_id")}
+    credentialed_cpfs = {digits(row.get("cpf")).zfill(11)
+                         for row in event_presence if digits(row.get("cpf"))}
+    detail = {
+        "turma": turma,
+        "matriculas_relatorio": len(event_students),
+        "alunos_elegiveis_unicos": len(unique_students),
+        "credenciados_cpf_unico": len(credentialed_cpfs),
+        "registros_presenca": len(event_presence),
+        "tipos_matricula": grouped_counts(event_students, "tipo_matricula"),
+    }
+    log("DIAGNOSTICO_EVENTO " +
+        json.dumps(detail, ensure_ascii=False, sort_keys=True))
+
+
 def compare_with_supabase(sf, sb, students, payments, presence, start,
                           allowed, labels):
     student_db_all = sb.select_all(
@@ -774,6 +803,9 @@ def main():
         log(f"API Salesforce: {len(presence)} registros de presenca")
         if len(presence) < 1000:
             raise RuntimeError("Presenca muito abaixo do esperado; abortando.")
+    diagnostic_class = os.getenv("SALESFORCE_TURMA_DIAGNOSTICO")
+    if diagnostic_class:
+        log_event_diagnosis(students, presence, diagnostic_class)
 
     sb = Supabase() if args.compare or args.write else None
     if args.compare:
