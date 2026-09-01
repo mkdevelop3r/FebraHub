@@ -682,7 +682,10 @@ def discover_class_object(sf, class_id):
             f'{field.get("name", "")} {field.get("label", "")}').lower()
                for word in credential_keywords)]
     credential_count = sf.query(
-        "SELECT COUNT(Id) total FROM Credenciamento__c "
+        "SELECT COUNT(Id) total, "
+        "COUNT(CPF_do_Cliente__c) com_cpf_cliente, "
+        "COUNT(CPF__c) com_cpf_credenciamento "
+        "FROM Credenciamento__c "
         f"WHERE Turma__c = '{class_id}'")
     log("DESCOBERTA_CREDENCIAMENTO " + json.dumps({
         "class_id": class_id,
