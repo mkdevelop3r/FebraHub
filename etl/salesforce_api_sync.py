@@ -699,6 +699,18 @@ def discover_class_object(sf, class_id):
     direct_presence_count = sf.query(
         "SELECT COUNT(Id) total FROM Presenca__c "
         f"WHERE Turma__c = '{class_id}'")
+    presence_description = sf.describe_object("Presenca__c")
+    presence_structure = [{
+        "name": field.get("name"),
+        "label": field.get("label"),
+        "type": field.get("type"),
+        "referenceTo": field.get("referenceTo"),
+        "calculated": field.get("calculated"),
+    } for field in presence_description.get("fields", [])
+        if field.get("type") in ("reference", "boolean", "picklist")
+        or any(word in normalized(
+            f'{field.get("name", "")} {field.get("label", "")}').lower()
+               for word in ("cred", "status", "check", "particip", "matric"))]
     opportunity_description = sf.describe_object("Opportunity")
     enrollment_field = next(
         field for field in opportunity_description.get("fields", [])
@@ -751,6 +763,7 @@ def discover_class_object(sf, class_id):
         "tipos_atuais": credential_types,
         "tipos_originais": original_credential_types,
         "presencas_diretas": direct_presence_count,
+        "estrutura_presenca": presence_structure,
         "resultado_regra_oficial": official_result,
         "campos_relevantes": credential_fields,
     }, ensure_ascii=False, sort_keys=True))
