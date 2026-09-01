@@ -668,6 +668,28 @@ def discover_class_object(sf, class_id):
         log("DESCOBERTA_CLASS_ID " +
             json.dumps(detail, ensure_ascii=False, sort_keys=True))
 
+    credential_description = sf.describe_object("Credenciamento__c")
+    credential_keywords = (
+        "turma", "cred", "aluno", "student", "client", "contact", "contato",
+        "presen", "status", "cpf", "opportun", "venda", "matric")
+    credential_fields = [{
+        "name": field.get("name"),
+        "label": field.get("label"),
+        "type": field.get("type"),
+        "referenceTo": field.get("referenceTo"),
+    } for field in credential_description.get("fields", [])
+        if any(word in normalized(
+            f'{field.get("name", "")} {field.get("label", "")}').lower()
+               for word in credential_keywords)]
+    credential_count = sf.query(
+        "SELECT COUNT(Id) total FROM Credenciamento__c "
+        f"WHERE Turma__c = '{class_id}'")
+    log("DESCOBERTA_CREDENCIAMENTO " + json.dumps({
+        "class_id": class_id,
+        "total_registros": credential_count,
+        "campos_relevantes": credential_fields,
+    }, ensure_ascii=False, sort_keys=True))
+
 
 def compare_with_supabase(sf, sb, students, payments, presence, start,
                           allowed, labels):
