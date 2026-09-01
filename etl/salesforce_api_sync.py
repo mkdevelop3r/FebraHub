@@ -180,6 +180,22 @@ def resolve_picklist_values(sf, object_name, field_name, report_labels):
     return values
 
 
+def all_picklist_values(sf, object_name, field_name):
+    """Retorna todos os valores ativos do picklist pelo valor da API."""
+    description = sf.get(
+        f"/services/data/v{API_VERSION}/sobjects/{object_name}/describe"
+    )
+    field = next((item for item in description.get("fields", [])
+                  if item.get("name") == field_name), None)
+    if not field:
+        raise RuntimeError(f"Campo {object_name}.{field_name} nao encontrado.")
+    return {
+        str(item["value"]): item.get("label") or str(item["value"])
+        for item in field.get("picklistValues", [])
+        if item.get("active") and item.get("value") is not None
+    }
+
+
 def assert_report(metadata, expected_name, expected_date_column):
     if metadata.get("name") != expected_name:
         raise RuntimeError(
@@ -321,6 +337,133 @@ def presence_rows(sf):
         "turma": r.get("Turma_do_Credenciamento__c"),
         "cpf": digits(r.get("CPF__c")) or None,
     } for r in records]
+
+
+def credentialing_rows(sf):
+    fields = (
+        "Id,CreatedDate,LastModifiedDate,Turma__c,Turma__r.Name,"
+        "Turma__r.C_digo_da_Turma__c,Turma__r.Curso__c,"
+        "Turma__r.Curso__r.Name,Turma__r.Unidade__c,Turma__r.Unidade__r.Name,"
+        "Turma__r.Status__c,Turma__r.StatusEntregaTurma__c,"
+        "Turma__r.TurmaValidada__c,Turma__r.QuantidadeAlunosCadastrados__c,"
+        "Turma__r.LinkCredenciamento__c,Venda__c,Nome_do_Cliente__c,"
+        "Nome_do_Cliente__r.Name,CPF_do_Cliente__c,"
+        "Tipo_de_Matricula_Atual__c,Tipo_de_Matricula__c"
+    )
+    return sf.query(
+        f"SELECT {fields} FROM Credenciamento__c "
+        "WHERE CreatedDate >= 2021-01-01T00:00:00Z "
+        f"AND Turma__r.Unidade__r.Name = '{UNIDADE}'")
+
+
+def linked_presence_rows(sf):
+    return sf.query(
+        "SELECT Id,Credenciamento__c,CreatedDate FROM Presenca__c "
+        "WHERE Credenciamento__c != null "
+        "AND CreatedDate >= 2021-01-01T00:00:00Z "
+        f"AND Unidade__c IN ('{UNIDADE}','FEBRACIS SALVADOR')")
+
+
+def transform_credentialing(credentials, linked_presence, labels):
+    presence_by_credential = {}
+    for row in linked_presence:
+        key = canonical_salesforce_id(row.get("Credenciamento__c"))
+        if not key:
+            continue
+        item = presence_by_credential.setdefault(key, [])
+        if row.get("CreatedDate"):
+            item.append(row["CreatedDate"])
+
+    excluded = {"13": "Cancelado", "22": "TRANSF. DE TITULARIDADE",
+                "27": "COMPRADOR DE VAGAS"}
+    turmas = {}
+    facts = []
+    for row in credentials:
+        turma_id = canonical_salesforce_id(row.get("Turma__c"))
+        if not turma_id:
+            continue
+        turma = row.get("Turma__r") or {}
+        turmas[turma_id] = {
+            "turma_id": turma_id,
+            "nome": turma.get("Name"),
+            "codigo_turma": turma.get("C_digo_da_Turma__c"),
+            "curso_id": canonical_salesforce_id(turma.get("Curso__c")) or None,
+            "curso_nome": nested(turma, "Curso__r.Name"),
+            "unidade_id": canonical_salesforce_id(turma.get("Unidade__c")) or None,
+            "unidade_nome": nested(turma, "Unidade__r.Name"),
+            "status": turma.get("Status__c"),
+            "status_entrega": turma.get("StatusEntregaTurma__c"),
+            "turma_validada": turma.get("TurmaValidada__c"),
+            "quantidade_alunos_salesforce": turma.get(
+                "QuantidadeAlunosCadastrados__c"),
+            "link_credenciamento": turma.get("LinkCredenciamento__c"),
+            "atualizado_salesforce_em": row.get("LastModifiedDate"),
+            "sincronizado_em": datetime.now(timezone.utc).isoformat(),
+        }
+        credential_id = canonical_salesforce_id(row.get("Id"))
+        code = str(row.get("Tipo_de_Matricula_Atual__c") or "")
+        dates = sorted(presence_by_credential.get(credential_id, []))
+        facts.append({
+            "credenciamento_id": credential_id,
+            "turma_id": turma_id,
+            "venda_id": canonical_salesforce_id(row.get("Venda__c")) or None,
+            "cliente_id": canonical_salesforce_id(
+                row.get("Nome_do_Cliente__c")) or None,
+            "cpf": digits(row.get("CPF_do_Cliente__c")) or None,
+            "nome_cliente": nested(row, "Nome_do_Cliente__r.Name"),
+            "tipo_matricula_codigo": code or None,
+            "tipo_matricula": labels.get(code, code or None),
+            "elegivel": code not in excluded,
+            "motivo_inelegibilidade": excluded.get(code),
+            "credenciado": bool(dates),
+            "quantidade_presencas": len(dates),
+            "primeira_presenca_em": dates[0] if dates else None,
+            "ultima_presenca_em": dates[-1] if dates else None,
+            "atualizado_salesforce_em": row.get("LastModifiedDate"),
+            "sincronizado_em": datetime.now(timezone.utc).isoformat(),
+        })
+    return list(turmas.values()), facts
+
+
+def compare_credentialing(sb, turmas, facts):
+    def reconciliation(table, rows, key):
+        db_rows = sb.select_all(table, key)
+        api_keys = {str(row[key]) for row in rows if row.get(key)}
+        db_keys = {str(row[key]) for row in db_rows if row.get(key)}
+        result = {
+            "tabela": table,
+            "api": len(api_keys),
+            "supabase": len(db_keys),
+            "em_ambos": len(api_keys & db_keys),
+            "inclusoes": len(api_keys - db_keys),
+            "remocoes": len(db_keys - api_keys),
+        }
+        log("RECONCILIACAO_CREDENCIAMENTO " +
+            json.dumps(result, ensure_ascii=False, sort_keys=True))
+
+    reconciliation("dim_turma_salesforce", turmas, "turma_id")
+    reconciliation("fato_credenciamento_turma", facts, "credenciamento_id")
+    eligible = [row for row in facts if row["elegivel"]]
+    credentialed = [row for row in eligible if row["credenciado"]]
+    log("METRICAS_CREDENCIAMENTO " + json.dumps({
+        "turmas": len(turmas),
+        "credenciamentos_brutos": len(facts),
+        "elegiveis": len(eligible),
+        "credenciados": len(credentialed),
+        "nao_credenciados": len(eligible) - len(credentialed),
+    }, ensure_ascii=False, sort_keys=True))
+
+    tce_id = canonical_salesforce_id("a0QV200000hsqGz")
+    tce = [row for row in facts if row["turma_id"] == tce_id and
+           row["elegivel"]]
+    tce_credentialed = [row for row in tce if row["credenciado"]]
+    log("VALIDACAO_TCE " + json.dumps({
+        "turma_id": tce_id,
+        "total": len({row.get("venda_id") or row["credenciamento_id"]
+                      for row in tce}),
+        "credenciados": len({row.get("venda_id") or row["credenciamento_id"]
+                             for row in tce_credentialed}),
+    }, ensure_ascii=False, sort_keys=True))
 
 
 class Supabase:
@@ -938,6 +1081,7 @@ def main():
     parser.add_argument("--write", action="store_true",
                         help="Grava no Supabase; sem esta flag apenas valida.")
     parser.add_argument("--include-presence", action="store_true")
+    parser.add_argument("--include-credentialing", action="store_true")
     parser.add_argument("--compare", action="store_true",
                         help="Compara com o Supabase sem gravar.")
     parser.add_argument(
@@ -982,6 +1126,19 @@ def main():
         log(f"API Salesforce: {len(presence)} registros de presenca")
         if len(presence) < 1000:
             raise RuntimeError("Presenca muito abaixo do esperado; abortando.")
+    credentialing_turmas, credentialing_facts = [], []
+    if args.include_credentialing:
+        credentials = credentialing_rows(sf)
+        linked_presence = linked_presence_rows(sf)
+        credentialing_labels = all_picklist_values(
+            sf, "Credenciamento__c", "Tipo_de_Matricula_Atual__c")
+        credentialing_turmas, credentialing_facts = transform_credentialing(
+            credentials, linked_presence, credentialing_labels)
+        log(f"API Salesforce: {len(credentialing_turmas)} turmas; "
+            f"{len(credentialing_facts)} credenciamentos; "
+            f"{len(linked_presence)} presencas vinculadas")
+        if not credentialing_turmas or not credentialing_facts:
+            raise RuntimeError("Extracao de credenciamento vazia; abortando.")
     diagnostic_class = os.getenv("SALESFORCE_TURMA_DIAGNOSTICO")
     if diagnostic_class:
         log_event_diagnosis(students, presence, diagnostic_class)
@@ -998,6 +1155,8 @@ def main():
             "fato_base_alunos", students, "matricula_id", "data_matricula")
         sb.plan_window(
             "fato_pagamento_base", payments, "pagamento_id", "data_aprovacao")
+        if args.include_credentialing:
+            compare_credentialing(sb, credentialing_turmas, credentialing_facts)
 
     if not args.write:
         log("DRY RUN concluido; nada foi gravado.")
