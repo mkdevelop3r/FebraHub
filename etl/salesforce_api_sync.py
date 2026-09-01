@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import unquote
 
@@ -153,11 +154,11 @@ def resolve_picklist_values(sf, object_name, field_name, report_labels):
     if not field:
         raise RuntimeError(f"Campo {object_name}.{field_name} nao encontrado.")
     values = {
-        item.get("value")
+        item.get("value"): item.get("label")
         for item in field.get("picklistValues", [])
         if item.get("label") in report_labels or item.get("value") in report_labels
     }
-    values.discard(None)
+    values.pop(None, None)
     if not values:
         raise RuntimeError(f"Nenhum valor do picklist {field_name} corresponde ao relatorio.")
     return values
@@ -186,19 +187,21 @@ def opportunity_rows(sf, start):
     )
     soql = (
         f"SELECT {fields} FROM Opportunity "
-        f"WHERE Data_de_Aprova_o__c >= {start.isoformat()} "
+        f"WHERE (Data_de_Aprova_o__c >= {start.isoformat()} OR "
+        f"(Data_de_Aprova_o__c = null AND CloseDate >= {start.isoformat()})) "
         "AND StageName = 'Aprovada' "
         f"AND Unidade_Geradora_Venda__r.Name = '{UNIDADE}'"
     )
     return sf.query(soql)
 
 
-def transform_students(records, allowed):
+def transform_students(records, allowed, labels):
     rows = []
     for record in records:
-        enrollment_type = record.get("Tipo_de_Matricula__c") or ""
-        if enrollment_type not in allowed:
+        enrollment_value = record.get("Tipo_de_Matricula__c") or ""
+        if enrollment_value not in allowed:
             continue
+        enrollment_type = labels.get(enrollment_value, enrollment_value)
         course = nested(record, "NomeCurso__r.Name", "")
         sale_id = record["Id"]
         email = str(nested(record, "Account.PersonEmail", "") or "").strip().lower()
@@ -208,7 +211,7 @@ def transform_students(records, allowed):
             "aluno_id": cpf or email,
             "curso_id": course or None,
             "data_matricula": iso_day(record.get("Data_de_Aprova_o__c") or
-                                       record.get("CreatedDate")),
+                                       record.get("CloseDate")),
             "status_matricula": record.get("StageName"),
             "data_conclusao": None,
             "original_id_venda": sale_id,
@@ -249,12 +252,13 @@ def payment_rows(sf, start):
     return sf.query(soql)
 
 
-def transform_payments(records, allowed):
+def transform_payments(records, allowed, labels):
     rows = []
     for record in records:
-        enrollment_type = nested(record, "Venda__r.Tipo_de_Matricula__c", "")
-        if enrollment_type not in allowed:
+        enrollment_value = nested(record, "Venda__r.Tipo_de_Matricula__c", "")
+        if enrollment_value not in allowed:
             continue
+        enrollment_type = labels.get(enrollment_value, enrollment_value)
         approved = iso_day(nested(record, "Venda__r.Data_de_Aprova_o__c"))
         paid = iso_day(nested(record, "Venda__r.Data_de_pagamento__c")) or approved
         rows.append({
@@ -378,8 +382,26 @@ class Supabase:
         log(f"presenca promovida: {result}")
 
 
-def money_total(rows):
-    return round(sum(float(row.get("valor") or 0) for row in rows), 2)
+def normalized(value):
+    text = unicodedata.normalize("NFKD", str(value or ""))
+    return " ".join(text.encode("ascii", "ignore").decode().upper().split())
+
+
+def max_value_by_sale(rows, allowed_types=None, excluded_courses=None):
+    allowed_types = {normalized(item) for item in (allowed_types or [])}
+    excluded_courses = {normalized(item) for item in (excluded_courses or [])}
+    sales = {}
+    for row in rows:
+        if allowed_types and normalized(row.get("tipo_matricula")) not in allowed_types:
+            continue
+        if excluded_courses and normalized(row.get("curso_id")) in excluded_courses:
+            continue
+        sale_id = row.get("original_id_venda")
+        if not sale_id:
+            continue
+        value = float(row.get("valor") or 0)
+        sales[str(sale_id)] = max(value, sales.get(str(sale_id), 0))
+    return round(sum(sales.values()), 2), len(sales)
 
 
 def presence_key(row, api=False):
@@ -396,12 +418,17 @@ def presence_key(row, api=False):
 
 
 def compare_with_supabase(sb, students, payments, presence, start):
-    student_db = sb.select_all(
-        "fato_base_alunos", "matricula_id,valor,data_matricula",
-        [("data_matricula", f"gte.{start.isoformat()}")],
+    student_db_all = sb.select_all(
+        "fato_base_alunos",
+        "matricula_id,valor,data_matricula,data_fechamento_venda,"
+        "original_id_venda,tipo_matricula,curso_id",
     )
+    student_db = [row for row in student_db_all if
+                  str(row.get("data_matricula") or
+                      row.get("data_fechamento_venda") or "")[:10] >= start.isoformat()]
     payment_db = sb.select_all(
-        "fato_pagamento_base", "pagamento_id,valor,data_aprovacao",
+        "fato_pagamento_base",
+        "pagamento_id,valor,data_aprovacao,original_id_venda,tipo_matricula",
         [("data_aprovacao", f"gte.{start.isoformat()}")],
     )
 
@@ -415,8 +442,6 @@ def compare_with_supabase(sb, students, payments, presence, start):
             "em_ambos": len(api_keys & db_keys),
             "so_api": len(api_keys - db_keys),
             "so_supabase": len(db_keys - api_keys),
-            "valor_api": money_total(api_rows),
-            "valor_supabase": money_total(db_rows),
         }
         log("RECONCILIACAO " + json.dumps(result, ensure_ascii=False, sort_keys=True))
         return result
@@ -425,6 +450,42 @@ def compare_with_supabase(sb, students, payments, presence, start):
         diff("alunos", students, student_db, "matricula_id"),
         diff("pagamentos", payments, payment_db, "pagamento_id"),
     ]
+
+    billing_types = {"Matrícula", "COMPRADOR DE VAGAS", "MAT. RETROATIVA"}
+    excluded_courses = {"REVOLUTION", "METODO CIS GLOBAL HOLDING"}
+    api_billing, api_sales = max_value_by_sale(
+        students, billing_types, excluded_courses)
+    db_billing, db_sales = max_value_by_sale(
+        student_db, billing_types, excluded_courses)
+    billing = {
+        "metrica": "faturamento_aprovacao",
+        "vendas_api": api_sales,
+        "vendas_supabase": db_sales,
+        "valor_api": api_billing,
+        "valor_supabase": db_billing,
+        "diferenca": round(api_billing - db_billing, 2),
+    }
+    log("REGRA_NEGOCIO " + json.dumps(billing, ensure_ascii=False, sort_keys=True))
+
+    occupancy_types = {
+        "CONSUMIDOR DE VAGAS", "MATRÍCULA", "BÔNUS", "PERMUTA",
+        "INFLUENCIADOR", "CORTESIA", "TAXA DE TRANSFERÊNCIA ISENTO",
+    }
+    api_occupancy = {row["matricula_id"] for row in students
+                     if normalized(row.get("tipo_matricula")) in
+                     {normalized(item) for item in occupancy_types}}
+    db_occupancy = {row["matricula_id"] for row in student_db
+                    if normalized(row.get("tipo_matricula")) in
+                    {normalized(item) for item in occupancy_types}}
+    occupancy = {
+        "metrica": "ocupacao_evento",
+        "api": len(api_occupancy),
+        "supabase": len(db_occupancy),
+        "em_ambos": len(api_occupancy & db_occupancy),
+        "so_api": len(api_occupancy - db_occupancy),
+        "so_supabase": len(db_occupancy - api_occupancy),
+    }
+    log("REGRA_NEGOCIO " + json.dumps(occupancy, ensure_ascii=False, sort_keys=True))
 
     if presence:
         presence_db = sb.select_all("fato_presenca", "cpf,turma,dia")
@@ -462,15 +523,18 @@ def main():
     assert_report(metadata_payments, "Sync Base pagamentos 17h15",
                   "Opportunity.Data_de_Aprova_o__c")
     report_labels = allowed_enrollment_types(metadata_students)
-    allowed = resolve_picklist_values(
+    picklist_labels = resolve_picklist_values(
         sf, "Opportunity", "Tipo_de_Matricula__c", report_labels
     )
+    allowed = set(picklist_labels)
     log(f"Filtro de matricula: {len(report_labels)} rotulos, "
         f"{len(allowed)} valores de API")
 
     start = date.today() - timedelta(days=LOOKBACK_DAYS)
-    students = transform_students(opportunity_rows(sf, start), allowed)
-    payments = transform_payments(payment_rows(sf, start), allowed)
+    students = transform_students(
+        opportunity_rows(sf, start), allowed, picklist_labels)
+    payments = transform_payments(
+        payment_rows(sf, start), allowed, picklist_labels)
     log(f"API Salesforce: {len(students)} alunos; {len(payments)} pagamentos")
     if not students or not payments:
         raise RuntimeError("Extracao vazia; abortando.")
