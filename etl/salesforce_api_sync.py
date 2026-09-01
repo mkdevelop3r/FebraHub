@@ -797,8 +797,11 @@ def discover_class_object(sf, class_id):
                 f'{child.get("relationshipName", "")}').lower()
                    for word in keywords)]
         name_field = description.get("nameField") or "Name"
+        diagnostic_fields = f"Id,{name_field}"
+        if object_name == "Turma__c":
+            diagnostic_fields += ",CreatedDate,Unidade__c,Unidade__r.Name"
         records = sf.query(
-            f"SELECT Id,{name_field} FROM {object_name} "
+            f"SELECT {diagnostic_fields} FROM {object_name} "
             f"WHERE Id = '{class_id}' LIMIT 1")
         detail = {
             "class_id": class_id,
@@ -827,7 +830,8 @@ def discover_class_object(sf, class_id):
     credential_count = sf.query(
         "SELECT COUNT(Id) total, "
         "COUNT(CPF_do_Cliente__c) com_cpf_cliente, "
-        "COUNT(CPF__c) com_cpf_credenciamento "
+        "COUNT(CPF__c) com_cpf_credenciamento, "
+        "MIN(CreatedDate) criado_min, MAX(CreatedDate) criado_max "
         "FROM Credenciamento__c "
         f"WHERE Turma__c = '{class_id}'")
     credential_type_rows = sf.query(
