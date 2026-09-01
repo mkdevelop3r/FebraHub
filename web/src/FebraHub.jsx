@@ -37,7 +37,7 @@ import {
   usePedagogicoRecompraCurso, usePedagogicoNaoFizeramCurso,
   usePedagogicoMaestrosCompleto, usePedagogicoMaestrosKpis, usePedagogicoMaestroAnotacoes,
   usePedagogicoRetencaoCasos, usePedagogicoRetencao, usePedagogicoRetencaoMotivos,
-  usePedagogicoPainel,
+  usePedagogicoPainel, useCredenciamentoPorTurma,
   useVendaFaturamentoDesde, useFinanceiroRecebidoMensal,
   useMarketingInvestimento, useLojaMetaRealizado,
   useExecutivoReativacao,
@@ -6588,6 +6588,7 @@ function Login() {
 const ABAS_CENTRAL = [
   { key: "turmas",     label: "Turmas" },
   { key: "represados", label: "Represados" },
+  { key: "credenciamento", label: "Credenciamento" },
   { key: "presenca",   label: "Presença" },
   { key: "avaliacoes", label: "Avaliações" },
   { key: "maestros",   label: "Maestros" },
@@ -6665,10 +6666,11 @@ function CentralPedagogica() {
 
       {aba === "turmas" && <CentralTurmas notificar={notificar} />}
       {aba === "represados" && <CentralRepresados notificar={notificar} />}
+      {aba === "credenciamento" && <CentralCredenciamento />}
       {aba === "presenca" && <CentralPresenca />}
       {aba === "avaliacoes" && <SecaoAvaliacaoEventos notificar={notificar} />}
       {aba === "maestros" && <CentralMaestros notificar={notificar} />}
-      {!["turmas", "represados", "presenca", "avaliacoes", "maestros"].includes(aba) && (
+      {!["turmas", "represados", "credenciamento", "presenca", "avaliacoes", "maestros"].includes(aba) && (
         <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "26px 22px" }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, color: C.bright, marginBottom: 5 }}>
             {ABAS_CENTRAL.find((a) => a.key === aba)?.label} chega na próxima etapa
@@ -7145,6 +7147,82 @@ function CentralMaestros({ notificar }) {
    Regra da tela inteira: ausência nunca aparece sozinha. 51% de ausência numa
    turma com 49% de cobertura pode ser evasão real ou pode ser metade da turma
    que ninguém bipou — e as duas leituras pedem ações opostas. */
+function CentralCredenciamento() {
+  const consulta = useCredenciamentoPorTurma();
+  const [busca, setBusca] = useState("");
+  const [status, setStatus] = useState("todos");
+  const todas = consulta.data ?? [];
+  const statusDisponiveis = useMemo(() => [...new Set(todas.map((r) => r.status).filter(Boolean))].sort(), [todas]);
+  const linhas = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return todas.filter((r) => (status === "todos" || r.status === status)
+      && (!q || `${r.turma ?? ""} ${r.curso_nome ?? ""} ${r.codigo_turma ?? ""}`.toLowerCase().includes(q)))
+      .sort((a, b) => Number(b.total_alunos ?? 0) - Number(a.total_alunos ?? 0));
+  }, [todas, busca, status]);
+  const totais = useMemo(() => linhas.reduce((a, r) => ({
+    alunos: a.alunos + Number(r.total_alunos ?? 0),
+    credenciados: a.credenciados + Number(r.credenciados ?? 0),
+    nao: a.nao + Number(r.nao_credenciados ?? 0),
+  }), { alunos: 0, credenciados: 0, nao: 0 }), [linhas]);
+  const percentual = totais.alunos ? 100 * totais.credenciados / totais.alunos : 0;
+  const ultimaSync = todas.reduce((max, r) => String(r.sincronizado_em ?? "") > max ? String(r.sincronizado_em) : max, "");
+
+  return (
+    <>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, minmax(120px, 1fr))", gap: 8, marginBottom: 12 }}>
+        {[["Turmas", linhas.length, C.gold], ["Matrículas", totais.alunos, C.text], ["Credenciados", totais.credenciados, C.up], ["Não credenciados", totais.nao, C.warn]].map(([rotulo, valor, cor]) => (
+          <div key={rotulo} style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ fontSize: 10, color: C.faint, textTransform: "uppercase", letterSpacing: ".4px" }}>{rotulo}</div>
+            <div style={{ fontFamily: GROTESK, fontSize: 20, fontWeight: 750, color: cor, marginTop: 2 }}>{numero(valor)}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+        <div style={{ fontSize: 11, color: C.faint }}>
+          {percentual.toFixed(1).replace(".", ",")}% credenciados{ultimaSync ? ` · atualizado ${new Date(ultimaSync).toLocaleString("pt-BR")}` : ""}
+        </div>
+        <div style={{ display: "flex", gap: 8, flex: "0 1 520px", width: "100%" }}>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ ...inputAv, width: 170, cursor: "pointer" }}>
+            <option value="todos">Todos os status</option>
+            {statusDisponiveis.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <div style={{ position: "relative", flex: 1 }}>
+            <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.dim }} />
+            <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar turma, curso ou código" style={{ ...inputAv, paddingLeft: 30 }} />
+          </div>
+        </div>
+      </div>
+      <Estado carregando={consulta.isLoading} erro={consulta.error} vazio={!linhas.length} vazioTitulo="Nenhuma turma encontrada">
+        <TabelaCredenciamento linhas={linhas} />
+      </Estado>
+    </>
+  );
+}
+
+function TabelaCredenciamento({ linhas }) {
+  return (
+    <>
+      <style>{`.tcGrade{display:grid;grid-template-columns:minmax(0,1.7fr) 110px 110px 120px 110px;align-items:center;gap:10px}.tcLinha:hover{background:rgba(255,255,255,.02)}@media(max-width:900px){.tcGrade{grid-template-columns:minmax(0,1.5fr) 90px 100px 90px}.tcNao{display:none}}`}</style>
+      <div className="rolagem" style={{ maxHeight: 520, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
+        <div className="tcGrade" style={{ position: "sticky", top: 0, zIndex: 2, background: "#17171c", padding: "8px 12px", borderBottom: `1px solid ${C.cardLine}`, fontSize: 10, fontWeight: 800, textTransform: "uppercase", color: C.dim }}>
+          <span>Turma</span><span style={{ textAlign: "right" }}>Matrículas</span><span style={{ textAlign: "right" }}>Credenciados</span><span className="tcNao" style={{ textAlign: "right" }}>Não cred.</span><span style={{ textAlign: "right" }}>Percentual</span>
+        </div>
+        {linhas.map((r, i) => {
+          const pct = Number(r.percentual_credenciamento ?? 0);
+          const cor = pct >= 80 ? C.up : pct >= 50 ? C.warn : C.down;
+          return <div key={r.turma_id} className="tcGrade tcLinha" style={{ minHeight: 48, padding: "0 12px", borderBottom: i === linhas.length - 1 ? "none" : `1px solid ${C.hair}` }}>
+            <div style={{ minWidth: 0 }}><div style={{ fontSize: 12.5, fontWeight: 700, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.turma}</div><div style={{ fontSize: 10, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.curso_nome || r.codigo_turma || r.status || "—"}</div></div>
+            <span style={{ textAlign: "right", fontFamily: GROTESK, color: C.muted }}>{numero(r.total_alunos)}</span>
+            <span style={{ textAlign: "right", fontFamily: GROTESK, color: C.up }}>{numero(r.credenciados)}</span>
+            <span className="tcNao" style={{ textAlign: "right", fontFamily: GROTESK, color: C.warn }}>{numero(r.nao_credenciados)}</span>
+            <span style={{ textAlign: "right", fontFamily: GROTESK, fontWeight: 700, color: cor }}>{pct.toFixed(1).replace(".", ",")}%</span>
+          </div>;
+        })}
+      </div>
+    </>
+  );
+}
+
 function CentralPresenca() {
   const saude = usePresencaSaude();
   const mensuraveis = useTurmasMensuraveis();
