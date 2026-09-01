@@ -473,6 +473,73 @@ def log_student_sale_diagnosis(api_rows, db_rows):
     )
 
 
+def diagnose_sales_missing_from_api(sf, db_only_rows, start, allowed, labels):
+    sale_ids = sorted({str(row["original_id_venda"]) for row in db_only_rows
+                       if row.get("original_id_venda")})
+    fields = (
+        "Id,StageName,Data_de_Aprova_o__c,CloseDate,Amount,"
+        "Tipo_de_Matricula__c,NomeCurso__r.Name,"
+        "Unidade_Geradora_Venda__r.Name"
+    )
+    current = []
+    for offset in range(0, len(sale_ids), 100):
+        quoted_ids = ",".join(f"'{item}'" for item in sale_ids[offset:offset + 100])
+        current.extend(sf.query(
+            f"SELECT {fields} FROM Opportunity WHERE Id IN ({quoted_ids})"))
+    current_by_id = {str(row["Id"]): row for row in current}
+    reasons = {}
+    stages = {}
+    units = {}
+    types = {}
+    months = {}
+    for sale_id in sale_ids:
+        record = current_by_id.get(sale_id)
+        if not record:
+            reason_list = ["nao_encontrada_ou_sem_acesso"]
+        else:
+            reason_list = []
+            stage = str(record.get("StageName") or "(vazio)")
+            unit = str(nested(record, "Unidade_Geradora_Venda__r.Name", "(vazio)"))
+            enrollment_value = record.get("Tipo_de_Matricula__c") or ""
+            enrollment_type = labels.get(enrollment_value, enrollment_value or "(vazio)")
+            approval = iso_day(record.get("Data_de_Aprova_o__c"))
+            close_date = iso_day(record.get("CloseDate"))
+            effective_date = approval or close_date
+            month = str(effective_date or "(sem data)")[:7]
+            stages[stage] = stages.get(stage, 0) + 1
+            units[unit] = units.get(unit, 0) + 1
+            types[enrollment_type] = types.get(enrollment_type, 0) + 1
+            months[month] = months.get(month, 0) + 1
+            if stage != "Aprovada":
+                reason_list.append("fase_nao_aprovada")
+            if unit != UNIDADE:
+                reason_list.append("outra_unidade")
+            if enrollment_value not in allowed:
+                reason_list.append("tipo_fora_do_relatorio")
+            if not effective_date or effective_date < start.isoformat():
+                reason_list.append("fora_da_janela_120_dias")
+            if not reason_list:
+                reason_list.append("deveria_estar_na_api")
+        reason = "+".join(reason_list)
+        reasons[reason] = reasons.get(reason, 0) + 1
+
+    def top(values):
+        return dict(sorted(values.items(), key=lambda item: (-item[1], item[0]))[:20])
+
+    detail = {
+        "metrica": "motivos_vendas_so_supabase",
+        "total": len(sale_ids),
+        "encontradas_no_salesforce": len(current_by_id),
+        "motivos": top(reasons),
+        "fases_atuais": top(stages),
+        "unidades_atuais": top(units),
+        "tipos_atuais": top(types),
+        "meses_atuais": top(months),
+    }
+    log("DIAGNOSTICO_ESTADO_ATUAL " +
+        json.dumps(detail, ensure_ascii=False, sort_keys=True))
+
+
 def presence_key(row, api=False):
     cpf = digits(row.get("cpf"))
     if cpf:
@@ -486,7 +553,8 @@ def presence_key(row, api=False):
     return (cpf, turma, day) if cpf and turma and day else None
 
 
-def compare_with_supabase(sb, students, payments, presence, start):
+def compare_with_supabase(sf, sb, students, payments, presence, start,
+                          allowed, labels):
     student_db_all = sb.select_all(
         "fato_base_alunos",
         "matricula_id,valor,data_matricula,data_fechamento_venda,"
@@ -525,6 +593,8 @@ def compare_with_supabase(sb, students, payments, presence, start):
         "data_matricula", "tipo_matricula")
     sales_only_api, sales_only_db = log_student_sale_diagnosis(
         students, student_db)
+    diagnose_sales_missing_from_api(
+        sf, sales_only_db, start, allowed, labels)
     log_divergence(
         "pagamentos", payments, payment_db, "pagamento_id",
         "data_aprovacao", "tipo_matricula")
@@ -653,7 +723,9 @@ def main():
             raise RuntimeError("Presenca muito abaixo do esperado; abortando.")
 
     if args.compare:
-        compare_with_supabase(Supabase(), students, payments, presence, start)
+        compare_with_supabase(
+            sf, Supabase(), students, payments, presence, start,
+            allowed, picklist_labels)
 
     if not args.write:
         log("DRY RUN concluido; nada foi gravado.")
