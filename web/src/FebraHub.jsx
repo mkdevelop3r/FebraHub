@@ -43,7 +43,7 @@ import {
   useExecutivoReativacao,
   useTurmaDim, useTurmaSugestao,
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
-  useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
+  useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
@@ -6588,7 +6588,6 @@ function Login() {
 const ABAS_CENTRAL = [
   { key: "turmas",     label: "Turmas" },
   { key: "represados", label: "Represados" },
-  { key: "credenciamento", label: "Credenciamento" },
   { key: "presenca",   label: "Presença" },
   { key: "avaliacoes", label: "Avaliações" },
   { key: "maestros",   label: "Maestros" },
@@ -6666,11 +6665,10 @@ function CentralPedagogica() {
 
       {aba === "turmas" && <CentralTurmas notificar={notificar} />}
       {aba === "represados" && <CentralRepresados notificar={notificar} />}
-      {aba === "credenciamento" && <CentralCredenciamento />}
       {aba === "presenca" && <CentralPresenca />}
       {aba === "avaliacoes" && <SecaoAvaliacaoEventos notificar={notificar} />}
       {aba === "maestros" && <CentralMaestros notificar={notificar} />}
-      {!["turmas", "represados", "credenciamento", "presenca", "avaliacoes", "maestros"].includes(aba) && (
+      {!["turmas", "represados", "presenca", "avaliacoes", "maestros"].includes(aba) && (
         <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "26px 22px" }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, color: C.bright, marginBottom: 5 }}>
             {ABAS_CENTRAL.find((a) => a.key === aba)?.label} chega na próxima etapa
@@ -7224,15 +7222,36 @@ function TabelaCredenciamento({ linhas }) {
 }
 
 function CentralPresenca() {
-  const saude = usePresencaSaude();
-  const mensuraveis = useTurmasMensuraveis();
-  const cobertura = usePresencaCobertura();
+  const credenciamento = useCredenciamentoPorTurma();
   const [visao, setVisao] = useState("mensuraveis");
   const [busca, setBusca] = useState("");
 
-  const todas = cobertura.data ?? [];
+  const todas = useMemo(() => (credenciamento.data ?? []).map((r) => ({
+    turma: r.turma,
+    curso: r.curso_nome,
+    matriculados: Number(r.total_alunos ?? 0),
+    compareceram: Number(r.credenciados ?? 0),
+    cobertura_pct: Number(r.percentual_credenciamento ?? 0),
+    fonte: "salesforce_api",
+    sincronizado_em: r.sincronizado_em,
+  })), [credenciamento.data]);
   const semRegistro = useMemo(() => todas.filter((r) => !Number(r.compareceram ?? 0)), [todas]);
   const comRegistro = useMemo(() => todas.filter((r) => Number(r.compareceram ?? 0) > 0), [todas]);
+  const mensuraveisLinhas = useMemo(() => comRegistro.filter((r) => Number(r.matriculados ?? 0) >= 10), [comRegistro]);
+  const mensuraveis = { data: mensuraveisLinhas, isLoading: credenciamento.isLoading, error: credenciamento.error };
+  const cobertura = { data: todas, isLoading: credenciamento.isLoading, error: credenciamento.error };
+  const ultimaCarga = todas.reduce((max, r) => String(r.sincronizado_em ?? "") > max ? String(r.sincronizado_em) : max, "");
+  const saude = {
+    data: ultimaCarga ? [{
+      ultima_carga: ultimaCarga,
+      dias_desde_a_carga: Math.max(0, Math.floor((Date.now() - new Date(ultimaCarga).getTime()) / 86400000)),
+      linhas: todas.reduce((s, r) => s + Number(r.compareceram ?? 0), 0),
+      turmas: todas.length,
+      registro_mais_recente: ultimaCarga,
+    }] : [],
+    isLoading: credenciamento.isLoading,
+    error: credenciamento.error,
+  };
 
   const fonte = visao === "mensuraveis" ? (mensuraveis.data ?? [])
     : visao === "registro" ? comRegistro : semRegistro;
@@ -7268,10 +7287,10 @@ function CentralPresenca() {
           "58% de ausência" como evasão quando é buraco de registro. */}
       <div style={{ fontSize: 11, color: C.faint, lineHeight: 1.5, marginBottom: 8 }}>
         {visao === "mensuraveis"
-          ? "Turmas onde a ausência significa alguma coisa: já aconteceram, têm registro de verdade (cobertura de 40% pra cima) e pelo menos 10 matriculados. É aqui que faz sentido ligar para quem faltou."
+          ? "Turmas com pelo menos 10 matrículas elegíveis e algum credenciado. Matrículas, credenciados e não credenciados vêm diretamente do Salesforce."
           : visao === "registro"
-            ? "Todas as turmas com algum registro de presença, das piores coberturas para as melhores. Cobertura baixa aqui é problema de registro, não de aluno — a ausência não é confiável."
-            : "Turmas sem nenhum registro de presença. Não dá para dizer quem faltou: ninguém foi bipado. Aparecem para que o buraco não passe por 100% de ausência."}
+            ? "Todas as turmas com algum credenciado, dos menores para os maiores percentuais de credenciamento."
+            : "Turmas sem nenhum credenciado até o momento. A sincronização direta com o Salesforce atualiza esta lista a cada 15 minutos."}
       </div>
 
       <Estado
@@ -7286,10 +7305,8 @@ function CentralPresenca() {
   );
 }
 
-/* A carga é manual e a fonte anterior morreu ao longo de um ano sem ninguém
-   perceber. Este bloco fica sempre visível, e vira vermelho passando de 30
-   dias — detectar não resolve, mas pelo menos ninguém decide com dado velho
-   achando que é de hoje. */
+/* A saúde da sincronização fica sempre visível para ninguém decidir com dado
+   velho achando que é de hoje. */
 function SaudeDaCarga({ estado }) {
   const s = estado.data?.[0];
   if (estado.isLoading) return <div style={{ fontSize: 12, color: C.faint }}>Carregando a saúde da carga…</div>;
@@ -7297,7 +7314,7 @@ function SaudeDaCarga({ estado }) {
     return (
       <div style={{ display: "flex", gap: 9, alignItems: "center", background: `${C.warn}12`, border: `1px solid ${C.warn}3A`, borderRadius: 12, padding: "11px 14px" }}>
         <AlertTriangle size={15} style={{ color: C.warn, flexShrink: 0 }} />
-        <span style={{ fontSize: 12, color: C.muted }}>Não foi possível ler quando a presença foi carregada. Os números abaixo podem estar velhos — confira a carga antes de decidir.</span>
+        <span style={{ fontSize: 12, color: C.muted }}>Não foi possível ler quando o credenciamento foi atualizado. Os números abaixo podem estar desatualizados.</span>
       </div>
     );
   }
@@ -7311,15 +7328,15 @@ function SaudeDaCarga({ estado }) {
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 12.5, fontWeight: 700, color: velha ? cor : C.bright }}>
           {velha
-            ? `A presença não é carregada há ${numero(dias)} dias`
-            : `Presença carregada ${dias === 0 ? "hoje" : dias === 1 ? "ontem" : `há ${numero(dias)} dias`}`}
+            ? `O credenciamento não é atualizado há ${numero(dias)} dias`
+            : `Credenciamento atualizado ${dias === 0 ? "hoje" : dias === 1 ? "ontem" : `há ${numero(dias)} dias`}`}
         </div>
         <div style={{ fontSize: 11, color: C.faint, marginTop: 2 }}>
-          {dataBR(s.ultima_carga)} · {numero(s.linhas)} registros em {numero(s.turmas)} turmas · presença mais recente em {dataBR(s.registro_mais_recente)}
+          {dataBR(s.ultima_carga)} · {numero(s.linhas)} credenciados em {numero(s.turmas)} turmas · Salesforce API
         </div>
         {velha && (
           <div style={{ fontSize: 11, color: cor, marginTop: 3 }}>
-            A carga é manual. Enquanto ela não roda, turma nova aparece como se ninguém tivesse ido.
+            A sincronização automática precisa ser verificada antes de usar estes números.
           </div>
         )}
       </div>
@@ -7343,9 +7360,9 @@ function TabelaPresenca({ linhas, comCurso }) {
           {cab("Turma")}
           <span className="tpData">{cab("Início")}</span>
           {cab("Matric.", { textAlign: "right" })}
-          {cab("Presentes", { textAlign: "right" })}
-          {cab("Ausentes", { textAlign: "right" })}
-          {cab("Cobertura", { textAlign: "right" })}
+          {cab("Credenciados", { textAlign: "right" })}
+          {cab("Não cred.", { textAlign: "right" })}
+          {cab("Percentual", { textAlign: "right" })}
         </div>
         {linhas.map((r, i) => <LinhaTurmaPresenca key={`${r.turma}-${i}`} r={r} ultima={i === linhas.length - 1} comCurso={comCurso} />)}
       </div>
@@ -7389,7 +7406,7 @@ function LinhaTurmaPresenca({ r, ultima, comCurso }) {
       {/* Ausentes e cobertura vivem lado a lado, sempre. */}
       <span style={{ textAlign: "right", whiteSpace: "nowrap" }}>
         {semRegistro ? (
-          <span style={{ fontSize: 11, color: C.dim }} title="ninguém foi bipado nesta turma">não medível</span>
+          <span style={{ fontSize: 11, color: C.dim }} title="nenhum credenciado nesta turma">nenhum</span>
         ) : (
           <>
             <b style={{ fontFamily: GROTESK, fontSize: 13.5, fontWeight: 700, color: C.text }}>{numero(ausentes)}</b>
@@ -7401,7 +7418,7 @@ function LinhaTurmaPresenca({ r, ultima, comCurso }) {
       <span style={{ textAlign: "right", whiteSpace: "nowrap" }}>
         <b style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: corCob }}>{semRegistro ? "0" : Math.round(cob)}%</b>
         {!semRegistro && cob < 60 && (
-          <div style={{ fontSize: 9.5, color: C.warn, lineHeight: 1.2 }}>parte pode ser falta de registro</div>
+          <div style={{ fontSize: 9.5, color: C.warn, lineHeight: 1.2 }}>credenciamento em andamento</div>
         )}
       </span>
     </div>
