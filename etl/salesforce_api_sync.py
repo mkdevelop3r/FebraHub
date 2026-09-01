@@ -719,9 +719,21 @@ def discover_class_object(sf, class_id):
     official_roster = [row for row in credential_type_rows
                        if str(row.get("Tipo_de_Matricula_Atual__c") or "")
                        not in excluded_current_types]
-    official_credentialed = [row for row in official_roster if
-        canonical_salesforce_id(row.get("Nome_do_Cliente__c")) in presence_clients
-        or digits(row.get("CPF_do_Cliente__c")).zfill(11) in presence_cpfs]
+    def participant_identity(row, client_field, cpf_field):
+        client = canonical_salesforce_id(row.get(client_field))
+        if client:
+            return f"cliente:{client}"
+        cpf = digits(row.get(cpf_field))
+        return f"cpf:{cpf.zfill(11)}" if cpf else None
+
+    presence_identities = {
+        identity for row in class_presence
+        if (identity := participant_identity(row, "Cliente__c", "CPF__c"))}
+    roster_identities = {
+        identity for row in official_roster
+        if (identity := participant_identity(
+            row, "Nome_do_Cliente__c", "CPF_do_Cliente__c"))}
+    official_credentialed = presence_identities & roster_identities
     official_result = {
         "total": len(official_roster),
         "credenciados": len(official_credentialed),
@@ -731,6 +743,7 @@ def discover_class_object(sf, class_id):
             for code in sorted(excluded_current_types)},
         "clientes_unicos_presenca": len(presence_clients),
         "cpfs_unicos_presenca": len(presence_cpfs),
+        "identidades_unicas_presenca": len(presence_identities),
     }
     log("DESCOBERTA_CREDENCIAMENTO " + json.dumps({
         "class_id": class_id,
