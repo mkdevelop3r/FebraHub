@@ -23,6 +23,11 @@ on:
         required: false
         type: boolean
         default: false
+      gravar_credenciamento:
+        description: Gravar turmas e credenciamentos validados no Supabase
+        required: false
+        type: boolean
+        default: false
       turma_diagnostico:
         description: Nome exato da turma para reconciliacao pontual
         required: false
@@ -62,3 +67,4 @@ jobs:
           ${{ inputs.incluir_credenciamento && '--include-credentialing' || '' }}
           ${{ inputs.comparar_supabase && '--compare' || '' }}
           ${{ inputs.gravar_presenca && '--write --target presence' || '' }}
+          ${{ inputs.gravar_credenciamento && '--write --target credentialing' || '' }}

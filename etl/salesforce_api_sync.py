@@ -1091,7 +1091,7 @@ def main():
                         help="Compara com o Supabase sem gravar.")
     parser.add_argument(
         "--target", action="append",
-        choices=("students", "payments", "presence"),
+        choices=("students", "payments", "presence", "credentialing"),
         help="Fonte a gravar; pode ser repetida. Obrigatoria com --write.")
     args = parser.parse_args()
     targets = set(args.target or [])
@@ -1099,6 +1099,9 @@ def main():
         parser.error("--write exige ao menos um --target.")
     if "presence" in targets and not args.include_presence:
         parser.error("--target presence exige --include-presence.")
+    if "credentialing" in targets and not args.include_credentialing:
+        parser.error(
+            "--target credentialing exige --include-credentialing.")
 
     load_env()
     sf = Salesforce()
@@ -1175,6 +1178,11 @@ def main():
             "fato_pagamento_base", payments, "pagamento_id", "data_aprovacao")
     if "presence" in targets:
         sb.replace_presence_stage(presence)
+    if "credentialing" in targets:
+        sb.upsert("dim_turma_salesforce", credentialing_turmas, "turma_id")
+        sb.upsert(
+            "fato_credenciamento_turma", credentialing_facts,
+            "credenciamento_id")
     now = datetime.now(timezone.utc).isoformat()
     sb.upsert("integracao_status", [{"fonte": "salesforce_api",
               "nome_exibicao": "Salesforce API (" + ",".join(sorted(targets)) + ")",
