@@ -132,6 +132,13 @@ def iso_day(value):
     return str(value or "")[:10] or None
 
 
+def br_day(value):
+    day = iso_day(value)
+    if not day:
+        return None
+    return datetime.strptime(day, "%Y-%m-%d").strftime("%d/%m/%Y")
+
+
 def digits(value):
     return re.sub(r"\D", "", str(value or ""))
 
@@ -306,7 +313,7 @@ def presence_rows(sf):
         "unidade": r.get("Unidade__c"),
         "curso": nested(r, "Curso__r.Name"),
         "presenca_txt": r.get("Name"),
-        "data_registro": r.get("CreatedDate"),
+        "data_registro": br_day(r.get("CreatedDate")),
         "turma": r.get("Turma_do_Credenciamento__c"),
         "cpf": digits(r.get("CPF__c")) or None,
     } for r in records]
@@ -398,11 +405,13 @@ class Supabase:
     def replace_presence_stage(self, rows):
         self.request("DELETE", "stg_presenca", params={"cpf": "not.is.null"})
         self.request("DELETE", "stg_presenca", params={"cpf": "is.null"})
-        for index in range(0, len(rows), 1000):
-            self.request("POST", "stg_presenca", json=rows[index:index + 1000])
-        result = self.request("POST", "rpc/promover_presenca", json={}).json()
-        self.request("DELETE", "stg_presenca", params={"cpf": "not.is.null"})
-        self.request("DELETE", "stg_presenca", params={"cpf": "is.null"})
+        try:
+            for index in range(0, len(rows), 1000):
+                self.request("POST", "stg_presenca", json=rows[index:index + 1000])
+            result = self.request("POST", "rpc/promover_presenca", json={}).json()
+        finally:
+            self.request("DELETE", "stg_presenca", params={"cpf": "not.is.null"})
+            self.request("DELETE", "stg_presenca", params={"cpf": "is.null"})
         log(f"presenca promovida: {result}")
 
 
