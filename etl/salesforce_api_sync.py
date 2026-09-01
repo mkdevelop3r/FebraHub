@@ -771,6 +771,9 @@ def discover_class_object(sf, class_id):
         "class_id": class_id,
         "total_registros": credential_count,
         "tipos_atuais": credential_types,
+        "rotulos_tipos_atuais": {
+            code: enrollment_labels.get(code, "(sem rotulo)")
+            for code in credential_types},
         "tipos_originais": original_credential_types,
         "presencas_diretas": direct_presence_count,
         "estrutura_presenca": presence_structure,
