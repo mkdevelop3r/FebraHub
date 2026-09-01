@@ -688,7 +688,7 @@ def discover_class_object(sf, class_id):
         "FROM Credenciamento__c "
         f"WHERE Turma__c = '{class_id}'")
     credential_type_rows = sf.query(
-        "SELECT Id,Tipo_de_Matricula_Atual__c,Tipo_de_Matricula__c,"
+        "SELECT Id,Venda__c,Tipo_de_Matricula_Atual__c,Tipo_de_Matricula__c,"
         "CPF_do_Cliente__c,Nome_do_Cliente__c "
         "FROM Credenciamento__c "
         f"WHERE Turma__c = '{class_id}'")
@@ -738,6 +738,16 @@ def discover_class_object(sf, class_id):
     official_credential_ids = {
         canonical_salesforce_id(row.get("Id")) for row in official_roster
         if row.get("Id")}
+    official_sale_ids = {
+        canonical_salesforce_id(row.get("Venda__c")) for row in official_roster
+        if row.get("Venda__c")}
+    credential_by_id = {
+        canonical_salesforce_id(row.get("Id")): row
+        for row in credential_type_rows if row.get("Id")}
+    linked_type_rows = [{
+        "tipo": str(credential_by_id.get(item, {}).get(
+            "Tipo_de_Matricula_Atual__c") or "(sem tipo)")
+    } for item in presence_credentials]
     def participant_identity(row, client_field, cpf_field):
         client = canonical_salesforce_id(row.get(client_field))
         if client:
@@ -755,6 +765,9 @@ def discover_class_object(sf, class_id):
     official_credentialed = presence_credentials & official_credential_ids
     official_result = {
         "registros_elegiveis": len(official_roster),
+        "vendas_elegiveis_unicas": len(official_sale_ids),
+        "registros_elegiveis_sem_venda": sum(
+            1 for row in official_roster if not row.get("Venda__c")),
         "total": len(official_roster),
         "credenciados": len(official_credentialed),
         "nao_credenciados": len(official_roster) - len(official_credentialed),
@@ -765,6 +778,8 @@ def discover_class_object(sf, class_id):
         "cpfs_unicos_presenca": len(presence_cpfs),
         "identidades_unicas_presenca": len(presence_identities),
         "credenciamentos_unicos_na_presenca": len(presence_credentials),
+        "tipos_dos_credenciamentos_com_presenca": grouped_counts(
+            linked_type_rows, "tipo"),
         "credenciamentos_oficiais_com_presenca": len(
             presence_credentials & official_credential_ids),
     }
