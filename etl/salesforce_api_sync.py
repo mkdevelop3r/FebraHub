@@ -404,6 +404,33 @@ def max_value_by_sale(rows, allowed_types=None, excluded_courses=None):
     return round(sum(sales.values()), 2), len(sales)
 
 
+def grouped_counts(rows, field, date_field=None):
+    counts = {}
+    for row in rows:
+        value = str(row.get(field) or "(vazio)")
+        if date_field:
+            month = str(row.get(date_field) or "(sem data)")[:7]
+            value = f"{month} | {value}"
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:20])
+
+
+def log_divergence(source, api_rows, db_rows, key, date_field, type_field):
+    api_map = {str(row[key]): row for row in api_rows if row.get(key)}
+    db_map = {str(row[key]): row for row in db_rows if row.get(key)}
+    only_api = [api_map[item] for item in api_map.keys() - db_map.keys()]
+    only_db = [db_map[item] for item in db_map.keys() - api_map.keys()]
+    for side, rows in (("so_api", only_api), ("so_supabase", only_db)):
+        detail = {
+            "fonte": source,
+            "lado": side,
+            "total": len(rows),
+            "por_mes_tipo": grouped_counts(rows, type_field, date_field),
+        }
+        log("DIVERGENCIA " + json.dumps(detail, ensure_ascii=False, sort_keys=True))
+    return only_api, only_db
+
+
 def presence_key(row, api=False):
     cpf = digits(row.get("cpf"))
     if cpf:
@@ -451,6 +478,13 @@ def compare_with_supabase(sb, students, payments, presence, start):
         diff("pagamentos", payments, payment_db, "pagamento_id"),
     ]
 
+    students_only_api, students_only_db = log_divergence(
+        "alunos", students, student_db, "matricula_id",
+        "data_matricula", "tipo_matricula")
+    log_divergence(
+        "pagamentos", payments, payment_db, "pagamento_id",
+        "data_aprovacao", "tipo_matricula")
+
     billing_types = {"Matrícula", "COMPRADOR DE VAGAS", "MAT. RETROATIVA"}
     excluded_courses = {"REVOLUTION", "METODO CIS GLOBAL HOLDING"}
     api_billing, api_sales = max_value_by_sale(
@@ -466,6 +500,20 @@ def compare_with_supabase(sb, students, payments, presence, start):
         "diferenca": round(api_billing - db_billing, 2),
     }
     log("REGRA_NEGOCIO " + json.dumps(billing, ensure_ascii=False, sort_keys=True))
+    api_only_billing, api_only_sales = max_value_by_sale(
+        students_only_api, billing_types, excluded_courses)
+    db_only_billing, db_only_sales = max_value_by_sale(
+        students_only_db, billing_types, excluded_courses)
+    exclusive_billing = {
+        "metrica": "faturamento_registros_exclusivos",
+        "vendas_so_api": api_only_sales,
+        "vendas_so_supabase": db_only_sales,
+        "valor_so_api": api_only_billing,
+        "valor_so_supabase": db_only_billing,
+        "diferenca": round(api_only_billing - db_only_billing, 2),
+    }
+    log("REGRA_NEGOCIO " +
+        json.dumps(exclusive_billing, ensure_ascii=False, sort_keys=True))
 
     occupancy_types = {
         "CONSUMIDOR DE VAGAS", "MATRÍCULA", "BÔNUS", "PERMUTA",
