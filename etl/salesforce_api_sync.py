@@ -443,6 +443,10 @@ def compare_credentialing(sb, turmas, facts):
         }
         log("RECONCILIACAO_CREDENCIAMENTO " +
             json.dumps(result, ensure_ascii=False, sort_keys=True))
+        if db_keys and len(api_keys) < len(db_keys) * 0.8:
+            raise RuntimeError(
+                f"{table}: extracao caiu mais de 20% "
+                f"({len(db_keys)} para {len(api_keys)}); escrita bloqueada.")
 
     reconciliation("dim_turma_salesforce", turmas, "turma_id")
     reconciliation("fato_credenciamento_turma", facts, "credenciamento_id")

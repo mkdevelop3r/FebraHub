@@ -1,6 +1,9 @@
 name: Validar Salesforce API
 
 on:
+  schedule:
+    # 17h30 em Salvador (UTC-3), depois do relatorio/agendamento das 17h15.
+    - cron: '30 20 * * *'
   workflow_dispatch:
     inputs:
       incluir_presenca:
@@ -37,6 +40,10 @@ on:
         required: false
         type: string
 
+concurrency:
+  group: salesforce-api-sync
+  cancel-in-progress: false
+
 jobs:
   validar:
     runs-on: ubuntu-latest
@@ -64,7 +71,7 @@ jobs:
         run: >-
           python etl/salesforce_api_sync.py
           ${{ inputs.incluir_presenca && '--include-presence' || '' }}
-          ${{ inputs.incluir_credenciamento && '--include-credentialing' || '' }}
-          ${{ inputs.comparar_supabase && '--compare' || '' }}
+          ${{ (github.event_name == 'schedule' || inputs.incluir_credenciamento) && '--include-credentialing' || '' }}
+          ${{ (github.event_name == 'schedule' || inputs.comparar_supabase) && '--compare' || '' }}
           ${{ inputs.gravar_presenca && '--write --target presence' || '' }}
-          ${{ inputs.gravar_credenciamento && '--write --target credentialing' || '' }}
+          ${{ (github.event_name == 'schedule' || inputs.gravar_credenciamento) && '--write --target credentialing' || '' }}
