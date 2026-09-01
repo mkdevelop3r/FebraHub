@@ -43,7 +43,7 @@ import {
   useExecutivoReativacao,
   useTurmaDim, useTurmaSugestao,
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
-  useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude,
+  useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
@@ -7223,33 +7223,44 @@ function TabelaCredenciamento({ linhas }) {
 
 function CentralPresenca() {
   const credenciamento = useCredenciamentoPorTurma();
+  const saudeAntiga = usePresencaSaude();
+  const mensuraveisAntigas = useTurmasMensuraveis();
+  const coberturaAntiga = usePresencaCobertura();
   const [visao, setVisao] = useState("mensuraveis");
   const [busca, setBusca] = useState("");
 
-  const todas = useMemo(() => (credenciamento.data ?? []).map((r) => ({
-    turma: r.turma,
-    curso: r.curso_nome,
-    matriculados: Number(r.total_alunos ?? 0),
-    compareceram: Number(r.credenciados ?? 0),
-    cobertura_pct: Number(r.percentual_credenciamento ?? 0),
-    fonte: "salesforce_api",
-    sincronizado_em: r.sincronizado_em,
-  })), [credenciamento.data]);
+  const chaveTurma = (valor) => String(valor ?? "").normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
+  const novosPorTurma = useMemo(() => new Map((credenciamento.data ?? [])
+    .map((r) => [chaveTurma(r.turma), r])), [credenciamento.data]);
+  const sobrepor = (r) => {
+    const novo = novosPorTurma.get(chaveTurma(r.turma));
+    if (!novo) return r;
+    return {
+      ...r,
+      matriculados: Number(novo.total_alunos ?? 0),
+      compareceram: Number(novo.credenciados ?? 0),
+      cobertura_pct: Number(novo.percentual_credenciamento ?? 0),
+      fonte: "salesforce_api",
+      sincronizado_em: novo.sincronizado_em,
+    };
+  };
+  const todas = useMemo(() => (coberturaAntiga.data ?? []).map(sobrepor), [coberturaAntiga.data, novosPorTurma]);
+  const mensuraveisLinhas = useMemo(() => (mensuraveisAntigas.data ?? []).map(sobrepor), [mensuraveisAntigas.data, novosPorTurma]);
   const semRegistro = useMemo(() => todas.filter((r) => !Number(r.compareceram ?? 0)), [todas]);
   const comRegistro = useMemo(() => todas.filter((r) => Number(r.compareceram ?? 0) > 0), [todas]);
-  const mensuraveisLinhas = useMemo(() => comRegistro.filter((r) => Number(r.matriculados ?? 0) >= 10), [comRegistro]);
-  const mensuraveis = { data: mensuraveisLinhas, isLoading: credenciamento.isLoading, error: credenciamento.error };
-  const cobertura = { data: todas, isLoading: credenciamento.isLoading, error: credenciamento.error };
-  const ultimaCarga = todas.reduce((max, r) => String(r.sincronizado_em ?? "") > max ? String(r.sincronizado_em) : max, "");
+  const mensuraveis = { data: mensuraveisLinhas, isLoading: mensuraveisAntigas.isLoading || credenciamento.isLoading, error: mensuraveisAntigas.error || credenciamento.error };
+  const cobertura = { data: todas, isLoading: coberturaAntiga.isLoading || credenciamento.isLoading, error: coberturaAntiga.error || credenciamento.error };
+  const ultimaCarga = (credenciamento.data ?? []).reduce((max, r) => String(r.sincronizado_em ?? "") > max ? String(r.sincronizado_em) : max, "");
   const saude = {
     data: ultimaCarga ? [{
       ultima_carga: ultimaCarga,
       dias_desde_a_carga: Math.max(0, Math.floor((Date.now() - new Date(ultimaCarga).getTime()) / 86400000)),
-      linhas: todas.reduce((s, r) => s + Number(r.compareceram ?? 0), 0),
-      turmas: todas.length,
+      linhas: (credenciamento.data ?? []).reduce((s, r) => s + Number(r.credenciados ?? 0), 0),
+      turmas: (credenciamento.data ?? []).length,
       registro_mais_recente: ultimaCarga,
     }] : [],
-    isLoading: credenciamento.isLoading,
+    isLoading: credenciamento.isLoading || saudeAntiga.isLoading,
     error: credenciamento.error,
   };
 
