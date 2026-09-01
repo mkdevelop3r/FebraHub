@@ -730,7 +730,7 @@ def discover_class_object(sf, class_id):
     presence_credentials = {
         canonical_salesforce_id(row.get("Credenciamento__c"))
         for row in class_presence if row.get("Credenciamento__c")}
-    excluded_current_types = {"13", "27", "37", "122"}
+    excluded_current_types = {"13", "27"}
     official_roster = [row for row in credential_type_rows
                        if str(row.get("Tipo_de_Matricula_Atual__c") or "")
                        not in excluded_current_types]
@@ -751,11 +751,12 @@ def discover_class_object(sf, class_id):
         identity for row in official_roster
         if (identity := participant_identity(
             row, "Nome_do_Cliente__c", "CPF_do_Cliente__c"))}
-    official_credentialed = presence_identities & roster_identities
+    official_credentialed = presence_credentials & official_credential_ids
     official_result = {
-        "total": len(official_roster),
+        "registros_elegiveis": len(official_roster),
+        "total": len(roster_identities),
         "credenciados": len(official_credentialed),
-        "nao_credenciados": len(official_roster) - len(official_credentialed),
+        "nao_credenciados": len(roster_identities) - len(official_credentialed),
         "tipos_excluidos": {
             code: enrollment_labels.get(code, "(sem rotulo)")
             for code in sorted(excluded_current_types)},
