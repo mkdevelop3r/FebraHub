@@ -137,7 +137,8 @@ def digits(value):
 
 
 def canonical_salesforce_id(value):
-    return str(value or "")[:15]
+    text = str(value or "")
+    return text[:15] if re.fullmatch(r"[A-Za-z0-9]{15}(?:[A-Za-z0-9]{3})?", text) else text
 
 
 def allowed_enrollment_types(metadata):
@@ -207,7 +208,7 @@ def transform_students(records, allowed, labels):
             continue
         enrollment_type = labels.get(enrollment_value, enrollment_value)
         course = nested(record, "NomeCurso__r.Name", "")
-        sale_id = record["Id"]
+        sale_id = canonical_salesforce_id(record["Id"])
         email = str(nested(record, "Account.PersonEmail", "") or "").strip().lower()
         cpf = digits(nested(record, "Account.CPFun__c", ""))
         rows.append({
@@ -274,7 +275,7 @@ def transform_payments(records, allowed, labels):
             "valor": nested(record, "Venda__r.Amount"),
             "status_pagamento": record.get("Status__c"),
             "forma_pagamento": record.get("Name"),
-            "original_id_venda": record.get("Venda__c"),
+            "original_id_venda": canonical_salesforce_id(record.get("Venda__c")),
             "nome_venda": nested(record, "Venda__r.Name"),
             "tipo_matricula": enrollment_type or None,
             "quantidade_parcelas": nested(record, "Venda__r.QuantidadeParcelas__c"),
@@ -361,6 +362,25 @@ class Supabase:
     def delete_keys(self, table, key, keys):
         for value in keys:
             self.request("DELETE", table, params={key: f"eq.{value}"})
+
+    def plan_window(self, table, rows, key, date_column):
+        dates = sorted(row[date_column] for row in rows if row.get(date_column))
+        if not dates:
+            raise RuntimeError(f"{table}: nenhuma data valida.")
+        start, end = dates[0], dates[-1]
+        incoming = {str(row[key]) for row in rows if row.get(key)}
+        existing = self.keys_in_window(table, key, date_column, start, end)
+        plan = {
+            "tabela": table,
+            "inicio": start,
+            "fim": end,
+            "recebidos": len(rows),
+            "inclusoes": len(incoming - existing),
+            "upserts_existentes": len(incoming & existing),
+            "remocoes": len(existing - incoming),
+        }
+        log("PLANO_ESCRITA " + json.dumps(plan, ensure_ascii=False, sort_keys=True))
+        return plan
 
     def replace_window(self, table, rows, key, date_column):
         dates = sorted(row[date_column] for row in rows if row.get(date_column))
@@ -685,6 +705,13 @@ def compare_with_supabase(sf, sb, students, payments, presence, start,
             "so_supabase": len(db_keys - api_keys),
         }
         log("RECONCILIACAO " + json.dumps(result, ensure_ascii=False, sort_keys=True))
+        log("PLANO_ESCRITA " + json.dumps({
+            "tabela": "fato_presenca",
+            "recebidos_deduplicados": len(api_keys),
+            "inclusoes": len(api_keys - db_keys),
+            "ja_existentes": len(api_keys & db_keys),
+            "remocoes": 0,
+        }, ensure_ascii=False, sort_keys=True))
         results.append(result)
     return results
 
@@ -696,7 +723,16 @@ def main():
     parser.add_argument("--include-presence", action="store_true")
     parser.add_argument("--compare", action="store_true",
                         help="Compara com o Supabase sem gravar.")
+    parser.add_argument(
+        "--target", action="append",
+        choices=("students", "payments", "presence"),
+        help="Fonte a gravar; pode ser repetida. Obrigatoria com --write.")
     args = parser.parse_args()
+    targets = set(args.target or [])
+    if args.write and not targets:
+        parser.error("--write exige ao menos um --target.")
+    if "presence" in targets and not args.include_presence:
+        parser.error("--target presence exige --include-presence.")
 
     load_env()
     sf = Salesforce()
@@ -730,23 +766,32 @@ def main():
         if len(presence) < 1000:
             raise RuntimeError("Presenca muito abaixo do esperado; abortando.")
 
+    sb = Supabase() if args.compare or args.write else None
     if args.compare:
         compare_with_supabase(
-            sf, Supabase(), students, payments, presence, start,
+            sf, sb, students, payments, presence, start,
             allowed, picklist_labels)
+        sb.plan_window(
+            "fato_base_alunos", students, "matricula_id", "data_matricula")
+        sb.plan_window(
+            "fato_pagamento_base", payments, "pagamento_id", "data_aprovacao")
 
     if not args.write:
         log("DRY RUN concluido; nada foi gravado.")
         return
 
-    sb = Supabase()
-    sb.replace_window("fato_base_alunos", students, "matricula_id", "data_matricula")
-    sb.replace_window("fato_pagamento_base", payments, "pagamento_id", "data_aprovacao")
-    if args.include_presence:
+    if "students" in targets:
+        sb.replace_window(
+            "fato_base_alunos", students, "matricula_id", "data_matricula")
+    if "payments" in targets:
+        sb.replace_window(
+            "fato_pagamento_base", payments, "pagamento_id", "data_aprovacao")
+    if "presence" in targets:
         sb.replace_presence_stage(presence)
     now = datetime.now(timezone.utc).isoformat()
     sb.upsert("integracao_status", [{"fonte": "salesforce_api",
-              "nome_exibicao": "Salesforce API", "ultima_sync": now,
+              "nome_exibicao": "Salesforce API (" + ",".join(sorted(targets)) + ")",
+              "ultima_sync": now,
               "status": "ok", "atualizado_em": now}], "fonte")
 
 
