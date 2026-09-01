@@ -778,9 +778,29 @@ export const useRepresadoLista = () =>
   useView("vw_represado_lista", { ordem: ["dias_restantes", "aluno_id"], staleTime: 60 * 1000, retry: 2 });
 
 /* ENFILEIRA o convite dos elegíveis — não envia. Devolve { enfileirados,
-   mensagem }. A tela mostra `mensagem` como veio. */
-export async function dispararRepresados() {
-  const { data, error } = await supabase.rpc("disparar_represados");
+   turma, mensagem }. A tela mostra `mensagem` como veio.
+   `turmaId` recorta o disparo a uma turma (migration 167); sem ele vale a
+   lista inteira, que é o comportamento de sempre.
+   O argumento é OMITIDO quando não há turma, em vez de ir como null: assim a
+   chamada geral continua casando com a função de um argumento só, e o botão
+   do topo sobrevive ao front subir antes da 167. Só o disparo por turma
+   depende dela. */
+export async function dispararRepresados(turmaId = null) {
+  const { data, error } = await supabase.rpc("disparar_represados",
+    turmaId ? { p_turma_id: turmaId } : {});
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data;
+}
+
+/* Grava o telefone digitado na tela (migration 169). Vence todas as fontes
+   de carga: se alguém digitou, é porque a fonte estava errada ou vazia.
+   A função normaliza (aceita "(71) 99999-8888", "5571..." ou só dígitos) e
+   já atualiza `fila_prazo`, que é materializada — sem isso a correção só
+   apareceria na próxima rodada, e o script de envio continuaria vendo
+   "sem telefone". */
+export async function salvarContatoManual(cpf, telefone) {
+  const { data, error } = await supabase.rpc("salvar_contato_manual",
+    { p_cpf: cpf, p_telefone: telefone });
   if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
   return data;
 }

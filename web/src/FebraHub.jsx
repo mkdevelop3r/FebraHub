@@ -43,7 +43,7 @@ import {
   useExecutivoReativacao,
   useTurmaDim, useTurmaSugestao,
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
-  useRepresadoLista, dispararRepresados, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
+  useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
@@ -7338,7 +7338,7 @@ function CentralRepresados({ notificar }) {
   const saude = usePresencaSaude();
   const [filtro, setFiltro] = useState("todos");
   const [busca, setBusca] = useState("");
-  const [disparando, setDisparando] = useState(false);
+  const [disparando, setDisparando] = useState(null);   // null | "todos" | turma_id
   const [retorno, setRetorno] = useState(null);
   const qc = useQueryClient();
 
@@ -7350,6 +7350,9 @@ function CentralRepresados({ notificar }) {
     recente: linhas.filter((r) => r.dias_desde_o_convite != null && r.dias_desde_o_convite <= 30).length,
     sem_telefone: linhas.filter((r) => !r.telefone).length,
     urgente: linhas.filter((r) => Number(r.dias_restantes ?? 999) <= 30).length,
+    // A janela que o disparo cobre (migration 168). Fica como filtro porque
+    // é o recorte "quem está pegando fogo" — que era a lista inteira antes.
+    prazo90: linhas.filter((r) => Number(r.dias_restantes ?? 999) <= 90).length,
   }), [linhas]);
 
   const visiveis = useMemo(() => {
@@ -7362,6 +7365,7 @@ function CentralRepresados({ notificar }) {
             : filtro === "recente" ? (r.dias_desde_o_convite != null && r.dias_desde_o_convite <= 30)
               : filtro === "sem_telefone" ? !r.telefone
                 : filtro === "urgente" ? Number(r.dias_restantes ?? 999) <= 30
+                : filtro === "prazo90" ? Number(r.dias_restantes ?? 999) <= 90
                   : true;
     return linhas.filter((r) => {
       if (!passa(r)) return false;
@@ -7374,18 +7378,51 @@ function CentralRepresados({ notificar }) {
     });
   }, [linhas, filtro, busca]);
 
-  const disparar = async () => {
-    setDisparando(true); setRetorno(null);
+  /* Represado se resolve turma a turma: a pergunta da Elis nao e "quem esta
+     represado", e "quem eu chamo para a turma que comeca dia 9". Os grupos
+     saem da `turma_id` da view (a proxima turma disponivel antes do prazo
+     vencer) e vem ordenados pela DATA da turma — a mais proxima primeiro,
+     porque e a que fecha antes. Dentro do grupo fica a ordem que a view ja
+     entrega: menos dias de prazo primeiro.
+     Os grupos sao montados sobre `visiveis`, entao filtro e busca continuam
+     valendo e turma que fica sem ninguem no recorte simplesmente some. */
+  const grupos = useMemo(() => {
+    const m = new Map();
+    for (const r of visiveis) {
+      const k = r.turma_id ?? "—";
+      if (!m.has(k)) m.set(k, { turma_id: k, quando: r.proxima_turma_em ?? null, linhas: [] });
+      const g = m.get(k);
+      g.linhas.push(r);
+      // Turma sem data cai para o fim; entre duas datas vale a menor.
+      if (r.proxima_turma_em && (!g.quando || r.proxima_turma_em < g.quando)) g.quando = r.proxima_turma_em;
+    }
+    return [...m.values()]
+      .map((g) => ({
+        ...g,
+        elegiveis: g.linhas.filter((r) => r.pode_disparar).length,
+        urgentes: g.linhas.filter((r) => Number(r.dias_restantes ?? 999) <= 30).length,
+        semTelefone: g.linhas.filter((r) => !r.telefone).length,
+      }))
+      .sort((x, y) => String(x.quando ?? "9999").localeCompare(String(y.quando ?? "9999"))
+        || String(x.turma_id).localeCompare(String(y.turma_id)));
+  }, [visiveis]);
+
+  /* `turmaId` null = lista inteira (o botao do topo). Com turma, so aquela
+     (migration 167). `disparando` guarda O QUE esta rodando — 'todos' ou o
+     id da turma —, senao o spinner de um disparo apareceria em todos os
+     botoes da tela ao mesmo tempo. */
+  const disparar = async (turmaId = null) => {
+    setDisparando(turmaId ?? "todos"); setRetorno(null);
     try {
-      const r = await dispararRepresados();
+      const r = await dispararRepresados(turmaId);
       setRetorno(r);
       notificar(r?.mensagem ?? "Pronto.", Number(r?.enfileirados ?? 0) > 0 ? "ok" : "info");
-      qc.invalidateQueries({ queryKey: ["vw_represado_lista"] });
+      qc.invalidateQueries({ queryKey: ["view", "vw_represado_lista"] });
     } catch (e) {
       const msg = semPermissao(e) ? "Você não tem permissão para disparar convites." : (e.message || "Não foi possível enfileirar.");
       setRetorno({ enfileirados: 0, mensagem: msg, erro: true });
       notificar(msg, "erro");
-    } finally { setDisparando(false); }
+    } finally { setDisparando(null); }
   };
 
   const s = saude.data?.[0];
@@ -7402,6 +7439,8 @@ function CentralRepresados({ notificar }) {
         <span style={{ fontSize: 11.5, color: C.faint, lineHeight: 1.5 }}>
           O disparo é manual porque o sistema não sabe quem a consultora já chamou pelo WhatsApp dela.
           Confira <b style={{ color: C.muted }}>há quanto tempo cada um foi convidado</b> antes de mandar de novo.
+          {" "}A lista traz <b style={{ color: C.muted }}>toda a validade de um ano</b>; o disparo cobre só quem
+          está a <b style={{ color: C.muted }}>90 dias ou menos</b> de vencer — o resto se chama a dedo.
         </span>
       </div>
 
@@ -7410,7 +7449,7 @@ function CentralRepresados({ notificar }) {
         erro={lista.error}
         vazio={!linhas.length}
         vazioTitulo="Ninguém represado agora"
-        vazioDica="Represado é quem comprou, está com o prazo correndo e tem turma disponível antes de vencer. Lista vazia quer dizer que todo mundo nessa situação já foi alocado."
+        vazioDica="Represado é quem comprou, ainda está dentro da validade de um ano e tem turma disponível antes de vencer. Lista vazia quer dizer que todo mundo nessa situação já foi alocado."
       >
         {/* A data da carga fica junto do número: represado sem ela convida à
             decisão errada — dado velho passa por atual. */}
@@ -7420,8 +7459,8 @@ function CentralRepresados({ notificar }) {
               ? <>presença carregada em {dataBR(s.ultima_carga)} · {Number(s.dias_desde_a_carga) === 0 ? "hoje" : `há ${numero(s.dias_desde_a_carga)} dias`}{cargaVelha && " — o dado está envelhecendo"}</>
               : "sem informação da última carga de presença"}
           </span>
-          <BotaoSalvar onClick={disparar} salvando={disparando} disabled={disparando}>
-            Disparar para os elegíveis{contas.elegivel > 0 ? ` (${numero(contas.elegivel)})` : ""}
+          <BotaoSalvar onClick={() => disparar(null)} salvando={disparando === "todos"} disabled={!!disparando}>
+            Disparar para todas as turmas{contas.elegivel > 0 ? ` (${numero(contas.elegivel)})` : ""}
           </BotaoSalvar>
         </div>
 
@@ -7456,7 +7495,7 @@ function CentralRepresados({ notificar }) {
             }}>Ver todos os {numero(linhas.length)}</button>
           </div>
         ) : (
-          <TabelaRepresados linhas={visiveis} />
+          <TabelaRepresados grupos={grupos} onDisparar={disparar} disparando={disparando} />
         )}
       </Estado>
     </>
@@ -7469,6 +7508,7 @@ function FaixaRepresados({ contas, filtro, onFiltrar }) {
     { key: "elegivel", rotulo: "elegíveis agora", valor: contas.elegivel, cor: C.up },
     { key: "nunca", rotulo: "nunca convidados", valor: contas.nunca, cor: C.gold },
     { key: "recente", rotulo: "convidados há ≤30 dias", valor: contas.recente, cor: C.muted },
+    { key: "prazo90", rotulo: "prazo ≤90 dias", valor: contas.prazo90, cor: C.gold },
     { key: "urgente", rotulo: "vencem em ≤30 dias", valor: contas.urgente, cor: C.warn },
     { key: "sem_telefone", rotulo: "sem telefone", valor: contas.sem_telefone, cor: C.down },
   ];
@@ -7504,33 +7544,116 @@ function FaixaRepresados({ contas, filtro, onFiltrar }) {
 }
 
 /* Mesma tabela da lista de inscritos: linha de 44px, cabeçalho grudado,
-   sem zebrado. A coluna que decide é a do último convite. */
-function TabelaRepresados({ linhas }) {
+   sem zebrado. A coluna que decide é a do último convite.
+
+   Agrupada por turma: a coluna "Próxima turma" saiu das linhas porque virou
+   o título de cada bloco — repeti-la 20 vezes embaixo do próprio nome dela
+   é ruído. Turma recolhida guarda só o cabeçalho, que é onde estão os
+   números que decidem se vale abrir. */
+function TabelaRepresados({ grupos, onDisparar, disparando }) {
+  /* Com a validade inteira na lista (migration 168) uma turma passa de 170
+     pessoas, e seis turmas abertas viram uma rolagem sem fim. O padrão é
+     abrir só a PRIMEIRA — a turma que começa antes, que é a que se trabalha
+     agora — e deixar as outras recolhidas com os números no cabeçalho.
+     `null` significa "ainda no padrão"; no primeiro clique o conjunto é
+     materializado e passa a mandar. */
+  const [fechadas, setFechadas] = useState(null);
+  const estaFechada = (g, i) => (fechadas ? fechadas.has(g.turma_id) : i > 0);
+  const alternar = (id) => setFechadas((v) => {
+    const n = new Set(v ?? grupos.slice(1).map((g) => g.turma_id));
+    n.has(id) ? n.delete(id) : n.add(id);
+    return n;
+  });
   const cab = (rotulo, extra = {}) => (
     <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, ...extra }}>{rotulo}</span>
   );
   return (
     <>
       <style>{`
-        .trGrade { display: grid; grid-template-columns: minmax(0,1.5fr) 128px minmax(0,1.3fr) 74px minmax(0,1fr) 132px; align-items: center; gap: 10px; }
-        @media (max-width: 1100px) { .trGrade { grid-template-columns: minmax(0,1.5fr) 128px 74px minmax(0,1fr) 132px; } .trCurso { display: none; } }
-        @media (max-width: 860px)  { .trGrade { grid-template-columns: minmax(0,1.5fr) 128px 74px 132px; } .trTurma { display: none; } }
+        .trGrade { display: grid; grid-template-columns: minmax(0,1.5fr) 128px minmax(0,1.3fr) 74px 132px; align-items: center; gap: 10px; }
+        @media (max-width: 1100px) { .trGrade { grid-template-columns: minmax(0,1.5fr) 128px 74px 132px; } .trCurso { display: none; } }
         .trLinha:hover { background: rgba(255,255,255,.02); }
       `}</style>
-      <div className="rolagem" style={{ maxHeight: 460, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
+      <div className="rolagem" style={{ maxHeight: 520, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
         <div className="trGrade" style={{
-          position: "sticky", top: 0, zIndex: 2, background: "#17171c",
+          position: "sticky", top: 0, zIndex: 3, background: "#17171c",
           padding: "8px 12px", borderBottom: `1px solid ${C.cardLine}`,
         }}>
           {cab("Nome")}
           {cab("Telefone")}
           <span className="trCurso">{cab("Curso")}</span>
           {cab("Prazo", { textAlign: "right" })}
-          <span className="trTurma">{cab("Próxima turma")}</span>
           {cab("Último convite", { textAlign: "right" })}
         </div>
-        {linhas.map((r, i) => <LinhaRepresado key={`${r.aluno_id}-${i}`} r={r} ultima={i === linhas.length - 1} />)}
+        {grupos.map((g, i) => (
+          <CabecaTurma key={g.turma_id} g={g} fechada={estaFechada(g, i)} onAlternar={() => alternar(g.turma_id)}
+            onDisparar={onDisparar} disparando={disparando}>
+            {g.linhas.map((r, i) => (
+              <LinhaRepresado key={`${r.aluno_id}-${i}`} r={r} ultima={i === g.linhas.length - 1} />
+            ))}
+          </CabecaTurma>
+        ))}
       </div>
+    </>
+  );
+}
+
+/* Cabeçalho de uma turma. Os três números da direita são a leitura que a
+   Elis faz antes de abrir: quantos dá para chamar agora, quantos estão com
+   o prazo curto, e quantos não têm telefone (esses não se resolvem por aqui
+   — precisam de cadastro antes). */
+function CabecaTurma({ g, fechada, onAlternar, onDisparar, disparando, children }) {
+  const rodando = disparando === g.turma_id;
+  const bloqueado = !!disparando || !g.elegiveis;
+  const marca = (texto, cor) => (
+    <span style={{
+      fontSize: 10, fontWeight: 700, color: cor, background: `${cor}14`,
+      border: `1px solid ${cor}33`, borderRadius: 999, padding: "2px 7px", whiteSpace: "nowrap",
+    }}>{texto}</span>
+  );
+  return (
+    <>
+      <div onClick={onAlternar} role="button" tabIndex={0} aria-expanded={!fechada}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onAlternar(); } }}
+        style={{
+          display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", cursor: "pointer",
+          padding: "9px 12px", background: "rgba(255,255,255,.035)",
+          borderTop: `1px solid ${C.cardLine}`, borderBottom: `1px solid ${C.hair}`,
+        }}>
+        <ChevronDown size={13} style={{
+          color: C.dim, flexShrink: 0,
+          transform: fechada ? "rotate(-90deg)" : "none", transition: "transform .12s",
+        }} />
+        <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: C.text }}>{g.turma_id}</span>
+        <span style={{ fontSize: 11, color: C.faint }}>começa em {dataBR(g.quando)}</span>
+        <span style={{ flex: 1 }} />
+        {marca(`${numero(g.linhas.length)} represado${g.linhas.length === 1 ? "" : "s"}`, C.bright)}
+        {g.urgentes > 0 && marca(`${numero(g.urgentes)} vence${g.urgentes === 1 ? "" : "m"} em ≤30d`, C.warn)}
+        {g.semTelefone > 0 && marca(`${numero(g.semTelefone)} sem telefone`, C.down)}
+
+        {/* O disparo da turma. Fica no cabecalho porque e a acao daquele
+            bloco, e nao abre/fecha o grupo junto — dai o stopPropagation.
+            Sem ninguem elegivel o botao desaparece: um botao morto so faz
+            a pessoa clicar pra descobrir que nao dava. */}
+        {g.elegiveis > 0 && (
+          <button onClick={(e) => { e.stopPropagation(); onDisparar?.(g.turma_id); }}
+            disabled={bloqueado}
+            title={`Enfileirar convite para os ${numero(g.elegiveis)} elegíveis da ${g.turma_id}`}
+            style={{
+              display: "flex", alignItems: "center", gap: 5, marginLeft: 2,
+              fontFamily: SANS, fontSize: 10.5, fontWeight: 800, whiteSpace: "nowrap",
+              padding: "4px 9px", borderRadius: 999, cursor: bloqueado ? "default" : "pointer",
+              color: bloqueado ? C.dim : C.up,
+              background: bloqueado ? "rgba(255,255,255,.03)" : `${C.up}16`,
+              border: `1px solid ${bloqueado ? C.cardLine : `${C.up}4D`}`,
+              opacity: bloqueado && !rodando ? 0.5 : 1,
+            }}>
+            <Send size={11} />
+            {rodando ? "enfileirando…" : `Disparar (${numero(g.elegiveis)})`}
+          </button>
+        )}
+      </div>
+      {!fechada && children}
     </>
   );
 }
@@ -7566,10 +7689,7 @@ function LinhaRepresado({ r, ultima }) {
         {r.ja_transferiu && <span title="já transferiu de turma antes" style={{ fontSize: 9.5, color: C.dim, flexShrink: 0 }}>já transferiu</span>}
       </div>
 
-      <div style={apagado}>
-        {zap ? <a href={zap} target="_blank" rel="noreferrer" style={{ color: C.faint, textDecoration: "none" }} title="Abrir conversa no WhatsApp">{formataTelefone(r.telefone)}</a>
-          : <span style={{ color: C.warn }} title="sem telefone — não tem como convidar">sem telefone</span>}
-      </div>
+      <CelulaTelefone r={r} zap={zap} />
 
       <div className="trCurso" style={apagado} title={r.curso || ""}>{r.curso || "—"}</div>
 
@@ -7578,15 +7698,86 @@ function LinhaRepresado({ r, ultima }) {
         {numero(dias)}d
       </div>
 
-      <div className="trTurma" style={apagado} title={r.turma_id || ""}>
-        {r.turma_id || "—"}
-        {r.proxima_turma_em && <span style={{ color: C.dim }}> · {dataBR(r.proxima_turma_em)}</span>}
-      </div>
-
       <div style={{ textAlign: "right", fontSize: 11.5, fontWeight: convite.peso, color: convite.cor, whiteSpace: "nowrap" }}
            title={r.ultimo_convite_em ? `último convite em ${dataBR(r.ultimo_convite_em)}` : "nunca recebeu convite do sistema"}>
         {convite.texto}
       </div>
+    </div>
+  );
+}
+
+/* O telefone da linha. Com número, é o link do WhatsApp e nada mais — não
+   se edita o que está certo por engano. Sem número, vira o botão que abre o
+   campo: é a única coisa que dá pra fazer por aquela pessoa ali.
+
+   O que grava é `salvar_contato_manual`, que guarda em tabela própria e
+   vence as cargas — ETL não sobrescreve correção de gente (migration 169). */
+function CelulaTelefone({ r, zap }) {
+  const [editando, setEditando] = useState(false);
+  const [valor, setValor] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+  const qc = useQueryClient();
+  const apagado = { fontSize: 11.5, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" };
+
+  const salvar = async () => {
+    setSalvando(true); setErro(null);
+    try {
+      await salvarContatoManual(r.aluno_id, valor);
+      // A view inteira muda: a pessoa sai de "sem telefone" e pode entrar
+      // na conta de elegíveis do disparo daquela turma.
+      qc.invalidateQueries({ queryKey: ["view", "vw_represado_lista"] });
+      setEditando(false);
+    } catch (e) {
+      setErro(semPermissao(e) ? "Sem permissão para editar contato." : (e.message || "Não foi possível salvar."));
+    } finally { setSalvando(false); }
+  };
+
+  if (r.telefone) {
+    return (
+      <div style={apagado}>
+        {zap
+          ? <a href={zap} target="_blank" rel="noreferrer" style={{ color: C.faint, textDecoration: "none" }} title="Abrir conversa no WhatsApp">{formataTelefone(r.telefone)}</a>
+          : formataTelefone(r.telefone)}
+      </div>
+    );
+  }
+
+  if (!editando) {
+    return (
+      <button onClick={() => { setValor(""); setErro(null); setEditando(true); }}
+        title="Cadastrar o telefone desta pessoa"
+        style={{
+          display: "flex", alignItems: "center", gap: 4, padding: "3px 7px", borderRadius: 7,
+          fontFamily: SANS, fontSize: 10.5, fontWeight: 700, cursor: "pointer",
+          color: C.warn, background: `${C.warn}12`, border: `1px solid ${C.warn}3A`,
+        }}>
+        <Plus size={11} /> telefone
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 4, minWidth: 0 }}>
+      <input autoFocus value={valor} inputMode="numeric" placeholder="(71) 99999-8888"
+        onChange={(e) => setValor(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && valor.trim() && !salvando) salvar();
+          if (e.key === "Escape") { setEditando(false); setErro(null); }
+        }}
+        title={erro || "Enter salva, Esc cancela"}
+        style={{
+          width: 116, padding: "3px 6px", borderRadius: 6, fontFamily: SANS, fontSize: 11,
+          color: C.text, background: "rgba(255,255,255,.05)",
+          border: `1px solid ${erro ? C.down : C.cardLine}`, outline: "none",
+        }} />
+      <button onClick={salvar} disabled={salvando || !valor.trim()} title={erro || "Salvar"}
+        style={{
+          background: "none", border: "none", padding: 2, cursor: salvando || !valor.trim() ? "default" : "pointer",
+          color: salvando || !valor.trim() ? C.dim : C.up, display: "flex", alignItems: "center",
+        }}>
+        <Check size={13} />
+      </button>
     </div>
   );
 }
