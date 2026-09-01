@@ -8,6 +8,11 @@ on:
         required: false
         type: boolean
         default: false
+      comparar_supabase:
+        description: Comparar com as tabelas atuais sem gravar
+        required: false
+        type: boolean
+        default: true
 
 jobs:
   validar:
@@ -29,6 +34,9 @@ jobs:
           SALESFORCE_UNIDADE: FEBRACIS SALVADOR 2
           SALESFORCE_REPORT_ALUNOS: 00OV20000091YSHMA2
           SALESFORCE_REPORT_PAGAMENTOS: 00OV20000091Z1lMAE
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: >-
           python etl/salesforce_api_sync.py
           ${{ inputs.incluir_presenca && '--include-presence' || '' }}
+          ${{ inputs.comparar_supabase && '--compare' || '' }}
