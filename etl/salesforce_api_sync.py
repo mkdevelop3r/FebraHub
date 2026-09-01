@@ -688,7 +688,8 @@ def discover_class_object(sf, class_id):
         "FROM Credenciamento__c "
         f"WHERE Turma__c = '{class_id}'")
     credential_type_rows = sf.query(
-        "SELECT Tipo_de_Matricula_Atual__c,Tipo_de_Matricula__c "
+        "SELECT Tipo_de_Matricula_Atual__c,Tipo_de_Matricula__c,"
+        "CPF_do_Cliente__c,Nome_do_Cliente__c "
         "FROM Credenciamento__c "
         f"WHERE Turma__c = '{class_id}'")
     credential_types = grouped_counts(
@@ -698,12 +699,46 @@ def discover_class_object(sf, class_id):
     direct_presence_count = sf.query(
         "SELECT COUNT(Id) total FROM Presenca__c "
         f"WHERE Turma__c = '{class_id}'")
+    opportunity_description = sf.describe_object("Opportunity")
+    enrollment_field = next(
+        field for field in opportunity_description.get("fields", [])
+        if field.get("name") == "Tipo_de_Matricula__c")
+    enrollment_labels = {
+        str(item.get("value")): item.get("label")
+        for item in enrollment_field.get("picklistValues", [])}
+    class_name = records[0].get(name_field) if records else None
+    escaped_class_name = str(class_name or "").replace("'", "\\'")
+    class_presence = sf.query(
+        "SELECT CPF__c,Cliente__c FROM Presenca__c "
+        f"WHERE Turma_do_Credenciamento__c = '{escaped_class_name}'")
+    presence_clients = {canonical_salesforce_id(row.get("Cliente__c"))
+                        for row in class_presence if row.get("Cliente__c")}
+    presence_cpfs = {digits(row.get("CPF__c")).zfill(11)
+                     for row in class_presence if digits(row.get("CPF__c"))}
+    excluded_current_types = {"13", "27", "37", "122"}
+    official_roster = [row for row in credential_type_rows
+                       if str(row.get("Tipo_de_Matricula_Atual__c") or "")
+                       not in excluded_current_types]
+    official_credentialed = [row for row in official_roster if
+        canonical_salesforce_id(row.get("Nome_do_Cliente__c")) in presence_clients
+        or digits(row.get("CPF_do_Cliente__c")).zfill(11) in presence_cpfs]
+    official_result = {
+        "total": len(official_roster),
+        "credenciados": len(official_credentialed),
+        "nao_credenciados": len(official_roster) - len(official_credentialed),
+        "tipos_excluidos": {
+            code: enrollment_labels.get(code, "(sem rotulo)")
+            for code in sorted(excluded_current_types)},
+        "clientes_unicos_presenca": len(presence_clients),
+        "cpfs_unicos_presenca": len(presence_cpfs),
+    }
     log("DESCOBERTA_CREDENCIAMENTO " + json.dumps({
         "class_id": class_id,
         "total_registros": credential_count,
         "tipos_atuais": credential_types,
         "tipos_originais": original_credential_types,
         "presencas_diretas": direct_presence_count,
+        "resultado_regra_oficial": official_result,
         "campos_relevantes": credential_fields,
     }, ensure_ascii=False, sort_keys=True))
 
