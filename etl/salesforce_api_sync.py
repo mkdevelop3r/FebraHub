@@ -721,12 +721,15 @@ def discover_class_object(sf, class_id):
     class_name = records[0].get(name_field) if records else None
     escaped_class_name = str(class_name or "").replace("'", "\\'")
     class_presence = sf.query(
-        "SELECT CPF__c,Cliente__c FROM Presenca__c "
+        "SELECT CPF__c,Cliente__c,Credenciamento__c FROM Presenca__c "
         f"WHERE Turma_do_Credenciamento__c = '{escaped_class_name}'")
     presence_clients = {canonical_salesforce_id(row.get("Cliente__c"))
                         for row in class_presence if row.get("Cliente__c")}
     presence_cpfs = {digits(row.get("CPF__c")).zfill(11)
                      for row in class_presence if digits(row.get("CPF__c"))}
+    presence_credentials = {
+        canonical_salesforce_id(row.get("Credenciamento__c"))
+        for row in class_presence if row.get("Credenciamento__c")}
     excluded_current_types = {"13", "27", "37", "122"}
     official_roster = [row for row in credential_type_rows
                        if str(row.get("Tipo_de_Matricula_Atual__c") or "")
@@ -756,6 +759,7 @@ def discover_class_object(sf, class_id):
         "clientes_unicos_presenca": len(presence_clients),
         "cpfs_unicos_presenca": len(presence_cpfs),
         "identidades_unicas_presenca": len(presence_identities),
+        "credenciamentos_unicos_na_presenca": len(presence_credentials),
     }
     log("DESCOBERTA_CREDENCIAMENTO " + json.dumps({
         "class_id": class_id,
