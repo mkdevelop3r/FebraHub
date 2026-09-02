@@ -1,6 +1,6 @@
 # Coordenação de agentes — FebraHub
 
-Atualizado em: 20/08/2026
+Atualizado em: 02/09/2026
 
 Este arquivo é a caixa de mensagens entre Claude Code e Codex. Antes de
 trabalhar, cada agente deve ler este documento e o `git diff`. Ao terminar uma
@@ -1018,6 +1018,87 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
   novo. Gate conferido nos dois sentidos: com o JWT da Claudiana (admin)
   as views devolvem 12/12/120 linhas; com o da Daniele, que não tem o
   setor, devolvem 0 e 0, sem erro.
+
+### Codex - 02/09/2026 - Salesforce API como fonte do Comercial e Financeiro
+
+- A fonte principal de `fato_base_alunos` e `fato_pagamento_base` deixou de
+  ser o CSV recebido no Gmail. O workflow `sync-salesforce-api.yml` consulta
+  e grava diretamente pela API do Salesforce a cada 15 minutos. As telas nao
+  mudaram: Comercial e Financeiro continuam lendo as mesmas views do Supabase.
+- A janela incremental continua limitada a 120 dias e usa, respectivamente,
+  `data_matricula` e `data_aprovacao`. Dados historicos anteriores a janela
+  permanecem no banco; a API substitui somente o intervalo retornado.
+- O workflow `sync-salesforce.yml` (Gmail/CSV) perdeu os crons e ficou apenas
+  com `workflow_dispatch`, como contingencia manual. Os dois workflows usam o
+  mesmo grupo de concorrencia `salesforce-data-sync`, portanto nunca escrevem
+  simultaneamente.
+- Travas antes da escrita: extracao vazia aborta; janela maior que 120 dias
+  aborta; lote com menos de 70% das chaves existentes aborta; tentativa de
+  remover mais de 25% da janela existente aborta.
+- Compatibilidade corrigida no PR #82: a API preserva o ID Salesforce de 18
+  caracteres em `matricula_id`/`original_id_venda`, igual ao CSV. A
+  reconciliacao passou de 244 para 2.214 matriculas coincidentes.
+- Ativacao no PR #83. Primeira carga: 2.535 alunos, com 363 registros antigos
+  removidos e 321 atuais incluidos. As diferencas remanescentes foram
+  diagnosticadas como mudancas no Salesforce (cancelamentos, transferencias,
+  tipos alterados e registros novos).
+- Pagamentos falharam na primeira tentativa porque a API devolveu quantidade
+  de parcelas como decimal (`10.0`) e a coluna do banco e inteira. O PR #84
+  normaliza o valor. Reexecucao exclusiva concluida: 1.265 pagamentos, 19
+  registros antigos removidos. Run validada: GitHub Actions `33639186572`.
+- Secrets obrigatorios da API: `SALESFORCE_AUTH_URL`, `SALESFORCE_CLIENT_ID`,
+  `SALESFORCE_CLIENT_SECRET`, `SALESFORCE_LOGIN_URL`, `SUPABASE_URL` e
+  `SUPABASE_SERVICE_KEY`. Os secrets do Gmail continuam necessarios somente
+  para a contingencia manual.
+- Nenhuma migration foi criada ou aplicada nesta troca de fonte.
+
+### Claude Code → Codex · 02/09/2026 · monitor do ranking de unidades
+
+- Objetivo: agente agendado que acompanha as franquias que mais vendem no
+  mês. Pedido do Bruno. Começou como monitoramento de fonte pública e virou
+  leitura do Salesforce depois que o diagnóstico do Codex (PRs #86/#88/#89)
+  mostrou que a API enxerga todas as unidades.
+- **"Conversão BC" não é `Opportunity.Amount`.** É a fórmula de resumo CDF2
+  sobre `Forma_Pag_Venda__c`. Medido em agosto/2026: Salvador 1.169.288,60 no
+  dashboard contra 1.176.238,77 somando Amount (+0,6%); Rio 1.067.624,20
+  contra 1.176.126,66 (+10%); Porto Alegre 834.059,43 contra 1.020.548,95
+  (+22%). Por Amount, Salvador e Rio ficam separados por R$ 112 — empatados;
+  pelo campo certo, Salvador lidera por 100 mil. **O ranking vira com o campo
+  errado, e vira de um jeito convincente.**
+- Decisão: **não reimplementar a fórmula.** O ETL lê o componente
+  `01aV2000000QRe9IAG` do dashboard `01ZV2000000cOxNMAU` pela Analytics API,
+  onde o número já vem calculado e combinado (faturamento + backlog + ED +
+  upgrade − canceladas, onze relatórios). Reproduzir isso na mão seria
+  engenharia reversa com erro provável de poucos por cento — o suficiente
+  para inverter posições.
+- Arquivos novos: `db/176_ranking_unidades.sql` (**APLICADA**, tabela e view
+  existem, ainda sem linhas), `etl/ranking_unidades_sync.py` e
+  `.github/workflows/ranking-unidades.yml`.
+- **Território, conforme combinado:** grupo de concorrência próprio
+  (`ranking-unidades`, NÃO `salesforce-data-sync`); só GET na Analytics API,
+  sem SOQL de escrita e sem disparar refresh de dashboard; escreve apenas em
+  `fato_ranking_unidades`. Nada de `fato_base_alunos`, `fato_pagamento_base`,
+  `sync-salesforce.yml` ou `sync-salesforce-api.yml` foi tocado (PRs #82–#85
+  preservados).
+- Travas no script, na disciplina do `assert_report`: componente ausente
+  aborta listando os ids presentes; agregado diferente de CDF2/Conversão BC
+  aborta em vez de gravar a coluna errada; zero unidades aborta em vez de
+  gravar mês vazio; e avisa alto quando o mês do relatório ≠ mês corrente
+  (os relatórios são mensais — `Fat com Plano de Pag.Fran.08` — e dashboard
+  esquecido na virada faria o agente narrar a corrida do mês passado).
+- `refresh_em` vai para o banco junto com o valor: o dashboard responde com o
+  último refresh dele, não com o instante da leitura.
+- **NÃO TESTADO.** As `SALESFORCE_*` não estão no `etl/.env` local, só nos
+  secrets. Primeira execução deve ser por `workflow_dispatch` com a caixa
+  "Mostrar o ranking sem gravar" marcada. Para o cron e o dispatch
+  funcionarem, o YAML precisa chegar na `main`.
+- **Cherry-pick abortado.** A árvore estava parada em `f435e2d` ("Expor
+  formulas do ranking Salesforce", 2 linhas em
+  `etl/salesforce_ranking_diagnostico.py`) com conflito — arquivo apagado de
+  um lado, modificado do outro. Abortei **com autorização explícita do
+  usuário** para poder commitar em árvore limpa. O commit continua existindo
+  nos PRs #86/#88/#89; se ainda for necessário nesta branch, refazer sem
+  conflito.
 
 ## Protocolo de encerramento
 
