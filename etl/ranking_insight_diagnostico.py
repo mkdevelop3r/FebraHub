@@ -37,6 +37,8 @@ import sys
 from collections import defaultdict
 from datetime import date
 
+import requests
+
 from salesforce_api_sync import API_VERSION, Salesforce, load_env
 from ranking_unidades_sync import mes_esperado, sem_acento
 
@@ -58,6 +60,23 @@ def fim_do_mes(mes):
             - (date(1, 1, 2) - date(1, 1, 1)))
 
 
+def consultar(sf, soql):
+    """SOQL com o CORPO do erro quando falha.
+
+    `Salesforce.query` usa raise_for_status(), que descarta a resposta -- e e
+    justamente ali que o Salesforce diz o que ha de errado com a consulta.
+    Um 400 sem corpo vira chute; com corpo, vira conserto. Mesma licao que o
+    pedagogico_mensagens.py ja carrega no `erro_com_corpo`.
+    """
+    r = requests.get(f"{sf.instance}/services/data/v{API_VERSION}/query",
+                     headers=sf.headers, params={"q": soql}, timeout=120)
+    if not r.ok:
+        raise RuntimeError(f"{r.status_code} {r.text[:600]}\n  SOQL: {soql}")
+    dados = r.json()
+    registros = dados.get("records", [])
+    return registros
+
+
 def agrupar(sf, mes, campo):
     """SUM(Amount) e COUNT por (unidade, campo) no mes."""
     ini, fim = mes.isoformat(), fim_do_mes(mes).isoformat()
@@ -69,7 +88,7 @@ def agrupar(sf, mes, campo):
         f"AND Data_de_Aprova_o__c >= {ini} AND Data_de_Aprova_o__c <= {fim} "
         f"GROUP BY Unidade_Geradora_Venda__r.Name, {campo}"
     )
-    return sf.query(soql)
+    return consultar(sf, soql)
 
 
 def chave(linha, campo):
@@ -129,9 +148,22 @@ def main():
     log("Metrica: SUM(Opportunity.Amount). NAO e a Conversao BC do ranking;")
     log("serve para ler proporcao, nao para comparar valor com o ranking.")
 
-    resumo(sf, mes, "NomeCurso__r.Name", "O QUE VENDEM (mix de curso)")
-    resumo(sf, mes, "LeadSource", "COMO TRAZEM GENTE (origem do lead)")
-    resumo(sf, mes, "Tipo_de_Matricula__c", "MIX DE MATRICULA")
+    # Uma dimensao que falha nao pode levar as outras junto: o objetivo da
+    # rodada e descobrir QUAIS servem, e morrer na primeira nos daria um
+    # veredicto por execucao.
+    dimensoes = [
+        ("NomeCurso__r.Name", "O QUE VENDEM (mix de curso)"),
+        ("NomeCurso__c", "O QUE VENDEM (por id do curso, reserva)"),
+        ("LeadSource", "COMO TRAZEM GENTE (origem do lead)"),
+        ("UltimaOrigemLead__c", "COMO TRAZEM GENTE (ultima origem)"),
+        ("Tipo_de_Matricula__c", "MIX DE MATRICULA"),
+    ]
+    for campo, rotulo in dimensoes:
+        try:
+            resumo(sf, mes, campo, rotulo)
+        except Exception as e:
+            log(f"\n===== {rotulo} =====")
+            log(f"  FALHOU em {campo}: {e}")
 
     log("\nNada foi gravado.")
 
