@@ -26,7 +26,7 @@ import {
   useFinanceiroReceitaMensal, useFinanceiroCaixaMensal,
   useFinanceiroInadimp, useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
-  usePeriodoLimites, useRankingUnidades,
+  usePeriodoLimites, useRankingUnidades, useUnidadeComposicao,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroReceitaCategoriaDetalhe, useFinanceiroDespesaCategoriaPeriodo,
   useLojaReceitaPeriodo, useLojaReceitaTotalMes, useLojaReceitaConsolidada,
   useLojaSerie, useLojaKpisAno, useLojaKpisPeriodo,
@@ -2339,6 +2339,30 @@ const rotuloMes = (iso) => {
 
 function BlocoRankingUnidades() {
   const r = useRankingUnidades();
+  const comp = useUnidadeComposicao();
+  // Uma unidade aberta por vez: o objetivo e comparar UMA com o que a gente
+  // faz, nao encher a tela de detalhe. Clicar na aberta fecha.
+  const [aberta, setAberta] = useState(null);
+
+  /* A composicao chega achatada (uma linha por unidade+dimensao+valor).
+     Indexo por unidade e dimensao uma vez, em vez de varrer a lista a cada
+     linha renderizada. */
+  const porUnidade = useMemo(() => {
+    const linhas = comp.data ?? [];
+    if (!linhas.length) return null;
+    const mes = linhas.map((l) => String(l.mes)).sort().at(-1);
+    const m = new Map();
+    for (const l of linhas) {
+      if (String(l.mes) !== mes) continue;
+      if (!m.has(l.unidade)) m.set(l.unidade, {});
+      const dim = m.get(l.unidade);
+      (dim[l.dimensao] ??= []).push(l);
+    }
+    for (const dim of m.values()) {
+      for (const k of Object.keys(dim)) dim[k].sort((a, b) => Number(b.share ?? 0) - Number(a.share ?? 0));
+    }
+    return m;
+  }, [comp.data]);
 
   const dados = useMemo(() => {
     const linhas = r.data ?? [];
@@ -2361,11 +2385,20 @@ function BlocoRankingUnidades() {
     const seta = !l.posicoes_ganhas ? null
       : ganhas > 0 ? { t: `▲ ${ganhas}`, c: C.up }
         : ganhas < 0 ? { t: `▼ ${Math.abs(ganhas)}`, c: C.down } : null;
+    const detalhe = porUnidade?.get(l.unidade);
+    const expandida = aberta === l.unidade;
     return (
-      <div key={l.unidade} style={{
+      <div key={l.unidade}>
+      <div onClick={() => detalhe && setAberta(expandida ? null : l.unidade)}
+        role={detalhe ? "button" : undefined} tabIndex={detalhe ? 0 : undefined}
+        aria-expanded={detalhe ? expandida : undefined}
+        onKeyDown={(e) => { if (detalhe && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setAberta(expandida ? null : l.unidade); } }}
+        title={detalhe ? "Ver como esta unidade vende" : "Sem composição carregada"}
+        style={{
         display: "grid", gridTemplateColumns: "26px minmax(0,1fr) 108px 62px",
         alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8,
-        background: destaque ? `${C.gold}14` : "transparent",
+        cursor: detalhe ? "pointer" : "default",
+        background: expandida ? "rgba(255,255,255,.05)" : destaque ? `${C.gold}14` : "transparent",
         border: `1px solid ${destaque ? `${C.gold}3A` : "transparent"}`,
       }}>
         <span style={{ fontFamily: GROTESK, fontSize: 12, fontWeight: 800,
@@ -2378,6 +2411,8 @@ function BlocoRankingUnidades() {
                        color: destaque ? C.gold : C.text }}>{moeda(l.valor)}</span>
         <span style={{ fontSize: 10.5, fontWeight: 700, textAlign: "right",
                        color: seta?.c ?? C.dim }}>{seta?.t ?? "—"}</span>
+      </div>
+      {expandida && detalhe && <ComoVende detalhe={detalhe} />}
       </div>
     );
   };
@@ -2447,6 +2482,59 @@ function BlocoRankingUnidades() {
         )}
       </Estado>
     </Bloco>
+  );
+}
+
+/* O "como vende" de uma unidade (migration 177).
+
+   Fica recolhido de proposito: a tela responde primeiro "como estamos diante
+   das outras" e so depois "o que aquela ali faz". Detalhe de nove unidades
+   aberto ao mesmo tempo vira tabela, e tabela ninguem le.
+
+   MOSTRA FATIA E TICKET, NAO VALOR. O `total` desta tabela e
+   SUM(Opportunity.Amount), que nao e a Conversao BC do ranking logo acima --
+   os dois numeros nao batem. Exibir valor aqui convidaria a somar um com o
+   outro, que e a conta errada. */
+function ComoVende({ detalhe }) {
+  const secao = (dimensao, titulo, n = 4) => {
+    const itens = (detalhe[dimensao] ?? []).slice(0, n);
+    if (!itens.length) return null;
+    return (
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".4px",
+                      textTransform: "uppercase", color: C.dim, marginBottom: 5 }}>{titulo}</div>
+        {itens.map((i) => (
+          <div key={i.valor} style={{ display: "flex", alignItems: "baseline", gap: 6, marginBottom: 3 }}>
+            <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700,
+                           color: C.muted, width: 42, textAlign: "right", flexShrink: 0 }}>
+              {i.share != null ? `${Number(i.share).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%` : "—"}
+            </span>
+            <span style={{ fontSize: 11, color: C.faint, overflow: "hidden",
+                           textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={i.valor}>
+              {i.valor}
+            </span>
+            <span style={{ fontSize: 10, color: C.dim, whiteSpace: "nowrap", marginLeft: "auto" }}>
+              {numero(i.qtd)} · {moeda(i.ticket_medio)}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{
+      display: "flex", gap: 18, flexWrap: "wrap",
+      padding: "10px 12px 12px 36px", marginBottom: 4,
+      borderLeft: `2px solid ${C.cardLine}`, marginLeft: 10,
+    }}>
+      {secao("origem", "Como trazem gente")}
+      {secao("curso", "O que vendem")}
+      <div style={{ fontSize: 9.5, color: C.dim, width: "100%", lineHeight: 1.5 }}>
+        Fatia do faturamento da própria unidade · nº de vendas · ticket médio.
+        Base diferente da do ranking — serve para comparar proporção, não valor.
+      </div>
+    </div>
   );
 }
 

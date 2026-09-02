@@ -819,6 +819,14 @@ export async function salvarContatoManual(cpf, telefone) {
 export const useRankingUnidades = () =>
   useView("vw_ranking_unidades", { ordem: ["mes", "posicao"], staleTime: 5 * 60 * 1000 });
 
+/* COMO cada franquia vende (migration 177): origem do lead, mix de curso e
+   tipo de matrícula, com a fatia dentro da unidade e o ticket médio.
+   ATENÇÃO À MÉTRICA: `total` aqui é SUM(Opportunity.Amount), que NÃO é a
+   Conversão BC do ranking. Serve para proporção — nunca some nem compare os
+   dois números. Por isso a tela mostra share e ticket, não valor. */
+export const useUnidadeComposicao = () =>
+  useView("vw_unidade_composicao", { ordem: ["mes", "unidade", "dimensao", "valor"], staleTime: 5 * 60 * 1000 });
+
 /* Saúde da carga de presença: última carga, dias desde então, volume. A carga
    é manual, e a fonte anterior (credenciamento) morreu ao longo de um ano sem
    ninguém perceber. Este número precisa estar na tela sempre que um número de
