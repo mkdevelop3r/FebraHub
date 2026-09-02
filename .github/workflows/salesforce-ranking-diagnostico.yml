@@ -1,0 +1,22 @@
+name: Diagnosticar ranking Salesforce
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnostico:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r etl/requirements.txt
+      - name: Consultar ranking e metadados sem escrever
+        env:
+          SALESFORCE_AUTH_URL: ${{ secrets.SALESFORCE_AUTH_URL }}
+          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SALESFORCE_LOGIN_URL: ${{ secrets.SALESFORCE_LOGIN_URL }}
+        run: python etl/salesforce_ranking_diagnostico.py
