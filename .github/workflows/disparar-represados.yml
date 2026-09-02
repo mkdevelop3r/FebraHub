@@ -1,0 +1,40 @@
+name: Disparar represados
+
+on:
+  workflow_dispatch:
+    inputs:
+      turma_id:
+        description: Identificador exato da turma validada
+        required: true
+        type: string
+      limite:
+        description: Maximo de represados nesta execucao
+        required: true
+        type: number
+        default: 200
+
+concurrency:
+  group: mensagens-pedagogico
+  cancel-in-progress: false
+
+jobs:
+  disparar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r etl/requirements.txt
+      - name: Enviar somente represados da turma informada
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
+          CRM_LOCATION_ID: ${{ secrets.CRM_LOCATION_ID }}
+          MSG_FILA: prazo
+          MSG_TURMA_ID: ${{ inputs.turma_id }}
+          MSG_LIMITE: ${{ inputs.limite }}
+        run: python etl/pedagogico_mensagens.py
