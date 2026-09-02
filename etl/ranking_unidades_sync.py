@@ -47,7 +47,7 @@ Variaveis de ambiente: as mesmas do salesforce_api_sync.py
 import os
 import sys
 import traceback
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import requests
 
@@ -173,6 +173,19 @@ def mes_de_referencia(resultado, refresh_em):
     return date(base.year, base.month, 1), "mes do refresh"
 
 
+def mes_esperado(hoje=None):
+    """Qual mes o dashboard deveria estar mostrando agora.
+
+    A janela comercial vai do dia 5 ao dia 4 do mes seguinte -- esta nos
+    filtros do relatorio (aprovacao de 05/08 a 04/09). Ate o dia 4, o
+    relatorio corrente ainda e o do mes anterior.
+    """
+    hoje = hoje or date.today()
+    if hoje.day >= 5:
+        return hoje.replace(day=1)
+    return (hoje.replace(day=1) - timedelta(days=1)).replace(day=1)
+
+
 def linhas_do_componente(resultado):
     """groupings -> [(unidade, chave, valor)] na ordem que o Salesforce deu.
 
@@ -281,13 +294,18 @@ def main(diagnostico=False):
     log(f"ranking: {len(linhas)} unidades · mes {mes:%m/%Y} ({origem_do_mes})")
     log(f"         dashboard atualizado em {refresh_em or '(desconhecido)'}")
 
-    # A virada do mes e o momento perigoso: relatorio de agosto ainda no ar
-    # em setembro faria o agente narrar a corrida do mes passado como se
-    # fosse a de agora.
-    hoje = date.today().replace(day=1)
-    if mes != hoje:
-        log(f"         ATENCAO: o ranking e de {mes:%m/%Y}, e estamos em {hoje:%m/%Y}. "
-            f"O dashboard pode nao ter virado o mes.")
+    # A virada do mes e o momento perigoso: relatorio do mes passado ainda no
+    # ar faria o agente narrar a corrida errada como se fosse a de agora.
+    #
+    # Mas "mes passado" aqui nao e o do calendario. Os filtros mostram que a
+    # janela comercial corre do DIA 5 AO DIA 4 (aprovacao de 05/08 a 04/09),
+    # entao o relatorio de agosto continua sendo o corrente ate 04/09. Comparar
+    # com o mes do calendario faria o aviso gritar nos primeiros quatro dias de
+    # todo mes -- e aviso que grita a toa e aviso que se aprende a ignorar.
+    esperado = mes_esperado()
+    if mes != esperado:
+        log(f"         ATENCAO: o ranking e de {mes:%m/%Y}, e o esperado hoje era "
+            f"{esperado:%m/%Y}. O dashboard pode nao ter virado o mes.")
 
     if not linhas:
         raise RuntimeError("Componente devolveu zero unidades; nao vou gravar mes vazio.")
