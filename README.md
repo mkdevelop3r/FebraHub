@@ -76,6 +76,38 @@ python cispay_sync.py --sync --meses 24
 python cispay_sync.py --extrato
 ```
 
+### Salesforce: fonte oficial do Comercial e Financeiro
+
+Desde 02/09/2026, alunos e pagamentos sao sincronizados diretamente pela API
+do Salesforce a cada 15 minutos:
+
+```text
+Salesforce API -> etl/salesforce_api_sync.py -> Supabase
+  alunos       -> fato_base_alunos           -> Hub Comercial/Pedagogico
+  pagamentos   -> fato_pagamento_base        -> Hub Financeiro/Comercial
+```
+
+O workflow principal e `.github/workflows/sync-salesforce-api.yml`. Ele tambem
+atualiza credenciamento e turmas e registra o resultado em
+`integracao_status`. A carga usa uma janela incremental maxima de 120 dias e
+aborta antes de gravar quando a extracao vem vazia ou anormalmente incompleta.
+
+O antigo `.github/workflows/sync-salesforce.yml`, baseado nos CSVs enviados ao
+Gmail, nao possui mais agendamento. Ele deve ser executado manualmente apenas
+como contingencia. Ambos compartilham a concorrencia `salesforce-data-sync`;
+nao execute duas cargas Salesforce em paralelo.
+
+Para validar sem escrever:
+
+```bash
+python etl/salesforce_api_sync.py --compare
+```
+
+Para uma recuperacao manual seletiva pela API, use `--write` e informe cada
+alvo explicitamente, por exemplo `--target students` ou `--target payments`.
+Antes de usar a contingencia por Gmail, confirme que a API nao esta em
+execucao e verifique o intervalo do CSV.
+
 ### O método `--diagnostico` — use em toda integração nova
 
 Quatro fontes, quatro bugs idênticos: Sympla (valor, e-mail, CPF), Clint (data),
