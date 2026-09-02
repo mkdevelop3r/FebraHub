@@ -78,27 +78,34 @@ def consultar(sf, soql):
 
 
 def agrupar(sf, mes, campo):
-    """SUM(Amount) e COUNT por (unidade, campo) no mes."""
+    """SUM(Amount) e COUNT por (unidade, campo) no mes.
+
+    APELIDAR OS DOIS CAMPOS E OBRIGATORIO. Sem alias, `Unidade..._r.Name` e
+    `NomeCurso__r.Name` colidem e o Salesforce responde
+    "duplicate alias: Name" -- foi o 400 da primeira rodada.
+
+    CANAL = FRANQUIAS delimita o mesmo universo do ranking. Sem esse filtro, a
+    consulta trouxe CIS TREINAMENTO, FEBRACIS SISTEMAS, FEBRACIS EMPREENDEDOR
+    DIGITAL e CIS PERSONALISSIMO no topo -- entidades corporativas, que nao
+    disputam o ranking. Comparar Salvador com elas nao responde nada, e ainda
+    empurrava as franquias de verdade para fora da lista.
+
+    O LIMIT existe porque consulta agregada nao pagina: passar de 2000 grupos
+    devolve EXCEEDED_ID_LIMIT, que foi o que derrubou UltimaOrigemLead__c.
+    """
     ini, fim = mes.isoformat(), fim_do_mes(mes).isoformat()
     estagios = ", ".join(f"'{e}'" for e in ESTAGIOS)
     soql = (
-        f"SELECT Unidade_Geradora_Venda__r.Name, {campo}, COUNT(Id) qtd, SUM(Amount) total "
+        f"SELECT Unidade_Geradora_Venda__r.Name unidade, {campo} valor, "
+        f"COUNT(Id) qtd, SUM(Amount) total "
         f"FROM Opportunity "
         f"WHERE StageName IN ({estagios}) "
+        f"AND Canal_Venda__c = 'Franquias' "
         f"AND Data_de_Aprova_o__c >= {ini} AND Data_de_Aprova_o__c <= {fim} "
-        f"GROUP BY Unidade_Geradora_Venda__r.Name, {campo}"
+        f"GROUP BY Unidade_Geradora_Venda__r.Name, {campo} "
+        f"LIMIT 2000"
     )
     return consultar(sf, soql)
-
-
-def chave(linha, campo):
-    """O alias que o Salesforce devolve muda conforme o campo; pega o que der."""
-    for k, v in linha.items():
-        if k in ("qtd", "total", "Name", "attributes"):
-            continue
-        if isinstance(v, (str, type(None))) and k != "Name":
-            return v
-    return linha.get(campo)
 
 
 def resumo(sf, mes, campo, rotulo, top_n=5):
@@ -108,8 +115,8 @@ def resumo(sf, mes, campo, rotulo, top_n=5):
     vazio_unidade = defaultdict(float)
 
     for l in linhas:
-        unidade = l.get("Name") or "(sem unidade)"
-        valor = chave(l, campo)
+        unidade = l.get("unidade") or "(sem unidade)"
+        valor = l.get("valor")
         qtd = int(l.get("qtd") or 0)
         total = float(l.get("total") or 0)
         alvo = por_unidade[unidade][valor or "(vazio)"]
@@ -153,10 +160,11 @@ def main():
     # veredicto por execucao.
     dimensoes = [
         ("NomeCurso__r.Name", "O QUE VENDEM (mix de curso)"),
-        ("NomeCurso__c", "O QUE VENDEM (por id do curso, reserva)"),
         ("LeadSource", "COMO TRAZEM GENTE (origem do lead)"),
         ("UltimaOrigemLead__c", "COMO TRAZEM GENTE (ultima origem)"),
-        ("Tipo_de_Matricula__c", "MIX DE MATRICULA"),
+        # Tipo_de_Matricula__c devolveu id (1, 27, 120), nao rotulo. O nome
+        # esta no objeto relacionado.
+        ("Tipo_de_Matricula__r.Name", "MIX DE MATRICULA"),
     ]
     for campo, rotulo in dimensoes:
         try:
