@@ -1,0 +1,39 @@
+# FebraHub · .github/workflows/ranking-insight-diagnostico.yml
+#
+# SOMENTE LEITURA, SOB DEMANDA. Nao tem cron de proposito: e um diagnostico
+# para responder uma pergunta ("o que as outras unidades estao fazendo?"), nao
+# uma carga. Quando soubermos o que vale guardar, vira ETL com agendamento.
+#
+# Nao escreve no Supabase, nao participa de nenhum grupo de concorrencia, e no
+# Salesforce so faz SOQL de leitura agregada.
+
+name: Insight das unidades (diagnostico)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mes:
+        description: 'Mes a analisar (AAAA-MM). Vazio = mes corrente da janela comercial'
+        type: string
+        required: false
+
+jobs:
+  insight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install requests
+
+      - name: Diagnostico
+        env:
+          SALESFORCE_AUTH_URL: ${{ secrets.SALESFORCE_AUTH_URL }}
+          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SALESFORCE_LOGIN_URL: ${{ secrets.SALESFORCE_LOGIN_URL }}
+        run: >
+          python etl/ranking_insight_diagnostico.py
+          ${{ inputs.mes && format('--mes {0}', inputs.mes) || '' }}
