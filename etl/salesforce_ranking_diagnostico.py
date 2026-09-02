@@ -67,6 +67,8 @@ ORDER BY SUM(Amount) DESC
             "reportFilters": metadata.get("reportFilters"),
             "standardDateFilter": metadata.get("standardDateFilter"),
             "groupingsDown": metadata.get("groupingsDown"),
+            "customDetailFormula": metadata.get("customDetailFormula"),
+            "customSummaryFormula": metadata.get("customSummaryFormula"),
             "matching_fields": matches,
         }, ensure_ascii=False, default=str))
 
