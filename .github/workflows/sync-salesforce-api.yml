@@ -1,4 +1,4 @@
-name: Validar Salesforce API
+name: Sync Salesforce API
 
 on:
   schedule:
@@ -21,6 +21,16 @@ on:
         required: false
         type: boolean
         default: true
+      gravar_alunos:
+        description: Gravar base de alunos pela API
+        required: false
+        type: boolean
+        default: false
+      gravar_pagamentos:
+        description: Gravar base de pagamentos pela API
+        required: false
+        type: boolean
+        default: false
       gravar_presenca:
         description: Gravar exclusivamente os novos registros de presenca
         required: false
@@ -41,7 +51,9 @@ on:
         type: string
 
 concurrency:
-  group: salesforce-api-sync
+  # O fallback por e-mail usa o mesmo grupo para nunca haver duas cargas
+  # escrevendo nas tabelas comerciais/financeiras ao mesmo tempo.
+  group: salesforce-data-sync
   cancel-in-progress: false
 
 jobs:
@@ -55,7 +67,7 @@ jobs:
           python-version: '3.11'
       - name: Instalar dependencias
         run: pip install -r etl/requirements.txt
-      - name: Consultar e validar sem gravar
+      - name: Sincronizar e reconciliar
         env:
           SALESFORCE_AUTH_URL: ${{ secrets.SALESFORCE_AUTH_URL }}
           SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
@@ -73,5 +85,7 @@ jobs:
           ${{ inputs.incluir_presenca && '--include-presence' || '' }}
           ${{ (github.event_name == 'schedule' || inputs.incluir_credenciamento) && '--include-credentialing' || '' }}
           ${{ (github.event_name == 'schedule' || inputs.comparar_supabase) && '--compare' || '' }}
+          ${{ (github.event_name == 'schedule' || inputs.gravar_alunos) && '--write --target students' || '' }}
+          ${{ (github.event_name == 'schedule' || inputs.gravar_pagamentos) && '--write --target payments' || '' }}
           ${{ inputs.gravar_presenca && '--write --target presence' || '' }}
           ${{ (github.event_name == 'schedule' || inputs.gravar_credenciamento) && '--write --target credentialing' || '' }}
