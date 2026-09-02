@@ -308,7 +308,10 @@ def transform_payments(records, allowed, labels):
             "original_id_venda": str(record.get("Venda__c") or "") or None,
             "nome_venda": nested(record, "Venda__r.Name"),
             "tipo_matricula": enrollment_type or None,
-            "quantidade_parcelas": nested(record, "Venda__r.QuantidadeParcelas__c"),
+            "quantidade_parcelas": (
+                int(float(nested(record, "Venda__r.QuantidadeParcelas__c")))
+                if nested(record, "Venda__r.QuantidadeParcelas__c") not in
+                (None, "") else None),
             "valor_parcela": record.get("Valor_cada_Parcela__c"),
             "periodo_fiscal": None,
             "unidade_geradora_venda": nested(
