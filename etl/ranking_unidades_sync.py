@@ -53,8 +53,23 @@ import requests
 
 from salesforce_api_sync import API_VERSION, Salesforce, load_env
 
-DASHBOARD_ID = os.getenv("RANKING_DASHBOARD_ID", "01ZV2000000cOxNMAU")
-COMPONENTE_ID = os.getenv("RANKING_COMPONENTE_ID", "01aV2000000QRe9IAG")
+# O corporativo cria UM DASHBOARD POR MES, nomeado assim:
+#
+#   FATURAMENTO FRANQUIAS + ED AGOSTO_2026
+#   FATURAMENTO FRANQUIAS + ED JULHO_2026
+#
+# Por isso o id nao pode ser fixo: em setembro nasce outro, com outro id, e um
+# script preso ao de agosto leria o mes errado para sempre -- sem erro nenhum,
+# que e a pior forma de errar. Procuramos pelo NOME do mes esperado.
+#
+# As duas variaveis abaixo existem para PINAR um dashboard especifico (refazer
+# um mes antigo, por exemplo). Vazias, o script descobre sozinho.
+DASHBOARD_ID = os.getenv("RANKING_DASHBOARD_ID", "")
+COMPONENTE_ID = os.getenv("RANKING_COMPONENTE_ID", "")
+
+PADRAO_DASHBOARD = "FATURAMENTO FRANQUIAS"
+MESES_PT = ["JANEIRO", "FEVEREIRO", "MARCO", "ABRIL", "MAIO", "JUNHO", "JULHO",
+            "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"]
 
 # O rotulo que o agregado do componente PRECISA ter. Se o dashboard for
 # reconfigurado para somar outra coluna, o script aborta em vez de gravar
@@ -75,6 +90,89 @@ def sem_acento(t):
             .replace("Ú", "U").replace("Ç", "C"))
 
 
+def nome_esperado(mes):
+    """date(2026,8,1) -> 'AGOSTO_2026', o sufixo que nomeia o dashboard do mes."""
+    return f"{MESES_PT[mes.month - 1]}_{mes.year}"
+
+
+def achar_dashboard(sf, mes):
+    """Descobre o id do dashboard do mes pelo nome.
+
+    Falha ALTO quando nao acha ou acha mais de um: ler o dashboard errado
+    produz um ranking plausivel do mes errado, e isso ninguem percebe.
+    """
+    if DASHBOARD_ID:
+        log(f"  dashboard pinado por variavel de ambiente: {DASHBOARD_ID}")
+        return DASHBOARD_ID
+
+    dados = sf.get(f"/services/data/v{API_VERSION}/analytics/dashboards")
+    lista = (dados.get("dashboards") if isinstance(dados, dict) else dados) or []
+    alvo = nome_esperado(mes)
+
+    achados = []
+    for d in lista:
+        if not isinstance(d, dict):
+            continue
+        nome = sem_acento(d.get("name") or d.get("label") or "")
+        if PADRAO_DASHBOARD in nome and alvo in nome.replace(" ", "_"):
+            achados.append((d.get("id"), d.get("name")))
+
+    if len(achados) == 1:
+        log(f"  dashboard de {mes:%m/%Y}: {achados[0][1]!r} ({achados[0][0]})")
+        return achados[0][0]
+
+    if len(achados) > 1:
+        raise RuntimeError(
+            f"Mais de um dashboard casa com {mes:%m/%Y}: {achados}. "
+            f"Pine o certo com RANKING_DASHBOARD_ID.")
+
+    # O do mes esperado ainda nao existe. Isso e NORMAL nos primeiros dias:
+    # o corporativo publica o dashboard novo quando publica. Cair em vermelho
+    # todo dia ate la seria alarme falso -- e alarme falso diario ensina a
+    # ignorar o alarme.
+    #
+    # Entao usamos o mais recente que existir. Os dados dele continuam
+    # legitimos (o mes anterior ainda recebe lancamento), o mes gravado sai
+    # certo porque vem do filtro de DataContrato, e a trava de mes atrasado
+    # decide se ja e hora de gritar.
+    disponiveis = []
+    for d in lista:
+        if not isinstance(d, dict):
+            continue
+        nome = sem_acento(d.get("name") or d.get("label") or "")
+        if PADRAO_DASHBOARD not in nome:
+            continue
+        chave = nome.replace(" ", "_")
+        for i, m in enumerate(MESES_PT, start=1):
+            for ano in range(mes.year - 1, mes.year + 2):
+                if f"{m}_{ano}" in chave:
+                    disponiveis.append((date(ano, i, 1), d.get("id"), d.get("name")))
+
+    if disponiveis:
+        disponiveis.sort(reverse=True)
+        quando, ident, nome = disponiveis[0]
+        log(f"  aviso: nao ha dashboard de {mes:%m/%Y}; usando o mais recente, "
+            f"{nome!r} ({quando:%m/%Y})")
+        return ident
+
+    parecidos = sorted({str(d.get("name")) for d in lista if isinstance(d, dict)
+                        and PADRAO_DASHBOARD in sem_acento(d.get("name") or "")})[:8]
+    raise RuntimeError(
+        f"Nao achei nenhum dashboard {PADRAO_DASHBOARD!r} com mes no nome. "
+        f"Parecidos: {parecidos or '(nenhum)'}. Se o corporativo mudou o padrao, "
+        f"ajuste PADRAO_DASHBOARD ou pine com RANKING_DASHBOARD_ID.")
+
+
+def rotulo_do_agregado(resultado):
+    """Rotulo da primeira coluna somada, ou None se nao der para ler."""
+    colunas = ((resultado.get("reportExtendedMetadata") or {})
+               .get("aggregateColumnInfo")) or {}
+    agregados = ((resultado.get("reportMetadata") or {}).get("aggregates")) or []
+    if not agregados:
+        return None
+    return (colunas.get(agregados[0]) or {}).get("label") or agregados[0]
+
+
 def componente_do_ranking(dashboard):
     """Acha o componente pelo id, e falha dizendo o que existe.
 
@@ -82,13 +180,48 @@ def componente_do_ranking(dashboard):
     sem vendas. Melhor quebrar e mostrar os ids disponiveis.
     """
     componentes = [c for c in (dashboard.get("componentData") or []) if isinstance(c, dict)]
+
+    if COMPONENTE_ID:
+        for c in componentes:
+            if c.get("componentId") == COMPONENTE_ID:
+                return c
+        ids = ", ".join(str(c.get("componentId")) for c in componentes) or "(nenhum)"
+        raise RuntimeError(f"Componente pinado {COMPONENTE_ID} nao esta neste "
+                           f"dashboard. Componentes presentes: {ids}")
+
+    # Sem pino: acha pelo CONTEUDO. O id do componente muda junto com o
+    # dashboard todo mes, entao procurar por id fixo teria a mesma doenca que
+    # procurar o dashboard por id fixo. A assinatura do painel certo e somar
+    # Conversao BC (CDF2) agrupando por unidade.
+    candidatos = []
     for c in componentes:
-        if c.get("componentId") == COMPONENTE_ID:
-            return c
-    ids = ", ".join(str(c.get("componentId")) for c in componentes) or "(nenhum)"
-    raise RuntimeError(
-        f"Componente {COMPONENTE_ID} nao esta no dashboard {DASHBOARD_ID}. "
-        f"Componentes presentes: {ids}")
+        resultado = c.get("reportResult") or {}
+        rotulo = rotulo_do_agregado(resultado)
+        if not rotulo:
+            continue
+        if not any(alvo in sem_acento(rotulo) for alvo in AGREGADO_ESPERADO):
+            continue
+        grupos = ((resultado.get("groupingsDown") or {}).get("groupings")) or []
+        # Ranking de unidade tem dezenas de linhas comecando por FEBRACIS. Um
+        # painel de total geral, ou agrupado por outra coisa, nao tem.
+        unidades = sum(1 for g in grupos if isinstance(g, dict)
+                       and "FEBRACIS" in sem_acento(g.get("label")))
+        if unidades >= 5:
+            candidatos.append((unidades, c, rotulo))
+
+    if not candidatos:
+        resumo = [f"{c.get('componentId')}={rotulo_do_agregado(c.get('reportResult') or {})!r}"
+                  for c in componentes]
+        raise RuntimeError(
+            "Nenhum componente deste dashboard soma Conversao BC agrupado por "
+            f"unidade. Componentes: {resumo}")
+
+    # O de mais unidades e o ranking; os outros painels com CDF2 sao recortes.
+    candidatos.sort(key=lambda t: t[0], reverse=True)
+    n_unidades, escolhido, rotulo = candidatos[0]
+    log(f"  componente do ranking: {escolhido.get('componentId')} "
+        f"({rotulo}, {n_unidades} unidades)")
+    return escolhido
 
 
 def confere_agregado(resultado):
@@ -239,14 +372,16 @@ def main(diagnostico=False):
     load_env()
     sf = Salesforce()
 
-    dashboard = sf.get(f"/services/data/v{API_VERSION}/analytics/dashboards/{DASHBOARD_ID}")
+    alvo = mes_esperado()
+    dash_id = achar_dashboard(sf, alvo)
+    dashboard = sf.get(f"/services/data/v{API_VERSION}/analytics/dashboards/{dash_id}")
 
     # O metodo da casa: antes de interpretar, mostrar o que a fonte devolveu.
     # A primeira execucao morreu num `.get` sobre None sem dizer onde, o que e
     # o mesmo erro de sempre -- escrever o mapper pelo formato que se imagina,
     # nao pelo que a API manda.
     if diagnostico:
-        log(f"  forma: dashboard e {type(dashboard).__name__}")
+        log(f"  forma: dashboard {dash_id} e {type(dashboard).__name__}")
         if isinstance(dashboard, dict):
             log(f"  chaves do topo: {sorted(dashboard.keys())}")
             cd = dashboard.get("componentData")
@@ -303,9 +438,7 @@ def main(diagnostico=False):
     # com o mes do calendario faria o aviso gritar nos primeiros quatro dias de
     # todo mes -- e aviso que grita a toa e aviso que se aprende a ignorar.
     esperado = mes_esperado()
-    if mes != esperado:
-        log(f"         ATENCAO: o ranking e de {mes:%m/%Y}, e o esperado hoje era "
-            f"{esperado:%m/%Y}. O dashboard pode nao ter virado o mes.")
+    mes_atrasado = mes != esperado
 
     if not linhas:
         raise RuntimeError("Componente devolveu zero unidades; nao vou gravar mes vazio.")
@@ -323,12 +456,33 @@ def main(diagnostico=False):
     for i, (unidade, _, valor) in enumerate(linhas, start=1):
         log(f"  {i:2}. {unidade:<32} {valor:>14,.2f}")
 
+    if mes_atrasado:
+        log(f"         ATENCAO: o ranking e de {mes:%m/%Y}, e o esperado hoje era "
+            f"{esperado:%m/%Y}. O dashboard pode nao ter virado o mes.")
+
     if diagnostico:
         log("ranking: DIAGNOSTICO — nada foi gravado.")
         return
 
     n = gravar(linhas, mes, refresh_em)
     log(f"ranking: {n} linhas gravadas em fato_ranking_unidades")
+
+    # Grava ANTES de reclamar: se o dashboard nao virou, os numeros do mes
+    # anterior ainda sao legitimos (a janela comercial deixa agosto se mexer
+    # ate 04/09) e nao ha razao para descartar a atualizacao.
+    #
+    # Mas depois de gravar, MORRE EM VERMELHO. Se o corporativo criar um
+    # dashboard novo para o mes seguinte, o nosso id fica velho e este script
+    # regravaria o mesmo mes todo dia, para sempre, sem erro nenhum -- a falha
+    # mais perigosa que existe aqui, porque parece sucesso. Aviso em log
+    # ninguem le; execucao vermelha o GitHub notifica.
+    if mes_atrasado:
+        raise RuntimeError(
+            f"O dashboard ainda mostra {mes:%m/%Y}, e o esperado hoje era "
+            f"{esperado:%m/%Y}. Os dados de {mes:%m/%Y} foram atualizados, mas o "
+            f"mes novo NAO esta chegando: o dashboard {dash_id} foi encontrado "
+            f"pelo nome do mes esperado, entao os FILTROS dele e que devem estar "
+            f"atrasados. Confira com o corporativo.")
 
 
 if __name__ == "__main__":

@@ -26,7 +26,7 @@ import {
   useFinanceiroReceitaMensal, useFinanceiroCaixaMensal,
   useFinanceiroInadimp, useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
-  usePeriodoLimites,
+  usePeriodoLimites, useRankingUnidades,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroReceitaCategoriaDetalhe, useFinanceiroDespesaCategoriaPeriodo,
   useLojaReceitaPeriodo, useLojaReceitaTotalMes, useLojaReceitaConsolidada,
   useLojaSerie, useLojaKpisAno, useLojaKpisPeriodo,
@@ -2283,6 +2283,9 @@ function HubExecutivo({ onIr }) {
       {/* Bloco 2 */}
       <RadarAlertas alertas={alertas} />
 
+      {/* Bloco 2b — como estamos diante das outras franquias */}
+      <BlocoRankingUnidades />
+
       {/* Bloco 3 */}
       <div className="execCards">
         <CardSetor Icone={TrendingUp} titulo="Comercial" onIr={() => onIr("comercial")}
@@ -2311,6 +2314,139 @@ function HubExecutivo({ onIr }) {
         <CardTopConsultoras top3={consultoras.top3} estado={{ carregando: cons30.isLoading, erro: cons30.error }} onIr={() => onIr("comercial")} />
       </div>
     </>
+  );
+}
+
+
+/* ---- Ranking das unidades (migration 176) ----
+   A pergunta da Dulce nao e "quanto Salvador fez" -- isso ja esta no bloco de
+   faturamento. E "como estamos DIANTE DAS OUTRAS". Por isso o bloco abre pela
+   posicao e pela distancia, e a lista vem depois: numero de unidade sem
+   comparacao e so mais uma tabela.
+
+   O valor e "Conversao BC" -- venda nova de franquia, lida pronta do dashboard
+   corporativo. Exclui credito, permuta, cashback, bonus e consumidor de vagas,
+   e so conta canal Franquias. Nao e faturamento bruto, e a nota no rodape diz
+   isso: sem ela, alguem compara com o card do Comercial e acha que um dos dois
+   esta errado. */
+const UNIDADE_CASA = /SALVADOR/i;
+
+// "2026-08-01" -> "Agosto 2026"
+const rotuloMes = (iso) => {
+  const [a, m] = String(iso ?? "").split("-");
+  return m ? `${MESES[Number(m) - 1]} ${a}` : "—";
+};
+
+function BlocoRankingUnidades() {
+  const r = useRankingUnidades();
+
+  const dados = useMemo(() => {
+    const linhas = r.data ?? [];
+    if (!linhas.length) return null;
+    const mes = linhas.map((l) => String(l.mes)).sort().at(-1);
+    const doMes = linhas.filter((l) => String(l.mes) === mes)
+      .sort((a, b) => Number(a.posicao) - Number(b.posicao));
+    const casa = doMes.find((l) => UNIDADE_CASA.test(l.unidade ?? ""));
+    const lider = doMes[0];
+    const segundo = doMes[1];
+    // Quem mais subiu de posicao no mes. So existe com dois meses na serie.
+    const subiu = [...doMes].filter((l) => Number(l.posicoes_ganhas ?? 0) > 0)
+      .sort((a, b) => Number(b.posicoes_ganhas) - Number(a.posicoes_ganhas))[0];
+    return { mes, doMes, casa, lider, segundo, subiu, total: doMes.length,
+             refresh: doMes[0]?.refresh_em };
+  }, [r.data]);
+
+  const linha = (l, destaque) => {
+    const ganhas = Number(l.posicoes_ganhas ?? 0);
+    const seta = !l.posicoes_ganhas ? null
+      : ganhas > 0 ? { t: `▲ ${ganhas}`, c: C.up }
+        : ganhas < 0 ? { t: `▼ ${Math.abs(ganhas)}`, c: C.down } : null;
+    return (
+      <div key={l.unidade} style={{
+        display: "grid", gridTemplateColumns: "26px minmax(0,1fr) 108px 62px",
+        alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8,
+        background: destaque ? `${C.gold}14` : "transparent",
+        border: `1px solid ${destaque ? `${C.gold}3A` : "transparent"}`,
+      }}>
+        <span style={{ fontFamily: GROTESK, fontSize: 12, fontWeight: 800,
+                       color: destaque ? C.gold : C.dim }}>{l.posicao}º</span>
+        <span style={{ fontSize: 12, fontWeight: destaque ? 800 : 600,
+                       color: destaque ? C.gold : C.muted,
+                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              title={l.unidade}>{l.unidade}</span>
+        <span style={{ fontSize: 12, fontWeight: 700, textAlign: "right",
+                       color: destaque ? C.gold : C.text }}>{moeda(l.valor)}</span>
+        <span style={{ fontSize: 10.5, fontWeight: 700, textAlign: "right",
+                       color: seta?.c ?? C.dim }}>{seta?.t ?? "—"}</span>
+      </div>
+    );
+  };
+
+  const d = dados;
+  // Salvador fora do top 8 continua aparecendo: e a unica linha que a Dulce
+  // procura, e esconde-la seria o oposto do proposito do bloco.
+  const topo = d ? d.doMes.slice(0, 8) : [];
+  const casaForaDoTopo = d?.casa && !topo.some((l) => l.unidade === d.casa.unidade);
+
+  return (
+    <Bloco titulo="Ranking das unidades"
+      canto={d ? `${rotuloMes(d.mes)} · ${numero(d.total)} unidades` : "Conversão BC"}>
+      <Estado carregando={r.isLoading} erro={r.error} vazio={!d}
+        vazioTitulo="Ranking ainda não carregado"
+        vazioDica="A captura roda todo dia às 8h e lê o dashboard corporativo do Salesforce.">
+        {d && (
+          <>
+            {/* A leitura de uma frase so. */}
+            {d.casa && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: GROTESK, fontSize: 26, fontWeight: 800, color: C.gold }}>
+                    {d.casa.posicao}º
+                  </span>
+                  <span style={{ fontSize: 12.5, color: C.muted }}>
+                    de {numero(d.total)} unidades · {moeda(d.casa.valor)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: C.faint, marginTop: 3 }}>
+                  {Number(d.casa.posicao) === 1
+                    ? <>à frente do 2º por <b style={{ color: C.up }}>{moeda(Number(d.lider.valor) - Number(d.segundo?.valor ?? 0))}</b>{d.segundo ? ` (${d.segundo.unidade})` : ""}</>
+                    : <>atrás do líder ({d.lider.unidade}) por <b style={{ color: C.warn }}>{moeda(d.casa.atras_do_lider)}</b></>}
+                  {d.casa.variacao_pct != null && <>
+                    {" · "}{Number(d.casa.variacao_pct) >= 0 ? "cresceu" : "caiu"}{" "}
+                    <b style={{ color: Number(d.casa.variacao_pct) >= 0 ? C.up : C.down }}>
+                      {Math.abs(Number(d.casa.variacao_pct)).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%
+                    </b> contra o mês anterior
+                  </>}
+                </div>
+              </div>
+            )}
+
+            {d.subiu && (
+              <div style={{ fontSize: 11.5, color: C.faint, marginBottom: 10 }}>
+                Maior salto do mês: <b style={{ color: C.muted }}>{d.subiu.unidade}</b>, {" "}
+                {d.subiu.posicoes_ganhas} posiç{Number(d.subiu.posicoes_ganhas) === 1 ? "ão" : "ões"}.
+              </div>
+            )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {topo.map((l) => linha(l, UNIDADE_CASA.test(l.unidade ?? "")))}
+              {casaForaDoTopo && (
+                <>
+                  <div style={{ textAlign: "center", color: C.dim, fontSize: 11, padding: "2px 0" }}>···</div>
+                  {linha(d.casa, true)}
+                </>
+              )}
+            </div>
+
+            <div style={{ fontSize: 10.5, color: C.dim, marginTop: 10, lineHeight: 1.5 }}>
+              Conversão BC: venda nova de franquia. Exclui crédito, permuta, cashback,
+              bônus e consumidor de vagas — não é o faturamento bruto do card Comercial.
+              {d.refresh && <> Dashboard atualizado em {dataBR(d.refresh)}.</>}
+            </div>
+          </>
+        )}
+      </Estado>
+    </Bloco>
   );
 }
 

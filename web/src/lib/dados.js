@@ -810,6 +810,15 @@ export async function salvarContatoManual(cpf, telefone) {
   return data;
 }
 
+/* RANKING DAS UNIDADES (migration 176). Uma linha por (mês, unidade), com
+   posição, valor, variação contra o mês anterior e distância para o líder.
+   O número é "Conversão BC" — venda nova de franquia, lida pronta do
+   dashboard corporativo do Salesforce, não recalculada aqui.
+   `refresh_em` é a idade do dado: o dashboard responde com o último refresh
+   dele, e a tela precisa dizer isso. */
+export const useRankingUnidades = () =>
+  useView("vw_ranking_unidades", { ordem: ["mes", "posicao"], staleTime: 5 * 60 * 1000 });
+
 /* Saúde da carga de presença: última carga, dias desde então, volume. A carga
    é manual, e a fonte anterior (credenciamento) morreu ao longo de um ano sem
    ninguém perceber. Este número precisa estar na tela sempre que um número de
