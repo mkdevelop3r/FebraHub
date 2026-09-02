@@ -62,6 +62,8 @@ SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 CRM_TOKEN = os.environ["CRM_TOKEN"]
 CRM_LOCATION = os.environ["CRM_LOCATION_ID"]
 LIMITE = int(os.environ.get("MSG_LIMITE") or 10)
+FILA = os.environ.get("MSG_FILA", "todas").strip().lower()
+TURMA_FILTRO = os.environ.get("MSG_TURMA_ID", "").strip()
 
 SB = {"apikey": SERVICE_KEY, "Authorization": f"Bearer {SERVICE_KEY}",
       "Content-Type": "application/json"}
@@ -97,9 +99,13 @@ def erro_com_corpo(r):
 
 
 def ler_fila(view, limite):
-    p = f"?select=*&limit={limite}" if limite else "?select=*"
-    r = erro_com_corpo(requests.get(f"{SUPABASE_URL}/rest/v1/{view}{p}",
-                                    headers=SB, timeout=60))
+    params = {"select": "*"}
+    if limite:
+        params["limit"] = limite
+    if view == "vw_prazo_fila_envio" and TURMA_FILTRO:
+        params["turma_id"] = f"eq.{TURMA_FILTRO}"
+    r = erro_com_corpo(requests.get(f"{SUPABASE_URL}/rest/v1/{view}",
+                                    headers=SB, params=params, timeout=60))
     return r.json()
 
 
@@ -281,49 +287,57 @@ def processar(view, tag, funcao_registro, monta_campos, exige=()):
 
 
 def main():
-    processar(
-        "vw_boas_vindas_fila", TAG_BOAS_VINDAS, "registrar_envio_boas_vindas",
-        lambda l: {
-            "nome": l.get("nome"),
-            "telefone": l.get("whatsapp"),
-            "email": l.get("email"),
-            "curso": l.get("curso"),
-            "prazo": l.get("data_limite"),
-        },
-    )
+    if FILA not in {"todas", "boas_vindas", "turma", "prazo"}:
+        raise RuntimeError(f"MSG_FILA invalida: {FILA}")
+    if FILA == "prazo" and not TURMA_FILTRO:
+        raise RuntimeError("MSG_TURMA_ID e obrigatorio no disparo exclusivo de prazo")
+
+    if FILA in {"todas", "boas_vindas"}:
+        processar(
+            "vw_boas_vindas_fila", TAG_BOAS_VINDAS, "registrar_envio_boas_vindas",
+            lambda l: {
+                "nome": l.get("nome"),
+                "telefone": l.get("whatsapp"),
+                "email": l.get("email"),
+                "curso": l.get("curso"),
+                "prazo": l.get("data_limite"),
+            },
+        )
 
     # Fila de turma: confirmação e link do grupo. Diferente das outras
     # duas, que são views calculadas, esta é enfileirada pela Elis no
     # botão "Salvar turma" — ela decide o momento, o script só entrega.
     # Por isso a tag varia por linha: a mesma view traz os dois tipos.
-    processar(
-        "vw_turma_fila_envio",
-        lambda l: TAG_CONFIRMACAO if l["tipo"] == "confirmacao" else TAG_GRUPO,
-        "registrar_envio_turma",
-        lambda l: {
-            "nome": l.get("nome"),
-            "telefone": l.get("whatsapp"),
-            "email": l.get("email"),
-            "curso": l.get("curso"),
-            "datas": periodo(l.get("data_inicio"), l.get("data_fim")),
-            "horarios": horario_faixa(l.get("horario_inicio"), l.get("horario_fim")),
-            "credenciamento": l.get("horario_credenciamento"),
-            "link_grupo": l.get("link_grupo"),
-        },
-    )
+    if FILA in {"todas", "turma"}:
+        processar(
+            "vw_turma_fila_envio",
+            lambda l: TAG_CONFIRMACAO if l["tipo"] == "confirmacao" else TAG_GRUPO,
+            "registrar_envio_turma",
+            lambda l: {
+                "nome": l.get("nome"),
+                "telefone": l.get("whatsapp"),
+                "email": l.get("email"),
+                "curso": l.get("curso"),
+                "datas": periodo(l.get("data_inicio"), l.get("data_fim")),
+                "horarios": horario_faixa(l.get("horario_inicio"), l.get("horario_fim")),
+                "credenciamento": l.get("horario_credenciamento"),
+                "link_grupo": l.get("link_grupo"),
+            },
+        )
 
-    processar(
-        "vw_prazo_fila_envio", TAG_PRAZO, "registrar_envio_prazo",
-        lambda l: {
-            "nome": l.get("nome"),
-            "telefone": l.get("telefone"),
-            "email": None,
-            "curso": l.get("curso"),
-            "prazo": l.get("vence_em"),
-            "proxima": l.get("proxima_turma_em"),
-        },
-        exige=("proxima",),
-    )
+    if FILA in {"todas", "prazo"}:
+        processar(
+            "vw_prazo_fila_envio", TAG_PRAZO, "registrar_envio_prazo",
+            lambda l: {
+                "nome": l.get("nome"),
+                "telefone": l.get("telefone"),
+                "email": None,
+                "curso": l.get("curso"),
+                "prazo": l.get("vence_em"),
+                "proxima": l.get("proxima_turma_em"),
+            },
+            exige=("proxima",),
+        )
 
 
 if __name__ == "__main__":
