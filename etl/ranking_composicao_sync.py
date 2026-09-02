@@ -205,7 +205,11 @@ def main(diagnostico=False):
         raise RuntimeError("Nenhuma dimensao respondeu; nao vou gravar mes vazio.")
 
     unidades = len({l["unidade"] for l in linhas})
-    log(f"composicao: {len(linhas)} linhas, {unidades} unidades")
+    # "linhas COLETADAS", nao "linhas". A frase anterior era quase identica a
+    # da gravacao, e alguem leu o diagnostico como se tivesse gravado -- duas
+    # frases parecidas para estados opostos e armadilha, nao economia.
+    log(f"composicao: {len(linhas)} linhas COLETADAS de {unidades} unidades "
+        f"(ainda nao gravadas)")
 
     # Uma amostra no log: carga que so diz "ok" nao deixa ninguem perceber
     # quando o conteudo muda de forma.
@@ -216,11 +220,16 @@ def main(diagnostico=False):
             f"{l['qtd']:5d} vendas")
 
     if diagnostico:
-        log("composicao: DIAGNOSTICO — nada foi gravado.")
+        log("=" * 60)
+        log("MODO DIAGNOSTICO — NADA FOI GRAVADO.")
+        log("Para gravar, rode de novo SEM a caixa 'Mostrar a composicao sem gravar'.")
+        log("=" * 60)
         return
 
     n = gravar(linhas)
-    log(f"composicao: {n} linhas gravadas em fato_unidade_composicao")
+    log("=" * 60)
+    log(f"GRAVADO: {n} linhas em fato_unidade_composicao")
+    log("=" * 60)
 
     # Uma dimensao que sumiu e sinal de campo renomeado no Salesforce. Grava o
     # que veio (o resto e legitimo) e morre em vermelho para alguem olhar.
