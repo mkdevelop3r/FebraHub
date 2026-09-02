@@ -1052,6 +1052,54 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
   para a contingencia manual.
 - Nenhuma migration foi criada ou aplicada nesta troca de fonte.
 
+### Claude Code → Codex · 02/09/2026 · monitor do ranking de unidades
+
+- Objetivo: agente agendado que acompanha as franquias que mais vendem no
+  mês. Pedido do Bruno. Começou como monitoramento de fonte pública e virou
+  leitura do Salesforce depois que o diagnóstico do Codex (PRs #86/#88/#89)
+  mostrou que a API enxerga todas as unidades.
+- **"Conversão BC" não é `Opportunity.Amount`.** É a fórmula de resumo CDF2
+  sobre `Forma_Pag_Venda__c`. Medido em agosto/2026: Salvador 1.169.288,60 no
+  dashboard contra 1.176.238,77 somando Amount (+0,6%); Rio 1.067.624,20
+  contra 1.176.126,66 (+10%); Porto Alegre 834.059,43 contra 1.020.548,95
+  (+22%). Por Amount, Salvador e Rio ficam separados por R$ 112 — empatados;
+  pelo campo certo, Salvador lidera por 100 mil. **O ranking vira com o campo
+  errado, e vira de um jeito convincente.**
+- Decisão: **não reimplementar a fórmula.** O ETL lê o componente
+  `01aV2000000QRe9IAG` do dashboard `01ZV2000000cOxNMAU` pela Analytics API,
+  onde o número já vem calculado e combinado (faturamento + backlog + ED +
+  upgrade − canceladas, onze relatórios). Reproduzir isso na mão seria
+  engenharia reversa com erro provável de poucos por cento — o suficiente
+  para inverter posições.
+- Arquivos novos: `db/176_ranking_unidades.sql` (**APLICADA**, tabela e view
+  existem, ainda sem linhas), `etl/ranking_unidades_sync.py` e
+  `.github/workflows/ranking-unidades.yml`.
+- **Território, conforme combinado:** grupo de concorrência próprio
+  (`ranking-unidades`, NÃO `salesforce-data-sync`); só GET na Analytics API,
+  sem SOQL de escrita e sem disparar refresh de dashboard; escreve apenas em
+  `fato_ranking_unidades`. Nada de `fato_base_alunos`, `fato_pagamento_base`,
+  `sync-salesforce.yml` ou `sync-salesforce-api.yml` foi tocado (PRs #82–#85
+  preservados).
+- Travas no script, na disciplina do `assert_report`: componente ausente
+  aborta listando os ids presentes; agregado diferente de CDF2/Conversão BC
+  aborta em vez de gravar a coluna errada; zero unidades aborta em vez de
+  gravar mês vazio; e avisa alto quando o mês do relatório ≠ mês corrente
+  (os relatórios são mensais — `Fat com Plano de Pag.Fran.08` — e dashboard
+  esquecido na virada faria o agente narrar a corrida do mês passado).
+- `refresh_em` vai para o banco junto com o valor: o dashboard responde com o
+  último refresh dele, não com o instante da leitura.
+- **NÃO TESTADO.** As `SALESFORCE_*` não estão no `etl/.env` local, só nos
+  secrets. Primeira execução deve ser por `workflow_dispatch` com a caixa
+  "Mostrar o ranking sem gravar" marcada. Para o cron e o dispatch
+  funcionarem, o YAML precisa chegar na `main`.
+- **Cherry-pick abortado.** A árvore estava parada em `f435e2d` ("Expor
+  formulas do ranking Salesforce", 2 linhas em
+  `etl/salesforce_ranking_diagnostico.py`) com conflito — arquivo apagado de
+  um lado, modificado do outro. Abortei **com autorização explícita do
+  usuário** para poder commitar em árvore limpa. O commit continua existindo
+  nos PRs #86/#88/#89; se ainda for necessário nesta branch, refazer sem
+  conflito.
+
 ## Protocolo de encerramento
 
 1. Atualizar este arquivo com o resultado da tarefa.

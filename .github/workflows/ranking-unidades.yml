@@ -1,0 +1,65 @@
+# FebraHub · .github/workflows/ranking-unidades.yml
+#
+# Ranking mensal das unidades Febracis. Le o componente "RANKING UNIDADES"
+# do dashboard do Salesforce e grava em fato_ranking_unidades.
+#
+# POR QUE ELE E SEPARADO E NAO ENTROU NUM WORKFLOW EXISTENTE
+#
+# O handoff de 02/09/2026 registra que sync-salesforce-api.yml e
+# sync-salesforce.yml compartilham o grupo de concorrencia
+# `salesforce-data-sync` justamente para nunca escreverem juntos em
+# fato_base_alunos e fato_pagamento_base.
+#
+# Este aqui nao encosta em nenhuma das duas tabelas: le o Salesforce
+# (somente GET na Analytics API, sem SOQL de escrita, sem refresh de
+# dashboard) e escreve so em fato_ranking_unidades, que nao pertence a
+# nenhum outro fluxo. Por isso fica FORA daquele grupo -- entrar nele so
+# faria a carga principal esperar por um ranking.
+#
+# UMA VEZ POR DIA BASTA
+#
+# O numero e mensal e o dashboard tem refresh proprio; ler de hora em hora
+# gastaria chamada de API para reescrever a mesma linha. O upsert e por
+# (mes, unidade), entao rodar de novo no mesmo dia so atualiza o valor e o
+# refresh_em -- e e assim que a serie acompanha o mes correndo.
+
+name: Ranking de unidades
+
+on:
+  schedule:
+    # 11h UTC = 8h em Salvador, depois do refresh da madrugada.
+    - cron: '0 11 * * *'
+  workflow_dispatch:
+    inputs:
+      diagnostico:
+        description: Mostrar o ranking sem gravar
+        type: boolean
+        default: false
+
+concurrency:
+  # Grupo proprio: nao disputa com a carga do Salesforce.
+  group: ranking-unidades
+  cancel-in-progress: false
+
+jobs:
+  ranking:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install requests
+
+      - name: Sincronizar ranking
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SALESFORCE_AUTH_URL: ${{ secrets.SALESFORCE_AUTH_URL }}
+          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SALESFORCE_LOGIN_URL: ${{ secrets.SALESFORCE_LOGIN_URL }}
+        run: >
+          python etl/ranking_unidades_sync.py
+          ${{ inputs.diagnostico && '--diagnostico' || '' }}
