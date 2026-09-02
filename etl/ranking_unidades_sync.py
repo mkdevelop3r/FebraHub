@@ -46,6 +46,7 @@ Variaveis de ambiente: as mesmas do salesforce_api_sync.py
 
 import os
 import sys
+import traceback
 from datetime import date, datetime
 
 import requests
@@ -80,7 +81,7 @@ def componente_do_ranking(dashboard):
     Erro silencioso aqui viraria ranking vazio gravado como se fosse um mes
     sem vendas. Melhor quebrar e mostrar os ids disponiveis.
     """
-    componentes = dashboard.get("componentData") or []
+    componentes = [c for c in (dashboard.get("componentData") or []) if isinstance(c, dict)]
     for c in componentes:
         if c.get("componentId") == COMPONENTE_ID:
             return c
@@ -144,9 +145,11 @@ def linhas_do_componente(resultado):
     fatos = resultado.get("factMap") or {}
     saida = []
     for g in grupos:
+        if not isinstance(g, dict):
+            continue
         chave = g.get("key")
         celula = fatos.get(f"{chave}!T") or {}
-        agregados = celula.get("aggregates") or []
+        agregados = [a for a in (celula.get("aggregates") or []) if isinstance(a, dict)]
         if not agregados:
             continue
         valor = agregados[0].get("value")
@@ -184,6 +187,28 @@ def main(diagnostico=False):
     sf = Salesforce()
 
     dashboard = sf.get(f"/services/data/v{API_VERSION}/analytics/dashboards/{DASHBOARD_ID}")
+
+    # O metodo da casa: antes de interpretar, mostrar o que a fonte devolveu.
+    # A primeira execucao morreu num `.get` sobre None sem dizer onde, o que e
+    # o mesmo erro de sempre -- escrever o mapper pelo formato que se imagina,
+    # nao pelo que a API manda.
+    if diagnostico:
+        log(f"  forma: dashboard e {type(dashboard).__name__}")
+        if isinstance(dashboard, dict):
+            log(f"  chaves do topo: {sorted(dashboard.keys())}")
+            cd = dashboard.get("componentData")
+            log(f"  componentData e {type(cd).__name__}"
+                + (f" com {len(cd)} itens" if isinstance(cd, (list, dict)) else ""))
+            if isinstance(cd, list):
+                for i, c in enumerate(cd[:6]):
+                    if isinstance(c, dict):
+                        log(f"    [{i}] componentId={c.get('componentId')} "
+                            f"chaves={sorted(c.keys())}")
+                    else:
+                        log(f"    [{i}] {type(c).__name__}: {str(c)[:120]}")
+            elif isinstance(cd, dict):
+                log(f"    chaves: {sorted(cd.keys())[:10]}")
+
     componente = componente_do_ranking(dashboard)
     resultado = componente.get("reportResult") or {}
 
@@ -228,5 +253,11 @@ if __name__ == "__main__":
     try:
         main(diagnostico="--diagnostico" in sys.argv)
     except Exception as e:
+        # RuntimeError aqui e trava nossa, com mensagem escrita para ser lida.
+        # Qualquer outra coisa e defeito de codigo, e ai o traceback importa
+        # mais que a frase -- a primeira execucao falhou com
+        # "'NoneType' object has no attribute 'get'" e nao disse a linha.
         log(f"ERRO: {e}")
+        if not isinstance(e, RuntimeError):
+            traceback.print_exc()
         sys.exit(1)
