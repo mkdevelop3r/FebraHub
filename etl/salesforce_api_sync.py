@@ -235,7 +235,10 @@ def transform_students(records, allowed, labels):
             continue
         enrollment_type = labels.get(enrollment_value, enrollment_value)
         course = nested(record, "NomeCurso__r.Name", "")
-        sale_id = canonical_salesforce_id(record["Id"])
+        # O CSV exporta o ID de 18 caracteres. Preservar o mesmo formato e
+        # essencial porque matricula_id e original_id_venda sao chaves ja
+        # consumidas pelas views do Comercial, Financeiro e Pedagogico.
+        sale_id = str(record["Id"])
         email = str(nested(record, "Account.PersonEmail", "") or "").strip().lower()
         cpf = digits(nested(record, "Account.CPFun__c", ""))
         rows.append({
@@ -302,7 +305,7 @@ def transform_payments(records, allowed, labels):
             "valor": nested(record, "Venda__r.Amount"),
             "status_pagamento": record.get("Status__c"),
             "forma_pagamento": record.get("Name"),
-            "original_id_venda": canonical_salesforce_id(record.get("Venda__c")),
+            "original_id_venda": str(record.get("Venda__c") or "") or None,
             "nome_venda": nested(record, "Venda__r.Name"),
             "tipo_matricula": enrollment_type or None,
             "quantidade_parcelas": nested(record, "Venda__r.QuantidadeParcelas__c"),
