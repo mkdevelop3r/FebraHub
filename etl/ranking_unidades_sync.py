@@ -221,6 +221,20 @@ def main(diagnostico=False):
             log(f"  aviso: refreshDate ilegivel ({bruto!r})")
 
     confere_agregado(resultado)
+
+    # O `standardDateFilter` veio 2022-01-01 e o mes saiu 01/2022 -- errado:
+    # se o relatorio somasse desde 2022, Salvador teria milhoes acumulados, e
+    # nao 1,17 milhao. O recorte do mes esta em outro filtro. Aqui mostro os
+    # filtros crus para descobrir QUAL, em vez de deduzir do nome do
+    # relatorio (que nao tem ano e quebraria na virada de dezembro).
+    if diagnostico:
+        rm = resultado.get("reportMetadata") or {}
+        log(f"  relatorio: {rm.get('name')!r} (id {rm.get('id')})")
+        log(f"  standardDateFilter: {rm.get('standardDateFilter')}")
+        for f in (rm.get("reportFilters") or []):
+            log(f"  reportFilter: {f}")
+        log(f"  reportBooleanFilter: {rm.get('reportBooleanFilter')}")
+
     mes, origem_do_mes = mes_de_referencia(resultado, refresh_em)
     linhas = linhas_do_componente(resultado)
 
@@ -237,6 +251,16 @@ def main(diagnostico=False):
 
     if not linhas:
         raise RuntimeError("Componente devolveu zero unidades; nao vou gravar mes vazio.")
+
+    # Rotulo de mes errado e pior que carga que falha: entra em silencio e so
+    # aparece meses depois, quando o agente comparar meses que nao existem.
+    # Se o mes derivado esta longe do refresh, e porque a deducao furou.
+    if refresh_em is not None:
+        distancia = (refresh_em.year - mes.year) * 12 + (refresh_em.month - mes.month)
+        if not diagnostico and not (0 <= distancia <= 2):
+            raise RuntimeError(
+                f"Mes derivado ({mes:%m/%Y}) esta a {distancia} meses do refresh "
+                f"({refresh_em:%m/%Y}). Nao vou gravar com rotulo em que nao confio.")
 
     for i, (unidade, _, valor) in enumerate(linhas, start=1):
         log(f"  {i:2}. {unidade:<32} {valor:>14,.2f}")
