@@ -114,22 +114,62 @@ def confere_agregado(resultado):
     log(f"  agregado conferido: {rotulo}")
 
 
+def _inicio_do_filtro(filtros, coluna):
+    """Menor data de um filtro >= naquela coluna. None se nao houver."""
+    datas = []
+    for f in filtros:
+        if not isinstance(f, dict):
+            continue
+        if coluna not in str(f.get("column") or ""):
+            continue
+        if f.get("operator") not in ("greaterOrEqual", "greaterThan"):
+            continue
+        valor = str(f.get("value") or "")[:10]
+        try:
+            datas.append(date.fromisoformat(valor))
+        except ValueError:
+            continue
+    return min(datas) if datas else None
+
+
 def mes_de_referencia(resultado, refresh_em):
     """Qual mes este ranking representa.
 
-    Os relatorios do dashboard sao mensais e tem o mes no nome ('Fat com
-    Plano de Pag.Fran.08'). Confiar no nome e fragil; o filtro de data e o
-    que manda. Sem filtro legivel, cai no mes do refresh e AVISA -- porque
-    a virada do mes e exatamente quando um dashboard esquecido no mes
-    anterior faria o agente narrar a corrida errada.
+    NAO e o `standardDateFilter`: nele o relatorio traz CREATED_DATE de
+    2022-01-01 a 2026-08-31, uma janela larga que nao recorta mes nenhum.
+    Deduzir dali dava 01/2022 -- e os proprios numeros desmentiam, porque
+    somando desde 2022 Salvador teria milhoes, nao 1,17 milhao.
+
+    O mes verdadeiro esta no par de filtros sobre `DataContrato__c`:
+
+        >= 2026-08-01T03:00:00Z   (meia-noite de 01/08 em Brasilia)
+        <= 2026-09-01T02:59:00Z   (23:59 de 31/08 em Brasilia)
+
+    Agosto exato, em horario local. Uso a borda inferior, que ja vem no dia
+    1 -- e como o offset empurra para 03:00Z e nao para tras, a data em UTC
+    cai no mesmo dia; nao ha virada de mes a corrigir.
+
+    Os filtros de `Data_de_Aprova_o__c` (05/08 a 04/09, e 01/08 a 04/08) sao
+    a janela COMERCIAL de aprovacao, que corre do dia 5 ao dia 4. Servem para
+    o recorte do faturamento, nao como rotulo do mes -- por isso ficam de
+    reserva, e so entram se o contrato nao estiver la.
+
+    Tambem nao deduzo do nome ('Fat com Plano de Pag.Fran.08'): o nome nao
+    tem ano, e a virada de dezembro viraria um bug anual silencioso.
     """
-    filtro = (resultado.get("reportMetadata") or {}).get("standardDateFilter") or {}
-    inicio = filtro.get("startDate")
-    if inicio:
-        d = date.fromisoformat(str(inicio)[:10])
-        return d.replace(day=1), f"filtro do relatorio ({inicio})"
+    filtros = (resultado.get("reportMetadata") or {}).get("reportFilters") or []
+
+    d = _inicio_do_filtro(filtros, "DataContrato__c")
+    if d:
+        return d.replace(day=1), f"filtro DataContrato ({d.isoformat()})"
+
+    d = _inicio_do_filtro(filtros, "Data_de_Aprova")
+    if d:
+        log("  aviso: sem filtro de DataContrato; usei a janela de aprovacao")
+        return d.replace(day=1), f"janela de aprovacao ({d.isoformat()})"
+
     base = refresh_em or datetime.now()
-    log("  aviso: relatorio sem filtro de data legivel; usando o mes do refresh")
+    log("  aviso: nenhum filtro de data reconhecido; usando o mes do refresh")
     return date(base.year, base.month, 1), "mes do refresh"
 
 
