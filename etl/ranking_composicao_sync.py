@@ -52,8 +52,14 @@ ESTAGIOS = ("Aprovada", "Aprovada Parcial", "Pag. Parcial")
 DIMENSOES = {
     "origem": "LeadSource",
     "curso": "NomeCurso__r.Name",
-    "tipo": "Tipo_de_Matricula__r.Name",
+    # `Tipo_de_Matricula__c` e PICKLIST, nao lookup: `Tipo_de_Matricula__r`
+    # devolve "Didn't understand relationship". Os valores crus sao numeros
+    # (1, 27, 120) e o rotulo vem do describe do objeto -- ver `rotulos_picklist`.
+    "tipo": "Tipo_de_Matricula__c",
 }
+
+# Dimensoes cujo valor cru precisa ser traduzido: {dimensao: (objeto, campo)}
+PICKLISTS = {"tipo": ("Opportunity", "Tipo_de_Matricula__c")}
 
 
 def log(m):
@@ -103,6 +109,26 @@ def agrupar(sf, mes, campo):
     return consultar(sf, soql)
 
 
+def rotulos_picklist(sf, objeto, campo):
+    """{valor cru: rotulo} de um campo picklist.
+
+    Sem isto, o mix de matricula chega como 1, 27 e 120 -- numeros que nao
+    dizem nada a quem abre a tela. O describe do objeto e a unica fonte do
+    rotulo; nao ha objeto relacionado para consultar.
+    """
+    dados = sf.get(f"/services/data/v{API_VERSION}/sobjects/{objeto}/describe")
+    for f in (dados.get("fields") or []):
+        if f.get("name") != campo:
+            continue
+        valores = f.get("picklistValues") or []
+        if not valores:
+            log(f"  aviso: {campo} nao tem picklistValues; fica com o valor cru")
+        return {str(v.get("value")): (v.get("label") or v.get("value"))
+                for v in valores}
+    log(f"  aviso: campo {campo} nao encontrado no describe de {objeto}")
+    return {}
+
+
 def coletar(sf, mes):
     """Uma linha por (unidade, dimensao, valor). Dimensao que falha nao
     derruba as outras -- perder o mix de curso nao pode custar a origem."""
@@ -114,16 +140,25 @@ def coletar(sf, mes):
             falhas.append(f"{dimensao} ({campo}): {e}")
             continue
 
+        traducao = {}
+        if dimensao in PICKLISTS:
+            try:
+                traducao = rotulos_picklist(sf, *PICKLISTS[dimensao])
+            except Exception as e:
+                log(f"  aviso: nao consegui traduzir {dimensao}: {e}")
+
         n = 0
         for r in registros:
             unidade = r.get("unidade")
             if not unidade:
                 continue          # venda sem unidade nao pertence a ninguem
+            bruto = r.get("valor")
+            rotulo = traducao.get(str(bruto), bruto) if traducao else bruto
             linhas.append({
                 "mes": mes.isoformat(),
                 "unidade": unidade,
                 "dimensao": dimensao,
-                "valor": (r.get("valor") or "(sem informacao)")[:200],
+                "valor": (rotulo or "(sem informacao)")[:200],
                 "qtd": int(r.get("qtd") or 0),
                 "total": float(r.get("total") or 0),
             })
