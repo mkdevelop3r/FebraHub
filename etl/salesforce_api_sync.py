@@ -556,11 +556,18 @@ class Supabase:
         start, end = dates[0], dates[-1]
         if (date.fromisoformat(end) - date.fromisoformat(start)).days > 120:
             raise RuntimeError(f"{table}: janela maior que 120 dias; abortando.")
-        self.upsert(table, rows, key)
         incoming = {str(row[key]) for row in rows if row.get(key)}
         existing = self.keys_in_window(table, key, date_column, start, end)
-        self.delete_keys(table, key, existing - incoming)
-        log(f"{table}: {len(rows)} upserts; {len(existing - incoming)} removidos")
+        removals = existing - incoming
+        if existing and len(incoming) < len(existing) * 0.70:
+            raise RuntimeError(
+                f"{table}: API trouxe menos de 70% da janela existente; abortando.")
+        if existing and len(removals) > len(existing) * 0.25:
+            raise RuntimeError(
+                f"{table}: remocao acima de 25% da janela; abortando.")
+        self.upsert(table, rows, key)
+        self.delete_keys(table, key, removals)
+        log(f"{table}: {len(rows)} upserts; {len(removals)} removidos")
 
     def replace_presence_stage(self, rows):
         self.request("DELETE", "stg_presenca", params={"cpf": "not.is.null"})

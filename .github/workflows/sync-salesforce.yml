@@ -1,8 +1,8 @@
 # FebraHub · .github/workflows/sync-salesforce.yml
 #
-# Lê os relatórios do Salesforce que chegam por e-mail (Gmail) e atualiza
-# fato_pagamento_base e fato_base_alunos. Roda 3x/dia, pouco depois de cada
-# disparo agendado do Salesforce (06h, 12h, 17h Salvador).
+# CONTINGÊNCIA MANUAL. Lê os relatórios do Salesforce que chegam por e-mail
+# e atualiza fato_pagamento_base e fato_base_alunos. A carga principal agora
+# é feita diretamente pela API a cada 15 minutos em sync-salesforce-api.yml.
 #
 # Separado do sync-diario para não re-executar CisPay/Sympla/etc 3x ao dia.
 #
@@ -31,11 +31,11 @@
 # o histórico do git mostra quando mudou e por quê.
 name: Sync Salesforce (e-mail)
 on:
-  schedule:
-    - cron: '15 9 * * *'    # 06:15 Salvador
-    - cron: '15 15 * * *'   # 12:15 Salvador
-    - cron: '15 20 * * *'   # 17:15 Salvador
   workflow_dispatch:
+
+concurrency:
+  group: salesforce-data-sync
+  cancel-in-progress: false
 jobs:
   salesforce:
     runs-on: ubuntu-latest
