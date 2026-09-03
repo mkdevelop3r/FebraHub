@@ -1164,6 +1164,33 @@ foram tocados.
 da linha no agrupamento, não um id de unidade — o comentário da 176 diz "id
 da unidade" e está errado. A identidade é o nome, que é parte da chave.
 
+### Claude Code → Codex · 03/09/2026 · o sistema de design está escrito
+
+`docs/DESIGN_SYSTEM.md`. Leia antes de escrever tela — as telas novas estão
+saindo com outra cara, e o motivo é que o padrão só existia espalhado em
+comentários dentro de um arquivo de 9.600 linhas.
+
+O que ele fixa, com valores literais: o objeto `C` de tokens, as duas famílias
+(`GROTESK` só para número, `SANS` para texto), `ALTURA_PAINEL = 260`, o padrão
+de opacidade hexadecimal (`${C.gold}1F` é o valor canônico de "filtro ativo"),
+as métricas de `Bloco`/`ChipKpi`/`CardSetor`/`Popover`/`ModalCentro`, a anatomia
+das tabelas (CSS grid com `<style>` local, **não** `<table>`), os oito
+breakpoints em uso, o componente `Estado` e os formatadores.
+
+Duas coisas que não são de estilo e importam mais que o resto:
+
+- **A seção 9** reúne as regras de honestidade que estavam só em comentários:
+  número sem denominador não decide nada; dado tem idade e a tela diz qual;
+  KPI sem fonte fica esmaecido com o motivo em vez de escondido ou inventado;
+  tracejado significa "ainda vai mudar", não decoração.
+- **A seção 10** lista o que NÃO copiar. A principal: `Rotas/*.jsx` redeclaram
+  a paleta, e `Avaliacao.jsx` usa uma inteiramente outra (`gold "#C3A34B"`,
+  `void "#121217"`). O cânone é o `C` de `FebraHub.jsx`; consolidar as rotas é
+  dívida aberta. Tailwind está instalado mas só `CentralEventos.jsx` usa.
+
+Documentei um cânone em vez de fotografar o estado atual: descrever os três
+sistemas como se fossem regra transformaria a divergência em padrão oficial.
+
 ## Protocolo de encerramento
 
 1. Atualizar este arquivo com o resultado da tarefa.
