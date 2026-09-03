@@ -35,47 +35,43 @@ import {
   mktCanceladosDoMes, mktCancelarEvento, mktReativarEvento, mktSouGestor,
   mktPublicoDoMes,
   useCentralFebracis, usePodeEditarEvento, salvarEventoDetalhe, useSessao,
+  numero,
 } from "../lib/dados";
+import { C as UI, GROTESK, SANS as SANS_UI, Bloco, ChipKpi, Estado } from "../lib/ui.jsx";
 
 /* ============ DESIGN TOKENS ============
-   Mesma paleta do FebraHub.jsx. Antes este arquivo tinha a sua (#121217 /
-   #C3A34B), herdada do protótipo, e a tela ficava com dois dourados brigando
-   ao lado dos outros hubs. A identidade do módulo vem da ESTRUTURA — a régua
-   de dias, as etiquetas de área — e não de uma cor só dele.
+   Os VALORES vem todos de lib/ui.jsx. Antes eram redigitados aqui, e o
+   arquivo acumulou duas gerações: primeiro uma paleta propria do prototipo
+   (#121217 / #C3A34B), depois os nomes canonicos acrescentados AO LADO dos
+   antigos -- seis pares com o mesmo valor e dois nomes. Dois nomes para a
+   mesma cor nao e sinonimo, e um valor esperando para divergir.
 
-   O dourado é escasso de propósito: marca decisão (hoje, e a fila que espera
-   alguém). Contorno dourado em caixa grande vira papel de parede e some. */
+   Agora `C` espalha o canone e so acrescenta o que e realmente proprio
+   desta tela. Os apelidos continuam porque ~180 usos antigos dependem
+   deles; a diferenca e que agora sao APONTADORES, nao copias. Renomear os
+   usos e trabalho separado, e ate la nada pode divergir.
+
+   O dourado e escasso de proposito: marca decisao (hoje, e a fila que
+   espera alguem). Contorno dourado em caixa grande vira papel de parede. */
 const C = {
-  void: "#08080A",
-  panel: "rgba(14,14,16,.72)",
-  card: "rgba(255,255,255,.028)",
-  cardLine: "rgba(255,255,255,.08)",
-  surface: "rgba(255,255,255,.028)",
-  bronzeLine: "rgba(255,255,255,.07)",
-  /* Contorno de moldura, mais firme que `bronzeLine`. A grade do
-     calendario precisa se fechar como objeto; com 7% ela dissolvia no
-     fundo. Usar so aqui, para nao virar a nova borda padrao de tudo. */
+  ...UI,
+
+  /* Contorno de moldura, mais firme que `cardLine`. A grade do calendario
+     precisa se fechar como objeto; com 8% ela dissolvia no fundo. Usar so
+     aqui, para nao virar a nova borda padrao de tudo. */
   moldura: "rgba(255,255,255,.13)",
-  hair: "rgba(255,255,255,.045)",
-  gold: "#E4C06A",
-  goldTop: "#F2D488",
-  goldBase: "#B8934A",
-  goldDim: "#B8934A",
-  text: "#F5F3EE",
-  bright: "#EDEBE4",
-  muted: "#8B8B90",
-  faint: "#6A6A70",
-  dim: "#5B5B62",
-  down: "#E06C75",
-  warn: "#E6B04D",
-  up: "#6FCF97",
-  textMuted: "#8B8B90",
-  textFaint: "#5B5B62",
-  alert: "#E06C75",
-  positive: "#6FCF97",
+  bronzeLine: "rgba(255,255,255,.07)",
+
+  // Apelidos da geracao anterior. Apontam para o canone, nunca redefinem.
+  surface: UI.card,
+  goldDim: UI.goldBase,
+  textMuted: UI.muted,
+  textFaint: UI.dim,
+  alert: UI.down,
+  positive: UI.up,
 };
-const FONT_DISPLAY = "'Space Grotesk', system-ui, sans-serif";
-const SANS = "'Manrope', system-ui, sans-serif";
+const FONT_DISPLAY = GROTESK;   // apelido local; GROTESK e o nome do canone
+const SANS = SANS_UI;
 
 /* Etiqueta de área (Designer, Audiovisual, Tráfego…). Caixa alta pequena e
    espaçada, como a coluna de departamento de uma ordem do dia: identifica
@@ -1604,7 +1600,11 @@ function gradeDoMes(refDate) {
 const CORES_TIPO = {
   Curso:     { fundo: `${C.gold}14`, texto: C.gold, acento: C.gold },
   Palestra:  { fundo: `${C.up}14`, texto: C.up, acento: C.up },
-  Workshop:  { fundo: C.card, texto: C.bright, acento: C.muted },
+  // NAO use C.card aqui: e exatamente o fundo da celula de dia util
+  // (rgba(255,255,255,.028) na CelulaDia), e a pastilha desaparece -- sobra
+  // so o filete de 3px. As outras tres usam alfa 14 sobre cor semantica;
+  // Workshop nao tem cor propria, entao leva branco com a mesma presenca.
+  Workshop:  { fundo: "rgba(255,255,255,.10)", texto: C.bright, acento: C.muted },
   Live:      { fundo: `${C.down}14`, texto: C.down, acento: C.down },
 };
 // A view anterior à migration 151 não expunha `tipo` e continha somente
@@ -2005,308 +2005,12 @@ function PainelDetalheEvento({ evento, podeEditar, usuarioId, onFechar, onSalvo 
   );
 }
 
-function CentralEventosAnterior() {
-  const sessao = useSessao();
-  const permissao = usePodeEditarEvento();
-  const [selecionado, setSelecionado] = useState(null);
-
-  /* Mes visivel. Guarda o dia 1 para nao esbarrar no problema classico de
-     somar mes a partir do dia 31. */
-  const [mesRef, setMesRef] = useState(() => {
-    const h = new Date();
-    return new Date(h.getFullYear(), h.getMonth(), 1);
-  });
-  /* UM movimento, nao varios. A grade inteira entra deslizando do lado de
-     onde veio — para frente vem da direita, para tras vem da esquerda.
-     Nada mais nesta tela anima: pastilha nao pulsa, celula nao cresce no
-     hover. Efeito espalhado e o que faz interface parecer gerada. */
-  const [direcao, setDirecao] = useState(0);
-
-  const grade = useMemo(() => gradeDoMes(mesRef), [mesRef]);
-  const hoje = iso(new Date());
-
-  const central = useCentralFebracis(iso(grade.inicio), iso(grade.fim));
-
-  /* Indice dia -> eventos. Sem ele, cada uma das ~35 celulas varreria a
-     lista inteira a cada render. */
-  const porDia = useMemo(() => {
-    const mapa = new Map();
-    for (const e of central.data ?? []) {
-      const chave = String(e.data_inicio).slice(0, 10);
-      if (!mapa.has(chave)) mapa.set(chave, []);
-      mapa.get(chave).push(e);
-    }
-    return mapa;
-  }, [central.data]);
-
-  const andarMes = (passo) => {
-    setDirecao(passo);
-    setMesRef((m) => new Date(m.getFullYear(), m.getMonth() + passo, 1));
-  };
-
-  const irParaHoje = () => {
-    const h = new Date();
-    const alvo = new Date(h.getFullYear(), h.getMonth(), 1);
-    setDirecao(alvo < mesRef ? -1 : 1);
-    setMesRef(alvo);
-  };
-
-  const noMesCorrente =
-    mesRef.getMonth() === new Date().getMonth() &&
-    mesRef.getFullYear() === new Date().getFullYear();
-
-  const botaoIcone = {
-    width: 32, height: 32, borderRadius: 8,
-    background: C.surface, color: C.textMuted,
-    border: `1px solid ${C.bronzeLine}`,
-  };
-
-  return (
-    <div className="subir mx-auto w-full" style={{ maxWidth: 1180, paddingBottom: 48 }}>
-
-      {/* As keyframes moram AQUI, e nao no painel de detalhe: o painel so
-          existe quando alguem abre um evento, e a troca de mes acontece
-          com ele fechado. */}
-      <style>{`
-        @keyframes mesEntraDireita {
-          from { opacity: 0; transform: translateX(14px); }
-          to   { opacity: 1; transform: none; }
-        }
-        @keyframes mesEntraEsquerda {
-          from { opacity: 0; transform: translateX(-14px); }
-          to   { opacity: 1; transform: none; }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .mesGrade { animation: none !important; }
-        }
-      `}</style>
-
-      <div className="flex items-end justify-between gap-x-6 gap-y-4 flex-wrap" style={{ marginBottom: 10 }}>
-        <div>
-          <p className="uppercase tracking-widest"
-            style={{ color: C.gold, fontSize: 13, marginBottom: 8, fontWeight: 700 }}>
-            Marketing · Febracis Salvador
-          </p>
-          <h2 className="leading-tight" style={{
-            color: C.text, fontFamily: FONT_DISPLAY,
-            fontSize: "clamp(28px, 2.6vw, 36px)", fontWeight: 700,
-          }}>
-            Central Febracis
-          </h2>
-        </div>
-
-        {/* Navegacao igual a da agenda do Google, na ordem que a pessoa ja
-            conhece: "Hoje", setas, e o mes escrito. */}
-        <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={irParaHoje} disabled={noMesCorrente}
-            className="px-3 h-8 rounded-lg text-[12px] font-semibold"
-            style={{
-              ...botaoIcone, width: "auto",
-              color: noMesCorrente ? C.textFaint : C.text,
-              cursor: noMesCorrente ? "default" : "pointer",
-            }}>
-            Hoje
-          </button>
-          <button onClick={() => andarMes(-1)} aria-label="Mês anterior"
-            className="flex items-center justify-center" style={botaoIcone}>
-            <ChevronLeft size={15} />
-          </button>
-          <button onClick={() => andarMes(1)} aria-label="Próximo mês"
-            className="flex items-center justify-center" style={botaoIcone}>
-            <ChevronRight size={15} />
-          </button>
-          <span className="ml-1" style={{
-            fontFamily: FONT_DISPLAY, fontSize: 17, fontWeight: 600, color: C.text,
-          }}>
-            {MESES[mesRef.getMonth()]} de {mesRef.getFullYear()}
-          </span>
-          <button onClick={central.refetch} aria-label="Atualizar"
-            className="flex items-center justify-center" style={botaoIcone}>
-            <RefreshCw size={14} className={central.isFetching ? "girar" : ""} />
-          </button>
-        </div>
-      </div>
-
-      <p className="leading-relaxed" style={{ color: C.textMuted, marginBottom: 20, fontSize: 15 }}>
-        Cursos, palestras e workshops de Salvador. Clique no evento para ver e editar os detalhes.
-      </p>
-
-      {/* Resumo do mes E legenda na mesma faixa. Antes a legenda era so
-          tres bolinhas cinza: ocupava uma linha inteira sem dizer nada
-          sobre o mes que esta na tela. Aqui cada tipo mostra QUANTOS sao,
-          e a cor da contagem e a mesma da pastilha — a legenda deixa de
-          ser um aviso e vira o proprio numero. */}
-      <div className="flex items-center gap-2 flex-wrap mb-4">
-        {["Curso", "Palestra", "Workshop"].map((t) => {
-          const cor = corDoTipo(t);
-          const qtd = (central.data ?? []).filter(
-            (e) => e.tipo === t && new Date(e.data_inicio + "T00:00:00").getMonth() === mesRef.getMonth()
-          ).length;
-          return (
-            <span key={t} className="inline-flex items-center gap-2 rounded-lg"
-              style={{
-                padding: "6px 11px 6px 9px",
-                background: cor.fundo,
-                borderLeft: `3px solid ${cor.acento}`,
-                borderRadius: 6,
-              }}>
-              <span className="tabular-nums" style={{
-                fontFamily: FONT_DISPLAY, fontSize: 15, fontWeight: 700, color: cor.texto,
-              }}>
-                {qtd}
-              </span>
-              <span style={{ ...etiqueta, fontSize: 10, color: cor.texto, opacity: .85 }}>
-                {t}{qtd === 1 ? "" : "s"}
-              </span>
-            </span>
-          );
-        })}
-      </div>
-
-      {central.error ? (
-        <div className="flex items-start gap-2.5 rounded-xl p-3.5 text-sm"
-          style={{ background: "rgba(194,102,90,0.1)", border: `1px solid ${C.alert}`, color: C.text }}>
-          <AlertTriangle size={15} style={{ color: C.alert, marginTop: 1 }} className="shrink-0" />
-          <span className="min-w-0 break-words">{central.error.message}</span>
-        </div>
-      ) : (
-        <div className="rounded-xl overflow-hidden" style={{
-          border: `1px solid ${C.moldura}`,
-          borderTop: "none", borderLeft: "none",
-          background: C.void,
-          position: "relative",
-        }}>
-          {/* Banda de cabecalho, como na agenda do Google: fundo proprio
-              e texto claro. Sem ela, os dias da semana boiavam soltos
-              acima da grade. */}
-          <div className="grid grid-cols-7" style={{ background: "rgba(255,255,255,.05)" }}>
-            {DIAS_SEMANA.map((d) => (
-              <div key={d} className="py-2.5 text-center"
-                style={{
-                  ...etiqueta, fontSize: 10, color: C.textMuted,
-                  borderLeft: `1px solid ${C.bronzeLine}`,
-                  borderBottom: `1px solid ${C.bronzeLine}`,
-                }}>
-                {d}
-              </div>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-7 mesGrade"
-            key={`${mesRef.getFullYear()}-${mesRef.getMonth()}`}
-            style={{ animation: direcao === 0 ? "none" : `${direcao > 0 ? "mesEntraDireita" : "mesEntraEsquerda"} .26s ease-out` }}>
-            {grade.dias.map((d) => (
-              <CelulaDia key={iso(d)} data={d} hoje={hoje}
-                doMes={d.getMonth() === grade.mes}
-                eventos={porDia.get(iso(d)) ?? []}
-                onAbrir={setSelecionado} />
-            ))}
-          </div>
-
-          {/* Carregando por cima da grade, nao no lugar dela: trocar o mes
-              nao deve fazer a tela saltar para uma tarja e voltar. */}
-          {central.isLoading && (
-            <div className="absolute inset-0 flex items-center justify-center gap-2 text-sm"
-              style={{ background: "rgba(8,8,10,.55)", color: C.textFaint }}>
-              <RefreshCw size={14} className="girar" /> Carregando…
-            </div>
-          )}
-        </div>
-      )}
-
-      {selecionado && (
-        <PainelDetalheEvento key={selecionado.turma_id} evento={selecionado}
-          podeEditar={permissao.data === true} usuarioId={sessao?.user?.id}
-          onFechar={() => setSelecionado(null)} onSalvo={central.refetch} />
-      )}
-    </div>
-  );
-}
-
-/* ============ CENTRAL FEBRACIS · REDESENHO 2026 ============
-   Uma pergunta: o que começa neste mês e quanto sabemos sobre o público?
-   O calendário continua sendo a peça principal; os indicadores só dão o
-   contexto necessário antes da leitura da grade. */
-function EstadoCentral({ consulta, vazio, children }) {
-  const base = {
-    minHeight: 220, display: "flex", flexDirection: "column",
-    alignItems: "center", justifyContent: "center", textAlign: "center",
-    padding: 24,
-  };
-  if (consulta.isLoading) return (
-    <div style={base}>
-      <Loader2 size={20} className="girar" style={{ color: C.goldBase }} />
-      <div style={{ marginTop: 10, fontSize: 13, color: C.faint }}>Carregando</div>
-    </div>
-  );
-  if (consulta.error) return (
-    <div style={base}>
-      <ShieldAlert size={21} style={{ color: C.down }} />
-      <div style={{ marginTop: 10, fontSize: 13.5, fontWeight: 600, color: C.bright }}>
-        Não foi possível carregar
-      </div>
-      <div style={{ marginTop: 5, maxWidth: 560, fontSize: 12, color: C.faint }}>
-        {consulta.error.message}
-      </div>
-    </div>
-  );
-  if (vazio) return (
-    <div style={base}>
-      <Database size={21} style={{ color: C.faint }} />
-      <div style={{ marginTop: 10, fontSize: 13.5, fontWeight: 600, color: C.muted }}>
-        Nenhum evento neste mês
-      </div>
-      <div style={{ marginTop: 5, maxWidth: 520, fontSize: 12, color: C.faint }}>
-        Cursos vêm do Salesforce; palestras e workshops entram pela agenda institucional.
-      </div>
-    </div>
-  );
-  return children;
-}
-
-function KpiCentral({ rotulo, valor, nota, Icone, cor = C.text, hero = false }) {
-  return (
-    <div style={{
-      minHeight: 78, borderRadius: 13, padding: "13px 15px",
-      background: C.card,
-      border: `1px solid ${hero ? `${C.gold}38` : C.cardLine}`,
-      display: "flex", alignItems: "center", gap: 12,
-    }}>
-      <div style={{
-        width: 30, height: 30, borderRadius: 8, flexShrink: 0,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        color: hero ? C.gold : cor,
-        background: hero ? `${C.gold}24` : `${cor}1E`,
-      }}><Icone size={15} /></div>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 11, fontWeight: 600, color: C.muted }}>{rotulo}</div>
-        <div style={{
-          marginTop: 2, fontFamily: FONT_DISPLAY, fontSize: 22,
-          fontWeight: 700, letterSpacing: "-.5px", color: hero ? C.gold : cor,
-        }}>{valor}</div>
-        <div style={{ marginTop: 1, fontSize: 10.5, color: C.faint }}>{nota}</div>
-      </div>
-    </div>
-  );
-}
-
-function BlocoCentral({ titulo, canto, children }) {
-  return (
-    <section style={{
-      background: C.card, border: `1px solid ${C.cardLine}`,
-      borderRadius: 16, marginBottom: 20, overflow: "hidden",
-    }}>
-      <div style={{
-        padding: "13px 20px", borderBottom: `1px solid ${C.hair}`,
-        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
-      }}>
-        <h2 style={{ fontSize: 13.5, fontWeight: 800, color: C.bright }}>{titulo}</h2>
-        <span style={{ fontSize: 11, color: C.faint, textAlign: "right" }}>{canto}</span>
-      </div>
-      {children}
-    </section>
-  );
-}
+/* Os primitivos vem de lib/ui.jsx. As copias que viviam aqui divergiam do
+   canone justamente onde nao havia codigo para copiar -- icone do KPI
+   tingido pela cor da metrica, valor colorido em chip nao-hero, vazio como
+   caixa centrada de 220px. Nao era desatencao: `Bloco`, `ChipKpi` e `Estado`
+   eram privados de um arquivo de 9.600 linhas e nao davam para importar.
+   Agora dao, e nao existe mais copia para divergir. */
 
 export default function CentralEventos() {
   const sessao = useSessao();
@@ -2320,6 +2024,9 @@ export default function CentralEventos() {
   const grade = useMemo(() => gradeDoMes(mesRef), [mesRef]);
   const hoje = iso(new Date());
   const central = useCentralFebracis(iso(grade.inicio), iso(grade.fim));
+  // Carregando OU erro: nos dois casos nao ha numero para mostrar, e exibir
+  // zero seria afirmar que o mes esta vazio quando a carga e que falhou.
+  const semDado = central.isLoading || !!central.error;
 
   const eventosMes = useMemo(() => (central.data ?? []).filter((e) => {
     const d = new Date(`${String(e.data_inicio).slice(0, 10)}T12:00:00`);
@@ -2420,31 +2127,36 @@ export default function CentralEventos() {
         </div>
       </header>
 
+      {/* O TRAVESSAO COBRE ERRO, NAO SO CARREGAMENTO. Antes o valor caia para
+          `eventosMes.length` em caso de falha -- e com a carga quebrada isso
+          e zero. A faixa anunciava "0 programacao · 0 cursos" com o
+          calendario logo abaixo dizendo "Nao foi possivel carregar". Zero e
+          um valor; a falta dele e "—", e a diferenca decide se alguem acha
+          que o mes esta vazio ou que o sistema caiu. */}
       <div className="centralKpis" style={{
         display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))",
         gap: 10, marginBottom: 20,
       }}>
-        <KpiCentral hero Icone={CalendarDays} rotulo="programação"
-          valor={central.isLoading ? "—" : eventosMes.length}
+        <ChipKpi hero Icone={CalendarDays} label="programação"
+          valor={semDado ? "—" : numero(eventosMes.length)}
           nota={`${MESES[mesRef.getMonth()]} · total do mês`} />
-        <KpiCentral Icone={Ticket} rotulo="cursos"
-          valor={central.isLoading ? "—" : resumo.cursos.length}
-          nota={`${resumo.vendas.toLocaleString("pt-BR")} vendas · ${resumo.cursos.filter((e) => e.vendas != null).length} de ${resumo.cursos.length} medidos`}
-          cor={C.gold} />
-        <KpiCentral Icone={Users} rotulo="palestras"
-          valor={central.isLoading ? "—" : resumo.palestras.length}
-          nota={`${resumo.inscritos.toLocaleString("pt-BR")} inscritos · ${resumo.palestras.filter((e) => e.vendas != null).length} de ${resumo.palestras.length} medidas`}
-          cor={C.up} />
-        <KpiCentral Icone={Database} rotulo="cobertura do público"
-          valor={resumo.cobertura == null ? "—" : `${resumo.cobertura}%`}
-          nota={`${resumo.medidos.length} de ${eventosMes.length} eventos com número`}
-          cor={coberturaCor} />
+        <ChipKpi Icone={Ticket} label="cursos"
+          valor={semDado ? "—" : numero(resumo.cursos.length)}
+          nota={semDado ? "—" : `${numero(resumo.vendas)} vendas · ${resumo.cursos.filter((e) => e.vendas != null).length} de ${resumo.cursos.length} medidos`} />
+        <ChipKpi Icone={Users} label="palestras"
+          valor={semDado ? "—" : numero(resumo.palestras.length)}
+          nota={semDado ? "—" : `${numero(resumo.inscritos)} inscritos · ${resumo.palestras.filter((e) => e.vendas != null).length} de ${resumo.palestras.length} medidas`} />
+        <ChipKpi Icone={Database} label="cobertura do público"
+          valor={semDado || resumo.cobertura == null ? "—" : `${resumo.cobertura}%`}
+          nota={semDado ? "—" : `${resumo.medidos.length} de ${numero(eventosMes.length)} eventos com número`} />
       </div>
 
-      <BlocoCentral titulo="Calendário institucional"
-        canto={`${eventosMes.length.toLocaleString("pt-BR")} eventos · início de cada experiência`}>
-        <EstadoCentral consulta={central} vazio={!eventosMes.length}>
-          <div className="centralScroll">
+      <Bloco sem titulo="Calendário institucional"
+        canto={`${numero(eventosMes.length)} eventos · início de cada experiência`}>
+        <Estado carregando={central.isLoading} erro={central.error} vazio={!eventosMes.length}
+          vazioTitulo="Nenhum evento neste mês"
+          vazioDica="Cursos vêm do Salesforce; palestras e workshops entram pela agenda institucional.">
+          <div className="centralScroll rolagem">
             <div className="centralGrade">
               <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", background: "#17171c" }}>
                 {DIAS_SEMANA.map((dia) => <div key={dia} style={{
@@ -2464,8 +2176,8 @@ export default function CentralEventos() {
               </div>
             </div>
           </div>
-        </EstadoCentral>
-      </BlocoCentral>
+        </Estado>
+      </Bloco>
 
       <div style={{ fontSize: 10.5, color: C.dim, marginTop: -8 }}>
         Fontes: Salesforce para cursos e vendas; agenda institucional para palestras e workshops.
