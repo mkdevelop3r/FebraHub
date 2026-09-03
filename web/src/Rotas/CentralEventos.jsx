@@ -26,6 +26,7 @@ import {
   AlertTriangle, Copy, Check, Users, UserCheck, Zap, HelpCircle,
   RefreshCw, X, ListChecks, Ban, Undo2, CalendarClock, Bell, Ticket,
   Save, Lock,
+  Database, ShieldAlert, Loader2,
 } from "lucide-react";
 import {
   mktUnidadesAtivas, mktTiposComChecklist, mktEventosDoMes,
@@ -46,6 +47,9 @@ import {
    alguém). Contorno dourado em caixa grande vira papel de parede e some. */
 const C = {
   void: "#08080A",
+  panel: "rgba(14,14,16,.72)",
+  card: "rgba(255,255,255,.028)",
+  cardLine: "rgba(255,255,255,.08)",
   surface: "rgba(255,255,255,.028)",
   bronzeLine: "rgba(255,255,255,.07)",
   /* Contorno de moldura, mais firme que `bronzeLine`. A grade do
@@ -54,14 +58,24 @@ const C = {
   moldura: "rgba(255,255,255,.13)",
   hair: "rgba(255,255,255,.045)",
   gold: "#E4C06A",
+  goldTop: "#F2D488",
+  goldBase: "#B8934A",
   goldDim: "#B8934A",
   text: "#F5F3EE",
+  bright: "#EDEBE4",
+  muted: "#8B8B90",
+  faint: "#6A6A70",
+  dim: "#5B5B62",
+  down: "#E06C75",
+  warn: "#E6B04D",
+  up: "#6FCF97",
   textMuted: "#8B8B90",
   textFaint: "#5B5B62",
   alert: "#E06C75",
   positive: "#6FCF97",
 };
 const FONT_DISPLAY = "'Space Grotesk', system-ui, sans-serif";
+const SANS = "'Manrope', system-ui, sans-serif";
 
 /* Etiqueta de área (Designer, Audiovisual, Tráfego…). Caixa alta pequena e
    espaçada, como a coluna de departamento de uma ordem do dia: identifica
@@ -1588,10 +1602,10 @@ function gradeDoMes(refDate) {
 /* Cor por tipo. Nao e decoracao: com curso, palestra e workshop na mesma
    grade, a cor e o que deixa varrer o mes sem ler cada pastilha. */
 const CORES_TIPO = {
-  Curso:     { fundo: "rgba(195,163,75,0.22)",  texto: "#F0DCA6", acento: C.gold },
-  Palestra:  { fundo: "rgba(143,174,124,0.20)", texto: "#B7DCA6", acento: C.positive },
-  Workshop:  { fundo: "rgba(255,255,255,0.10)", texto: "#E8E6E0", acento: "#9C9CA6" },
-  Live:      { fundo: "rgba(194,102,90,0.20)",  texto: "#F0AFA8", acento: C.alert },
+  Curso:     { fundo: `${C.gold}14`, texto: C.gold, acento: C.gold },
+  Palestra:  { fundo: `${C.up}14`, texto: C.up, acento: C.up },
+  Workshop:  { fundo: C.card, texto: C.bright, acento: C.muted },
+  Live:      { fundo: `${C.down}14`, texto: C.down, acento: C.down },
 };
 // A view anterior à migration 151 não expunha `tipo` e continha somente
 // cursos. Se o schema cache ainda servir essa versão, o fallback correto é
@@ -1811,8 +1825,8 @@ function PainelDetalheEvento({ evento, podeEditar, usuarioId, onFechar, onSalvo 
         @media (prefers-reduced-motion: reduce) { .painelCentral { animation: none; } }
       `}</style>
 
-      <aside className="painelCentral h-full w-full max-w-[520px] flex flex-col"
-        style={{ background: "#101012", borderLeft: `1px solid ${C.moldura}` }}>
+      <aside className="painelCentral h-full flex flex-col"
+        style={{ width: "min(500px, 96vw)", background: "#141418", borderLeft: `1px solid ${C.cardLine}` }}>
 
         {/* ---------- cabecalho ---------- */}
         <div className="px-6 pt-6 pb-5" style={{ borderBottom: `1px solid ${C.hair}` }}>
@@ -1963,7 +1977,7 @@ function PainelDetalheEvento({ evento, podeEditar, usuarioId, onFechar, onSalvo 
             anotacao aberta, salvar exigia rolar ate o fim para achar o
             botao que confirma o que ja estava preenchido. */}
         {podeEditar && (
-          <div className="px-6 py-4" style={{ borderTop: `1px solid ${C.hair}`, background: "#0C0C0E" }}>
+          <div className="px-6 py-4" style={{ borderTop: `1px solid ${C.hair}`, background: "#141418" }}>
             {erro && (
               <div className="flex items-start gap-2 text-xs mb-3" style={{ color: C.alert }}>
                 <AlertTriangle size={13} className="shrink-0 mt-0.5" /> {erro}
@@ -1973,7 +1987,7 @@ function PainelDetalheEvento({ evento, podeEditar, usuarioId, onFechar, onSalvo 
               <button onClick={salvar} disabled={salvando}
                 className="flex-1 rounded-lg py-2.5 flex items-center justify-center gap-2 text-sm font-bold"
                 style={{
-                  background: C.gold, color: C.void,
+                  background: `linear-gradient(90deg, ${C.goldTop}, ${C.goldBase})`, color: "#1A1305",
                   opacity: salvando ? .6 : 1,
                   cursor: salvando ? "default" : "pointer",
                 }}>
@@ -1991,7 +2005,7 @@ function PainelDetalheEvento({ evento, podeEditar, usuarioId, onFechar, onSalvo 
   );
 }
 
-export default function CentralEventos() {
+function CentralEventosAnterior() {
   const sessao = useSessao();
   const permissao = usePodeEditarEvento();
   const [selecionado, setSelecionado] = useState(null);
@@ -2205,6 +2219,262 @@ export default function CentralEventos() {
           podeEditar={permissao.data === true} usuarioId={sessao?.user?.id}
           onFechar={() => setSelecionado(null)} onSalvo={central.refetch} />
       )}
+    </div>
+  );
+}
+
+/* ============ CENTRAL FEBRACIS · REDESENHO 2026 ============
+   Uma pergunta: o que começa neste mês e quanto sabemos sobre o público?
+   O calendário continua sendo a peça principal; os indicadores só dão o
+   contexto necessário antes da leitura da grade. */
+function EstadoCentral({ consulta, vazio, children }) {
+  const base = {
+    minHeight: 220, display: "flex", flexDirection: "column",
+    alignItems: "center", justifyContent: "center", textAlign: "center",
+    padding: 24,
+  };
+  if (consulta.isLoading) return (
+    <div style={base}>
+      <Loader2 size={20} className="girar" style={{ color: C.goldBase }} />
+      <div style={{ marginTop: 10, fontSize: 13, color: C.faint }}>Carregando</div>
+    </div>
+  );
+  if (consulta.error) return (
+    <div style={base}>
+      <ShieldAlert size={21} style={{ color: C.down }} />
+      <div style={{ marginTop: 10, fontSize: 13.5, fontWeight: 600, color: C.bright }}>
+        Não foi possível carregar
+      </div>
+      <div style={{ marginTop: 5, maxWidth: 560, fontSize: 12, color: C.faint }}>
+        {consulta.error.message}
+      </div>
+    </div>
+  );
+  if (vazio) return (
+    <div style={base}>
+      <Database size={21} style={{ color: C.faint }} />
+      <div style={{ marginTop: 10, fontSize: 13.5, fontWeight: 600, color: C.muted }}>
+        Nenhum evento neste mês
+      </div>
+      <div style={{ marginTop: 5, maxWidth: 520, fontSize: 12, color: C.faint }}>
+        Cursos vêm do Salesforce; palestras e workshops entram pela agenda institucional.
+      </div>
+    </div>
+  );
+  return children;
+}
+
+function KpiCentral({ rotulo, valor, nota, Icone, cor = C.text, hero = false }) {
+  return (
+    <div style={{
+      minHeight: 78, borderRadius: 13, padding: "13px 15px",
+      background: C.card,
+      border: `1px solid ${hero ? `${C.gold}38` : C.cardLine}`,
+      display: "flex", alignItems: "center", gap: 12,
+    }}>
+      <div style={{
+        width: 30, height: 30, borderRadius: 8, flexShrink: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        color: hero ? C.gold : cor,
+        background: hero ? `${C.gold}24` : `${cor}1E`,
+      }}><Icone size={15} /></div>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 11, fontWeight: 600, color: C.muted }}>{rotulo}</div>
+        <div style={{
+          marginTop: 2, fontFamily: FONT_DISPLAY, fontSize: 22,
+          fontWeight: 700, letterSpacing: "-.5px", color: hero ? C.gold : cor,
+        }}>{valor}</div>
+        <div style={{ marginTop: 1, fontSize: 10.5, color: C.faint }}>{nota}</div>
+      </div>
+    </div>
+  );
+}
+
+function BlocoCentral({ titulo, canto, children }) {
+  return (
+    <section style={{
+      background: C.card, border: `1px solid ${C.cardLine}`,
+      borderRadius: 16, marginBottom: 20, overflow: "hidden",
+    }}>
+      <div style={{
+        padding: "13px 20px", borderBottom: `1px solid ${C.hair}`,
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
+      }}>
+        <h2 style={{ fontSize: 13.5, fontWeight: 800, color: C.bright }}>{titulo}</h2>
+        <span style={{ fontSize: 11, color: C.faint, textAlign: "right" }}>{canto}</span>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+export default function CentralEventos() {
+  const sessao = useSessao();
+  const permissao = usePodeEditarEvento();
+  const [selecionado, setSelecionado] = useState(null);
+  const [mesRef, setMesRef] = useState(() => {
+    const h = new Date();
+    return new Date(h.getFullYear(), h.getMonth(), 1);
+  });
+  const [direcao, setDirecao] = useState(0);
+  const grade = useMemo(() => gradeDoMes(mesRef), [mesRef]);
+  const hoje = iso(new Date());
+  const central = useCentralFebracis(iso(grade.inicio), iso(grade.fim));
+
+  const eventosMes = useMemo(() => (central.data ?? []).filter((e) => {
+    const d = new Date(`${String(e.data_inicio).slice(0, 10)}T12:00:00`);
+    return d.getMonth() === mesRef.getMonth() && d.getFullYear() === mesRef.getFullYear();
+  }), [central.data, mesRef]);
+
+  const resumo = useMemo(() => {
+    const cursos = eventosMes.filter((e) => e.tipo === "Curso");
+    const palestras = eventosMes.filter((e) => e.tipo === "Palestra");
+    const medidos = eventosMes.filter((e) => e.vendas != null);
+    const vendas = cursos.reduce((s, e) => s + Number(e.vendas ?? 0), 0);
+    const inscritos = palestras.reduce((s, e) => s + Number(e.vendas ?? 0), 0);
+    const cobertura = eventosMes.length ? Math.round(medidos.length / eventosMes.length * 100) : null;
+    return { cursos, palestras, medidos, vendas, inscritos, cobertura };
+  }, [eventosMes]);
+
+  const porDia = useMemo(() => {
+    const mapa = new Map();
+    for (const evento of central.data ?? []) {
+      const chave = String(evento.data_inicio).slice(0, 10);
+      if (!mapa.has(chave)) mapa.set(chave, []);
+      mapa.get(chave).push(evento);
+    }
+    return mapa;
+  }, [central.data]);
+
+  const andarMes = (passo) => {
+    setDirecao(passo);
+    setMesRef((m) => new Date(m.getFullYear(), m.getMonth() + passo, 1));
+  };
+  const irParaHoje = () => {
+    const h = new Date();
+    const alvo = new Date(h.getFullYear(), h.getMonth(), 1);
+    setDirecao(alvo < mesRef ? -1 : 1);
+    setMesRef(alvo);
+  };
+  const noMesCorrente = mesRef.getMonth() === new Date().getMonth()
+    && mesRef.getFullYear() === new Date().getFullYear();
+  const coberturaCor = resumo.cobertura == null ? C.faint
+    : resumo.cobertura >= 80 ? C.up : resumo.cobertura >= 50 ? C.warn : C.down;
+  const botaoIcone = {
+    height: 32, borderRadius: 8, padding: "0 10px", fontFamily: SANS,
+    background: "transparent", color: C.muted, border: `1px solid ${C.cardLine}`,
+  };
+
+  return (
+    <div className="subir" style={{ maxWidth: 1180, margin: "0 auto", paddingBottom: 48, fontFamily: SANS }}>
+      <style>{`
+        @keyframes centralMesDireita { from { opacity:0; transform:translateX(14px) } to { opacity:1; transform:none } }
+        @keyframes centralMesEsquerda { from { opacity:0; transform:translateX(-14px) } to { opacity:1; transform:none } }
+        .centralScroll { overflow-x:auto; }
+        .centralGrade { min-width:760px; }
+        @media (prefers-reduced-motion: reduce) { .mesGrade { animation:none !important; } }
+        @media (max-width:680px) {
+          .centralKpis { grid-template-columns:repeat(2,minmax(0,1fr)) !important; }
+          .centralCabecalho { align-items:flex-start !important; }
+        }
+        @media (max-width:520px) {
+          .centralKpis { grid-template-columns:1fr !important; }
+          .centralMesNome { width:100%; order:-1; margin-bottom:4px; }
+        }
+      `}</style>
+
+      <header className="centralCabecalho" style={{
+        display: "flex", alignItems: "flex-end", justifyContent: "space-between",
+        gap: 20, flexWrap: "wrap", marginBottom: 20,
+      }}>
+        <div>
+          <div style={{
+            fontSize: 12, fontWeight: 700, letterSpacing: ".6px",
+            color: C.gold, textTransform: "uppercase", marginBottom: 6,
+          }}>Central Febracis · Salvador</div>
+          <h1 style={{ fontSize: 29, lineHeight: 1.15, fontWeight: 800, letterSpacing: "-.6px", color: C.text }}>
+            Agenda de {MESES[mesRef.getMonth()]}
+          </h1>
+          <p style={{ marginTop: 5, fontSize: 13, color: C.faint }}>
+            O que começa no mês e quanto já sabemos sobre o público.
+          </p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
+          <span className="centralMesNome" style={{
+            marginRight: 4, fontFamily: FONT_DISPLAY, fontSize: 14,
+            fontWeight: 700, color: C.bright,
+          }}>{MESES[mesRef.getMonth()]} {mesRef.getFullYear()}</span>
+          <button onClick={irParaHoje} disabled={noMesCorrente} style={{
+            ...botaoIcone, cursor: noMesCorrente ? "default" : "pointer",
+            color: noMesCorrente ? C.dim : C.muted,
+          }}>Hoje</button>
+          <button onClick={() => andarMes(-1)} aria-label="Mês anterior" style={{ ...botaoIcone, width: 32, padding: 0 }}>
+            <ChevronLeft size={15} />
+          </button>
+          <button onClick={() => andarMes(1)} aria-label="Próximo mês" style={{ ...botaoIcone, width: 32, padding: 0 }}>
+            <ChevronRight size={15} />
+          </button>
+          <button onClick={() => central.refetch()} aria-label="Atualizar" style={{ ...botaoIcone, width: 32, padding: 0 }}>
+            <RefreshCw size={14} className={central.isFetching ? "girar" : ""} />
+          </button>
+        </div>
+      </header>
+
+      <div className="centralKpis" style={{
+        display: "grid", gridTemplateColumns: "repeat(4,minmax(0,1fr))",
+        gap: 10, marginBottom: 20,
+      }}>
+        <KpiCentral hero Icone={CalendarDays} rotulo="programação"
+          valor={central.isLoading ? "—" : eventosMes.length}
+          nota={`${MESES[mesRef.getMonth()]} · total do mês`} />
+        <KpiCentral Icone={Ticket} rotulo="cursos"
+          valor={central.isLoading ? "—" : resumo.cursos.length}
+          nota={`${resumo.vendas.toLocaleString("pt-BR")} vendas · ${resumo.cursos.filter((e) => e.vendas != null).length} de ${resumo.cursos.length} medidos`}
+          cor={C.gold} />
+        <KpiCentral Icone={Users} rotulo="palestras"
+          valor={central.isLoading ? "—" : resumo.palestras.length}
+          nota={`${resumo.inscritos.toLocaleString("pt-BR")} inscritos · ${resumo.palestras.filter((e) => e.vendas != null).length} de ${resumo.palestras.length} medidas`}
+          cor={C.up} />
+        <KpiCentral Icone={Database} rotulo="cobertura do público"
+          valor={resumo.cobertura == null ? "—" : `${resumo.cobertura}%`}
+          nota={`${resumo.medidos.length} de ${eventosMes.length} eventos com número`}
+          cor={coberturaCor} />
+      </div>
+
+      <BlocoCentral titulo="Calendário institucional"
+        canto={`${eventosMes.length.toLocaleString("pt-BR")} eventos · início de cada experiência`}>
+        <EstadoCentral consulta={central} vazio={!eventosMes.length}>
+          <div className="centralScroll">
+            <div className="centralGrade">
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))", background: "#17171c" }}>
+                {DIAS_SEMANA.map((dia) => <div key={dia} style={{
+                  padding: "8px 12px", textAlign: "center", fontSize: 10,
+                  fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase",
+                  color: C.dim, borderBottom: `1px solid ${C.cardLine}`,
+                }}>{dia}</div>)}
+              </div>
+              <div className="mesGrade" key={`${mesRef.getFullYear()}-${mesRef.getMonth()}`}
+                style={{
+                  display: "grid", gridTemplateColumns: "repeat(7,minmax(0,1fr))",
+                  animation: direcao === 0 ? "none" : `${direcao > 0 ? "centralMesDireita" : "centralMesEsquerda"} .22s ease-out`,
+                }}>
+                {grade.dias.map((dia) => <CelulaDia key={iso(dia)} data={dia} hoje={hoje}
+                  doMes={dia.getMonth() === grade.mes} eventos={porDia.get(iso(dia)) ?? []}
+                  onAbrir={setSelecionado} />)}
+              </div>
+            </div>
+          </div>
+        </EstadoCentral>
+      </BlocoCentral>
+
+      <div style={{ fontSize: 10.5, color: C.dim, marginTop: -8 }}>
+        Fontes: Salesforce para cursos e vendas; agenda institucional para palestras e workshops.
+        A view ainda não informa a hora da última carga.
+      </div>
+
+      {selecionado && <PainelDetalheEvento key={selecionado.turma_id} evento={selecionado}
+        podeEditar={permissao.data === true} usuarioId={sessao?.user?.id}
+        onFechar={() => setSelecionado(null)} onSalvo={central.refetch} />}
     </div>
   );
 }

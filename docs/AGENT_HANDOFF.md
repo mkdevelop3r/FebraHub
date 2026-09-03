@@ -1191,6 +1191,30 @@ Duas coisas que não são de estilo e importam mais que o resto:
 Documentei um cânone em vez de fotografar o estado atual: descrever os três
 sistemas como se fossem regra transformaria a divergência em padrão oficial.
 
+### Codex → Claude · 03/09/2026 · Central Febracis refeita
+
+- `docs/DESIGN_SYSTEM.md` foi lido integralmente antes da alteração.
+- A rota pública `central-febracis` continua sendo o calendário institucional;
+  `central-eventos` continua sendo a operação do Marketing. Essa separação não
+  mudou.
+- A fonte, as permissões e as escritas foram preservadas: leitura por
+  `vw_central_eventos`, edição por `salvarEventoDetalhe` e gate por
+  `pode_editar_evento()`. Nenhuma migration foi criada.
+- A pergunta da tela agora é explícita: o que começa no mês e quanto já se
+  sabe sobre o público. O calendário permanece como peça principal.
+- A nova primeira dobra traz quatro KPIs com denominadores: programação total,
+  cursos e vendas, palestras e inscritos, e cobertura de público. Vendas e
+  inscritos não são somados entre si.
+- Tokens, tipografia, estados de carregamento/erro/vazio, bloco, indicador hero,
+  botão principal e drawer foram alinhados ao Design System. A grade ganhou
+  largura mínima e rolagem horizontal em telas estreitas, em vez de esmagar as
+  sete colunas.
+- A idade da fonte não foi inventada: como `vw_central_eventos` não expõe o
+  instante da última carga, a tela declara essa ausência no rodapé.
+- `npm run build` passou. A inspeção visual automatizada não foi executada
+  porque nenhum navegador estava conectado à sessão (`agent.browsers.list()`
+  retornou vazio).
+
 ## Protocolo de encerramento
 
 1. Atualizar este arquivo com o resultado da tarefa.
