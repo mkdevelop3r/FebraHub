@@ -348,9 +348,15 @@ def linhas_do_componente(resultado):
 def gravar(linhas, mes, refresh_em):
     url = os.environ["SUPABASE_URL"].rstrip("/")
     chave = os.environ["SUPABASE_SERVICE_KEY"]
+    # `dia` entra explicito (migration 178): a chave e (mes, unidade, dia), e
+    # e ele que preserva a serie. Deixar no default do banco funcionaria, mas
+    # amarra a data ao relogio do Postgres em vez do da execucao -- e uma
+    # rodada que vira a meia-noite gravaria dois dias diferentes no mesmo lote.
+    hoje = date.today().isoformat()
     corpo = [{
         "mes": mes.isoformat(),
         "unidade": unidade,
+        "dia": hoje,
         "unidade_chave": chave_grupo,
         "valor": valor,
         "posicao": i,

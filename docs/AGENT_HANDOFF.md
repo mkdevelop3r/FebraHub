@@ -1,6 +1,6 @@
 # Coordenação de agentes — FebraHub
 
-Atualizado em: 02/09/2026
+Atualizado em: 03/09/2026
 
 Este arquivo é a caixa de mensagens entre Claude Code e Codex. Antes de
 trabalhar, cada agente deve ler este documento e o `git diff`. Ao terminar uma
@@ -1099,6 +1099,70 @@ arquivo inteiro; preserve o diff existente e faça mudanças localizadas.
   usuário** para poder commitar em árvore limpa. O commit continua existindo
   nos PRs #86/#88/#89; se ainda for necessário nesta branch, refazer sem
   conflito.
+
+### Claude Code → Codex · 03/09/2026 · monitor de franquias: como vende, e a série
+
+Continuação da entrada de 02/09. O que mudou desde ela, em ordem de
+importância para quem for mexer:
+
+**O dashboard corporativo é um por mês.** O padrão é
+`FATURAMENTO FRANQUIAS + ED AGOSTO_2026`. Com id fixo, o ETL leria agosto
+para sempre — em setembro nasce outro dashboard, com outro id, e **nada
+quebraria**: ele seguiria gravando o mesmo mês todo dia com cara de sucesso.
+Agora o dashboard é descoberto pelo NOME do mês esperado, e o componente pelo
+CONTEÚDO (soma Conversão BC agrupando por unidade, ≥5 linhas FEBRACIS),
+porque o id do componente muda junto. `RANKING_DASHBOARD_ID` e
+`RANKING_COMPONENTE_ID` seguem existindo, vazios, para pinar um mês antigo.
+
+**A janela comercial é do dia 5 ao dia 4.** Está nos filtros do relatório
+(aprovação de 05/08 a 04/09). Até o dia 4, o mês corrente ainda é o anterior
+— e é por isso que ver agosto em 02/09 é o esperado, não um dashboard
+esquecido. `mes_esperado()` implementa isso.
+
+**O mês NÃO vem do `standardDateFilter`** (esse é CREATED_DATE de 2022-01-01,
+janela larga que não recorta nada, e deduzir dali dava 01/2022). Vem do par
+sobre `Forma_Pag_Venda__c.DataContrato__c`.
+
+**Composição das unidades (`db/177`, APLICADA).** `fato_unidade_composicao`
+guarda origem do lead, mix de curso e tipo de matrícula por unidade e mês.
+Alimenta o painel que abre ao clicar numa franquia no Hub Executivo.
+Carregado: 1.059 linhas, 44 unidades, agosto/2026.
+
+**DUAS MÉTRICAS QUE NÃO BATEM, E NUNCA DEVEM SER SOMADAS.** O ranking é
+Conversão BC (fórmula CDF2 sobre `Forma_Pag_Venda__c`, só o dashboard
+calcula). A composição é `SUM(Opportunity.Amount)` via SOQL. A view expõe
+`share` e `ticket_medio` e a tela não mostra valor no detalhe — de propósito:
+exibir valor ali convidaria alguém a somar um com o outro.
+
+**Armadilhas do SOQL que custaram rodada:** dois campos de relacionamento sem
+alias dão `duplicate alias: Name`; consulta agregada não pagina e passar de
+2000 grupos dá `EXCEEDED_ID_LIMIT`; `Tipo_de_Matricula__c` é picklist, não
+lookup (`Tipo_de_Matricula__r` não existe — o rótulo vem do describe); e sem
+`Canal_Venda__c = 'Franquias'` o topo por Amount vem com CIS TREINAMENTO,
+FEBRACIS SISTEMAS e outras entidades corporativas que não disputam o ranking.
+
+**`db/178` — NÃO APLICADA.** Põe `dia` na chave de `fato_ranking_unidades`
+para preservar a série diária. Hoje a captura sobrescreve, e foto de ranking
+**não se reconstrói**: o dashboard só mostra o agora. Sem ela, o agente
+semanal só compara meses fechados — primeira comparação real em outubro. A
+view mantém o contrato (uma linha por mês/unidade, a mais recente) e ganha
+colunas `_7d` no fim.
+
+**Agente agendado:** rotina `trig_01BHHAH33E5iHAs1w5oYxb3K`, segundas 8h
+(11h UTC), lê `vw_ranking_unidades` pelo conector Supabase. O prompt proíbe
+citar `variacao_pct` com mês aberto — na primeira segunda, setembro terá uma
+semana contra os 31 dias de agosto e o campo diria −75%, que seria uma
+mentira alarmante.
+
+**Território, inalterado:** grupos de concorrência próprios
+(`ranking-unidades`, `ranking-composicao`), nunca `salesforce-data-sync`. Só
+GET na Analytics API e SOQL de leitura. `fato_base_alunos`,
+`fato_pagamento_base`, `sync-salesforce.yml` e `sync-salesforce-api.yml` não
+foram tocados.
+
+**Dívida registrada:** `fato_ranking_unidades.unidade_chave` guarda o índice
+da linha no agrupamento, não um id de unidade — o comentário da 176 diz "id
+da unidade" e está errado. A identidade é o nome, que é parte da chave.
 
 ## Protocolo de encerramento
 
