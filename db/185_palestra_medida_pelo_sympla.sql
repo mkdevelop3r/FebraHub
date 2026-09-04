@@ -250,9 +250,7 @@ select jsonb_build_object(
         from tipo_suspeito
        having count(*) > 0
       union all
-      select qtd || ' evento(s) do mes sem vinculo com o Sympla: nao da para conferir se
- acontecem NA LOJA, e entram como se acontecessem. Foi assim que um workshop em Feira de
- Santana entrou na meta de outubro.'
+      select qtd || ' evento(s) do mes sem vinculo com o Sympla: nao da para conferir se acontecem NA LOJA, e entram como se acontecessem. Foi assim que um workshop em Feira de Santana entrou na meta de outubro.'
         from sem_local where qtd > 0
       union all
       select 'CALENDARIO VELHO: ' || string_agg(turma_id || ' (parada ha ' ||
