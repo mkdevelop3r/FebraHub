@@ -48,13 +48,25 @@ pessoas este dia põe dentro do prédio"**.
 peso, nesta ordem:
 
 ```
-IF  >  Workshop  >  FCIS  >  CIS  >  FOP  >  TCE  >  outro
+IF  >  Workshop  >  FCIS  >  CIS  >  FOP  >  TCE  >  TV  >  BHP  >  outro
 ```
 
 **Dia comum se separa por dia da semana.** Domingo vende zero em 89% das
 vezes; sábado, em 65%; dia útil, em 33%. Uma média única para os três é o
 maior erro isolado do método — foi o que separou as duas primeiras versões da
 meta de setembro em R$ 11 mil.
+
+**Curso que não é desta loja fica fora da amostra.** O
+`BUSINESS HIGH PERFORMANCE COM PAULO VIEIRA GLOBAL` (turma BHPPV-GL) é da
+holding: três dias, receita **zero** nos três, coerente com um evento que não
+acontece aqui. É o mesmo caso de fevereiro — não é dia fraco, é dia que não
+pertence a esta loja, e a média não pode pagar por ele.
+
+A exclusão tem que vir **antes** da classificação, e essa ordem é a armadilha:
+o nome da holding contém "BUSINESS HIGH". Classificando primeiro, os três dias
+zerados entrariam na média do BHP e a derrubariam de R$ 1.692 para R$ 1.230 —
+27% a menos. O filtro é `%PAULO VIEIRA%`, e não `%GLOBAL%`, porque este
+pegaria o CIS Global, curso legítimo e terceiro maior gerador de venda da loja.
 
 **Duas fontes de calendário, e elas são diferentes.** Cursos vêm de
 `dim_turmas`; palestras e workshops vêm de `mkt_eventos` (a Central Febracis),
@@ -73,10 +85,12 @@ tutoria não entram: são internas.
 | FCIS | R$ 4.548 | 4 dias |
 | CIS Global | R$ 2.261 | 9 dias |
 | FOP | R$ 1.618 | 6 dias |
+| Técnicas de Vendas (TV) | R$ 2.042 | **2 dias** |
+| Business High Performance (BHP) | R$ 1.692 | 8 dias |
 | dia útil comum | R$ 111 *(mediana)* | 91 dias |
 | sábado comum | R$ 0 *(mediana)* | 23 dias |
 | domingo comum | R$ 0 *(mediana)* | 30 dias |
-| palestra | **sem medida** | **0 dias** |
+| palestra | R$ 544 *(arbitrado)* | 3 dias medidos |
 | workshop da Central | **sem medida** | **0 dias** |
 
 **O `n` é parte do número.** IF se apoia em 6 dias, de duas turmas, que
@@ -88,7 +102,18 @@ Quando alguém questionar a meta, a diferença entre "medi em 6 dias" e "medi em
 Central só existe desde **19/08/2026**, e nenhuma palestra ou workshop
 aconteceu antes de setembro. Os valores usados na meta de 09/2026 (R$ 544 e
 R$ 2.363) são **arbitrados**, e isso está escrito na `observacao` daquela
-linha. Em outubro esses dias já terão história.
+linha.
+
+Em 04/09 a palestra ganhou os três primeiros dias medidos (01 a 03/09: R$ 0,
+R$ 544, R$ 1.375). A **mediana deu exatamente R$ 544**, o mesmo palpite — bom
+sinal, mas n=3 não troca uma constante. Fica para o fechamento de setembro. O
+workshop da Central continua sem um único dia medido.
+
+**Balde genérico é dívida, não solução.** TV e BHP caíam em "outro curso"
+(R$ 1.519/dia, n=44 — cursos que nada têm a ver entre si). Em outubro eram
+6 dos 31 dias e R$ 9.114 da máster. Medidos separados valem R$ 2.042 e
+R$ 1.692, e a meta subiu de R$ 32.461 para R$ 34.199. Sempre que um curso
+ocupar peso real no mês, tire-o do balde e meça (`db/183`).
 
 ---
 

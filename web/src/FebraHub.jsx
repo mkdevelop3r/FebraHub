@@ -2587,7 +2587,8 @@ const botaoMes = {
    tiverem o deles, a mesma estrutura serve. */
 const ROTULO_TIPO = {
   "IF": "Inteligência Financeira", "FCIS": "FCIS", "CIS": "CIS Global",
-  "FOP": "FOP", "TCE": "Tour Crescimento", "OUTRO": "outro curso",
+  "FOP": "FOP", "TCE": "Tour Crescimento", "TV": "Técnicas de Vendas",
+  "BHP": "Business High Performance", "OUTRO": "outro curso",
   "WORKSHOP-CURSO": "workshop de 8h", "WORKSHOP-EVENTO": "workshop da Central",
   "PALESTRA": "palestra", "UTIL": "dia útil comum", "SAB": "sábado", "DOM": "domingo",
 };
