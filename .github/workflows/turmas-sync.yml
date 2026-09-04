@@ -1,0 +1,64 @@
+name: Sincronizar turmas (Salesforce)
+
+# O calendario de turmas era carregado a mao, por relatorio. Em 04/09/2026 as
+# 234 linhas tinham `sincronizado_em` NULO, e uma turma cancelada em julho
+# ainda sustentava R$ 38.649 da meta de outubro.
+#
+# UMA VEZ POR DIA, e nao a cada 15 minutos como o sync-salesforce-api: turma
+# nao muda de hora em hora, e o que se ganha em frescor nao paga o risco de
+# escrever com mais frequencia numa tabela que tem coluna editada por gente.
+#
+# 07:30 de Salvador, depois do sync-diario das 06:00 -- assim a fila de
+# represados do Pedagogico ja acorda com o calendario do dia.
+#
+# PADRAO E DIAGNOSTICO. O agendamento roda com `--aplicar`; o disparo manual
+# comeca SEM gravar, para dar de ler antes de escrever.
+
+on:
+  schedule:
+    - cron: '30 10 * * *'      # 10:30 UTC = 07:30 em Salvador
+  workflow_dispatch:
+    inputs:
+      aplicar:
+        description: Gravar no Supabase (desmarcado = so diagnostica)
+        required: false
+        type: boolean
+        default: false
+      dias:
+        description: Quantos dias de passado entram na janela
+        required: false
+        type: string
+        default: '400'
+
+# Grupo proprio: este workflow escreve em dim_turmas, que o sync-salesforce-api
+# nao toca. Compartilhar o grupo deles so faria um esperar o outro sem motivo.
+concurrency:
+  group: turmas-sync
+  cancel-in-progress: false
+
+jobs:
+  sincronizar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r etl/requirements.txt
+      - name: Sincronizar turmas
+        env:
+          SALESFORCE_AUTH_URL: ${{ secrets.SALESFORCE_AUTH_URL }}
+          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SALESFORCE_LOGIN_URL: ${{ secrets.SALESFORCE_LOGIN_URL }}
+          SALESFORCE_UNIDADE: FEBRACIS SALVADOR 2
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          # No agendamento grava; no disparo manual so se pedirem.
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.aplicar }}" = "true" ]; then
+            python etl/turmas_sync.py --dias "${{ inputs.dias || '400' }}" --aplicar
+          else
+            python etl/turmas_sync.py --dias "${{ inputs.dias || '400' }}"
+          fi
