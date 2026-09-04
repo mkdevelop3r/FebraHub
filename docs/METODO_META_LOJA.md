@@ -90,19 +90,38 @@ tutoria não entram: são internas.
 | dia útil comum | R$ 111 *(mediana)* | 91 dias |
 | sábado comum | R$ 0 *(mediana)* | 23 dias |
 | domingo comum | R$ 0 *(mediana)* | 30 dias |
-| palestra | R$ 544 *(arbitrado)* | 3 dias medidos |
-| workshop da Central | **sem medida** | **0 dias** |
+| palestra na loja | R$ 791 | 19 dias |
+| workshop na loja | R$ 2.286 | 7 dias |
 
 **O `n` é parte do número.** IF se apoia em 6 dias, de duas turmas, que
 variaram de R$ 8.527 a R$ 17.424 — mais que o dobro entre o pior e o melhor.
 Quando alguém questionar a meta, a diferença entre "medi em 6 dias" e "medi em
 60" é a diferença entre defender e ceder.
 
-**Palestra e workshop da Central não têm medida nenhuma.** O calendário da
-Central só existe desde **19/08/2026**, e nenhuma palestra ou workshop
-aconteceu antes de setembro. Os valores usados na meta de 09/2026 (R$ 544 e
-R$ 2.363) são **arbitrados**, e isso está escrito na `observacao` daquela
-linha.
+**Palestra e workshop vêm do Sympla, e são medidos.** Isto esteve errado por
+uma semana: eu tinha olhado só o calendário da Central (`mkt_eventos`, que
+começa em 19/08/2026), concluído que não havia histórico, e arbitrado R$ 544 e
+R$ 2.363. A Dulce corrigiu em cinco palavras — *a fonte vem do Sympla*.
+
+`dim_eventos` tem **90 eventos desde 15/01/2025**. Medidos, dão R$ 791 a
+palestra (n=19) e R$ 2.286 o workshop (n=7). O palpite do workshop tinha caído
+a 3% do real; o da palestra estava 45% baixo.
+
+**As duas fontes servem para coisas diferentes, e a diferença importa.**
+`dim_eventos` (Sympla) é o passado: vai a 2025 e — decisivo — tem **local**.
+`mkt_eventos` (Central) é o futuro: vai até dezembro, mas não diz onde o
+evento acontece. Quando o mesmo evento está nas duas, o Sympla ganha.
+
+**Evento fora da loja não conta.** O calendário da unidade inclui evento em
+outra cidade: o *Cis Cor de Rosa* de 03/10 está lá como palestra, e no Sympla
+é um workshop em **Feira de Santana**. Estava somando R$ 544 à meta de uma
+loja em Salvador onde ninguém ia entrar naquele sábado. Mesma pergunta do
+curso da holding: não é "que evento existe", é **"quantas pessoas este dia põe
+dentro deste prédio"**.
+
+A assimetria, dita em voz alta: no passado exige-se local conhecido; no futuro
+aceita-se local desconhecido, porque só 6 dos 27 eventos do hub têm vínculo com
+o Sympla. Por isso a função avisa quantos eventos do mês não dá para conferir.
 
 Em 04/09 a palestra ganhou os três primeiros dias medidos (01 a 03/09: R$ 0,
 R$ 544, R$ 1.375). A **mediana deu exatamente R$ 544**, o mesmo palpite — bom
