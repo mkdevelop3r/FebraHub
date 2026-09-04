@@ -42,6 +42,27 @@ outra.
    meta conta -- as 36 tem o nosso pedagogico como dono. A regra nao excluiria
    nenhuma. 36 de 36.
 
+   A REGRA DE NEGOCIO, dita pela Dulce: "se um curso acontece aqui na Febracis
+   Salvador, a unidade realizadora vai estar FEBRACIS SALVADOR 2". Ela esta
+   certa, e e NECESSARIA -- mas nao e SUFICIENTE, e a diferenca custa caro.
+
+   `Opportunity.Unidade__c` ("Unidade Realizadora do Curso") aponta para
+   FEBRACIS SALVADOR 2 em 97 turmas. Dezenove delas acontecem em LISBOA,
+   Aracaju, Barreiras, Feira de Santana, Jequie e Olho d'Agua das Flores: e a
+   nossa unidade operando FORA. Quem separa e o `PoloTurma__c` -- na
+   `2026 - CIS-GL252 - Jequie` a matriz e Salvador 2 e o polo e "Jequie - BA".
+
+   Ou seja: acontece aqui = realizadora e nossa E polo e Salvador. Medido em
+   04/09, o DONO da turma codifica exatamente essa conjuncao -- as 78 turmas em
+   que dono e realizadora concordam, mais zero excecoes: nao existe uma turma
+   sequer do nosso dono, com venda nossa, realizada por outra unidade.
+
+   Entao o dono continua sendo o criterio operacional, por um motivo pratico:
+   `Unidade__c` e `PoloTurma__c` vivem na Opportunity, e turma sem venda nao
+   tem Opportunity -- justamente a turma futura que a meta mais precisa. Mas a
+   realizadora entra como VERIFICACAO: se um dia aparecer turma do nosso dono
+   realizada por outra unidade, o sync avisa em vez de errar calado.
+
    E ela explica um caso que enganava: `2026 - ML510` (julho) esta em
    dim_turmas e e nossa; `2026 - ML514` (outubro) NAO e -- e edicao de outra
    unidade em que nossos alunos compraram. Mesmo curso, nomes quase iguais,
@@ -146,19 +167,44 @@ def dia_local(valor):
 
 
 def turmas_com_venda_nossa(sf, desde):
-    """Ids das turmas em que ESTA unidade vendeu. Ver armadilha 1.
+    """Turmas em que ESTA unidade vendeu. Ver armadilha 1, porta (b).
 
-    Agregado do SOQL nao aceita campo de relacionamento no GROUP BY, entao sai
-    so o Id e a contagem; os campos vem na consulta seguinte.
+    Devolve (vendas por turma, unidade realizadora por turma).
+
+    Agrupa tambem por `Unidade__c` -- a Unidade Realizadora do Curso -- porque
+    ela e a regra de negocio e serve de verificacao. Os dois sao campos de
+    referencia e agrupam; `PoloTurma__c` e formula e NAO agrupa ("field
+    PoloTurma__c can not be grouped in a query call"), por isso a cidade fica
+    de fora daqui.
+
+    Campo de relacionamento tambem nao entra no GROUP BY, entao sai so o Id; os
+    nomes vem na consulta seguinte.
     """
-    soql = ("SELECT Turma__c, COUNT(Id) vendas FROM Opportunity "
+    soql = ("SELECT Turma__c, Unidade__c, COUNT(Id) vendas FROM Opportunity "
             f"WHERE Unidade_Geradora_Venda__r.Name = '{UNIDADE}' "
             "AND Turma__c != null "
             f"AND Turma__r.Data_Inicial__c >= {desde}T00:00:00Z "
-            "GROUP BY Turma__c")
-    linhas = sf.query(soql)
-    return {canonical_salesforce_id(l["Turma__c"]): int(l["vendas"])
-            for l in linhas if l.get("Turma__c")}
+            "GROUP BY Turma__c, Unidade__c")
+    vendas, realizadora = {}, {}
+    for l in sf.query(soql):
+        if not l.get("Turma__c"):
+            continue
+        t = canonical_salesforce_id(l["Turma__c"])
+        n = int(l["vendas"])
+        # Uma turma pode aparecer com mais de uma realizadora se houver venda
+        # divergente; fica a que tem mais vendas.
+        if n >= vendas.get(t, 0):
+            realizadora[t] = (canonical_salesforce_id(l["Unidade__c"])
+                              if l.get("Unidade__c") else None)
+        vendas[t] = vendas.get(t, 0) + n
+    return vendas, realizadora
+
+
+def id_da_unidade(sf):
+    """Id da Coligada__c da nossa unidade. Por nome, nao por Id fixo."""
+    linhas = sf.query(
+        f"SELECT Id FROM Coligada__c WHERE Name = '{UNIDADE}'")
+    return canonical_salesforce_id(linhas[0]["Id"]) if linhas else None
 
 
 def turmas_que_realizamos(sf, dono, desde):
@@ -315,10 +361,27 @@ def main():
 
     dono = id_do_pedagogico(sf)
     nossas = turmas_que_realizamos(sf, dono, desde)
-    vendas = turmas_com_venda_nossa(sf, desde)
+    vendas, realizadora = turmas_com_venda_nossa(sf, desde)
+    nossa_unidade = id_da_unidade(sf)
     log(f"turmas realizadas por nos (dono {PEDAGOGICO_USERNAME}): {len(nossas)}")
     log(f"turmas com venda desta unidade: {len(vendas)}")
     log(f"so pela venda, {len(nossas - set(vendas))} turmas nossas ficariam de fora")
+
+    # A regra de negocio como VERIFICACAO, nao como filtro -- ver o cabecalho.
+    # Em 04/09 isto deu zero. Se um dia der mais que zero, o pressuposto de que
+    # o dono equivale a "realizadora nossa e polo Salvador" quebrou, e a meta
+    # vai contar dia de curso que acontece em outra praca.
+    if nossa_unidade:
+        divergentes = [t for t in nossas
+                       if t in realizadora and realizadora[t] != nossa_unidade]
+        if divergentes:
+            log("")
+            log(f"  ATENCAO: {len(divergentes)} turma(s) do nosso pedagogico tem "
+                f"Unidade Realizadora DIFERENTE de {UNIDADE}. O criterio de "
+                "'acontece aqui' assume que isso nunca acontece -- confira "
+                "antes de gravar:")
+            for t in divergentes:
+                log(f"    ? {t} (realizadora {realizadora[t]})")
 
     alvo = nossas | set(vendas)
     if not alvo:
