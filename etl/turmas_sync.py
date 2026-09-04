@@ -14,17 +14,32 @@ Estao no cabecalho de db/187 tambem, porque quem mexe numa raramente le a
 outra.
 
 1. O NOME DA TURMA NAO IDENTIFICA A TURMA. "2026 - CIS-GL252" existe umas 40
-   vezes no Salesforce, uma por unidade, e `Unidade__c` e NULO na maioria --
-   inclusive nas nossas. Filtrar por unidade devolve 3 turmas, todas com data
-   de 2039.
+   vezes no Salesforce, uma por unidade, e `Unidade__c`, `Cidade__c` e
+   `Local__c` sao NULOS -- inclusive nas nossas. Filtrar por unidade devolve 3
+   turmas, todas com data de 2039.
 
-   O caminho e ao contrario: partir das NOSSAS VENDAS. Opportunity com
-   `Unidade_Geradora_Venda__r.Name = UNIDADE` devolve `Turma__c`, e esse Id
-   sim identifica. Achou 30 turmas nossas a partir de 09/2026.
+   SAO DUAS PORTAS, e cada uma responde a uma pergunta diferente:
 
-   Consequencia: turma sem nenhuma venda nossa e INVISIVEL para este sync. E
-   uma limitacao real, nao um bug -- e o log diz quantas turmas locais ficaram
-   de fora por isso.
+   a) O DONO. `Turma__c.OwnerId` da turma nossa e o usuario
+      PEDAGOGICO FEBRACIS BAHIA. Sao as turmas que ESTA unidade REALIZA --
+      inclusive as que ainda nao venderam nada. E a porta do CALENDARIO, e a
+      que a meta da Loja precisa.
+
+   b) A VENDA. Opportunity com `Unidade_Geradora_Venda__r.Name = UNIDADE`
+      devolve turmas em que NOSSOS ALUNOS estao, inclusive realizadas em outra
+      cidade (Goiania, Sao Paulo). E a porta do PEDAGOGICO.
+
+   As duas juntas, sem repetir. Medido em 04/09 na janela de 400 dias: 92 pelo
+   dono, 174 pela venda, 188 na uniao -- e 14 turmas NOSSAS que so a venda nao
+   acharia (BHPPV-GL, LLPASS001, IAPN-ON01, CI010 DM, TCBRF, LIVRAOMCIS001,
+   CIS-GL255 e outras). So a venda acha as de fora, que o Pedagogico precisa.
+
+   Conferido: para outubro a uniao devolve exatamente as quatro turmas que a
+   meta ja usava -- IF37, CIS-GL252, TV09 e BHP26 -- com as mesmas datas.
+
+   Antes de achar o dono eu usava so a venda, e a consequencia era feia: turma
+   futura sem nenhuma venda ainda era INVISIVEL -- exatamente a turma sobre a
+   qual a meta mais precisa saber, porque e a que ainda vai encher a loja.
 
 2. AS DATAS SAO DATETIME EM UTC. `Data_Final__c` da IF37 e
    2026-10-12T02:59:59Z, que em America/Bahia e 11/10 23:59:59. Cortar a
@@ -42,12 +57,21 @@ outra.
    Salesforce acha vai para `status_sf`, ao lado, e a discordancia aparece em
    `vw_turma_divergencia`.
 
-5. NEM TODA TURMA NOSSA ACONTECE AQUI. As turmas vem pelas NOSSAS vendas,
-   entao vem junto o que a unidade vendeu para turma realizada em outra cidade
-   -- `2026 - CIS252 - Goiania`, `2026 - PB001 - Sao Paulo`. Sao 12 curtas so
-   em 2026. Certo para o Pedagogico (o aluno e nosso), errado para a meta da
-   Loja (o predio nao enche). Marcadas com `acontece_aqui = false`, por
-   heuristica de nome, SO ao criar -- depois a coluna e da pessoa.
+5. NEM TODA TURMA NOSSA ACONTECE AQUI. Pela porta da venda vem o que a unidade
+   vendeu para turma realizada em outra cidade -- `2026 - CIS252 - Goiania`,
+   `2026 - PB001 - Sao Paulo`. Sao 12 curtas so em 2026. Certo para o
+   Pedagogico (o aluno e nosso), errado para a meta da Loja (o predio nao
+   enche).
+
+   `acontece_aqui` = O DONO E O NOSSO PEDAGOGICO. Nao e chute de nome: e o
+   mesmo campo da porta (a). Conferido -- `2026 - TCE01 - TOUR PV SALVADOR`
+   tem sufixo de cidade e sai como NOSSO; Feira de Santana, Belo Horizonte e
+   Curitiba saem como de outro dono. Uma heuristica de nome precisaria de uma
+   excecao para SALVADOR; o campo nao precisa de excecao nenhuma.
+
+   O sync escreve `acontece_aqui` na PRIMEIRA vez que toca a linha
+   (`sincronizado_em` nulo), para substituir o chute inicial da db/187 pelo
+   dado real. Depois disso a coluna e da pessoa e ele nao encosta mais.
 
 6. O SALESFORCE TEM LINHA DE MENTIRA. GREEN BELT, GOLDEN BELT e COMBO tem data
    2039-08-16 a 2040-08-16 e aparecem TRES vezes cada, com Ids diferentes e o
@@ -62,7 +86,6 @@ por uma pessoa antes de escrever.
 
 import argparse
 import os
-import re
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -85,14 +108,21 @@ COLUNAS_DO_SALESFORCE = ("curso", "data_inicio", "data_fim", "capacidade",
 # Depois disto nao e calendario, e registro-modelo. Ver armadilha 6.
 ANOS_DE_HORIZONTE = 3
 
-# Turma de fora leva a cidade no fim do nome. SALVADOR fica de fora do filtro
-# porque `2026 - TCE01 - TOUR PV SALVADOR` tem sufixo e acontece aqui.
-SUFIXO_DE_CIDADE = re.compile(r" - .+ - ")
+# O usuario dono das turmas que ESTA unidade realiza. Resolvido por username e
+# nao por Id fixo: Id de usuario nao diz nada a quem le, e um dia alguem troca.
+PEDAGOGICO_USERNAME = os.getenv(
+    "SALESFORCE_PEDAGOGICO_USERNAME",
+    "pedagogicobahia@febracis.com.br.producao")
 
 
-def acontece_aqui(nome):
-    nome = nome or ""
-    return not (SUFIXO_DE_CIDADE.search(nome) and "SALVADOR" not in nome.upper())
+def id_do_pedagogico(sf):
+    linhas = sf.query(
+        f"SELECT Id FROM User WHERE Username = '{PEDAGOGICO_USERNAME}'")
+    if not linhas:
+        raise RuntimeError(
+            f"usuario {PEDAGOGICO_USERNAME} nao encontrado -- sem ele nao da "
+            "para saber que turma acontece aqui; abortando sem gravar")
+    return canonical_salesforce_id(linhas[0]["Id"])
 
 
 def dia_local(valor):
@@ -117,6 +147,19 @@ def turmas_com_venda_nossa(sf, desde):
     linhas = sf.query(soql)
     return {canonical_salesforce_id(l["Turma__c"]): int(l["vendas"])
             for l in linhas if l.get("Turma__c")}
+
+
+def turmas_que_realizamos(sf, dono, desde):
+    """Ids das turmas cujo dono e o nosso pedagogico. Ver armadilha 1, porta (a).
+
+    E a unica porta que enxerga turma futura ainda sem venda -- justamente a
+    que a meta mais precisa.
+    """
+    linhas = sf.query(
+        "SELECT Id FROM Turma__c "
+        f"WHERE OwnerId = '{dono}' "
+        f"AND Data_Inicial__c >= {desde}T00:00:00Z")
+    return {canonical_salesforce_id(l["Id"]) for l in linhas}
 
 
 def detalhe_das_turmas(sf, ids_18):
@@ -186,7 +229,7 @@ def transformar(registros, vendas=None, hoje=None):
     return linhas, descartadas
 
 
-def planejar(novas, existentes):
+def planejar(novas, existentes, nossas=frozenset()):
     """Decide o que criar e o que atualizar, respeitando o contrato de db/187.
 
     Devolve (criar, atualizar, conflitos_de_nome, sem_curso).
@@ -208,6 +251,13 @@ def planejar(novas, existentes):
         if atual:
             mudanca = {c: nova[c] for c in COLUNAS_DO_SALESFORCE
                        if c in nova and str(nova[c] or "") != str(atual.get(c) or "")}
+            # PRIMEIRO TOQUE: a db/187 chutou `acontece_aqui` pelo nome, porque
+            # SQL nao consulta Salesforce. Aqui o chute e substituido pelo dado
+            # real. So nesta vez -- depois a coluna e da pessoa.
+            if atual.get("sincronizado_em") is None:
+                real = sf_id in nossas
+                if bool(atual.get("acontece_aqui", True)) != real:
+                    mudanca["acontece_aqui"] = real
             if mudanca:
                 atualizar.append({"turma_id": atual["turma_id"], **mudanca,
                                   "_antes": atual})
@@ -231,8 +281,8 @@ def planejar(novas, existentes):
             "status": nova["status_sf"] and
                       ("cancelada" if "cancel" in nova["status_sf"].lower() else "aberta")
                       or "planejada",
-            # So aqui. Em linha existente a coluna e da pessoa -- ver db/187.
-            "acontece_aqui": acontece_aqui(nova["turma_id"]),
+            # Dono nosso = acontece aqui. Ver armadilha 5.
+            "acontece_aqui": sf_id in nossas,
         })
     return criar, atualizar, conflitos, sem_curso
 
@@ -251,24 +301,30 @@ def main():
     desde = (datetime.now(BAHIA).date() - timedelta(days=args.dias)).isoformat()
     log(f"janela: turmas com inicio a partir de {desde}")
 
+    dono = id_do_pedagogico(sf)
+    nossas = turmas_que_realizamos(sf, dono, desde)
     vendas = turmas_com_venda_nossa(sf, desde)
+    log(f"turmas realizadas por nos (dono {PEDAGOGICO_USERNAME}): {len(nossas)}")
     log(f"turmas com venda desta unidade: {len(vendas)}")
-    if not vendas:
+    log(f"so pela venda, {len(nossas - set(vendas))} turmas nossas ficariam de fora")
+
+    alvo = nossas | set(vendas)
+    if not alvo:
         # Trava igual as do sync-salesforce-api: extracao vazia nunca escreve.
         raise RuntimeError("nenhuma turma retornada -- abortando sem gravar")
 
-    registros = detalhe_das_turmas(sf, vendas.keys())
+    registros = detalhe_das_turmas(sf, alvo)
     novas, descartadas = transformar(registros, vendas)
     log(f"turmas com data utilizavel: {len(novas)}")
 
     existentes = sb.select_all(
         "dim_turmas",
         "turma_id,sf_turma_id,curso,data_inicio,data_fim,capacidade,"
-        "status,status_sf,sf_modificado_em",
+        "status,status_sf,sf_modificado_em,acontece_aqui,sincronizado_em",
         [("data_inicio", f"gte.{desde}")])
     log(f"turmas ja no banco dentro da janela: {len(existentes)}")
 
-    criar, atualizar, conflitos, sem_curso = planejar(novas, existentes)
+    criar, atualizar, conflitos, sem_curso = planejar(novas, existentes, nossas)
 
     vinculadas = {e["sf_turma_id"] for e in existentes if e.get("sf_turma_id")}
     reencontradas = len(vinculadas & set(novas))

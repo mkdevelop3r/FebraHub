@@ -76,12 +76,12 @@ alter table public.dim_turmas
   add column if not exists acontece_aqui    boolean not null default true;
 
 comment on column public.dim_turmas.acontece_aqui is
-  'A turma ocupa ESTE predio? O sync chuta pelo nome (sufixo de cidade que nao
-   seja Salvador => false) e so no momento de CRIAR a linha; depois disso a
-   coluna e DA PESSOA e o sync nao encosta. Quem consome dim_turmas para medir
-   movimento da loja tem que filtrar por ela; quem consome para acompanhar
-   ALUNO (represados, presenca) nao deve -- o aluno de Goiania continua sendo
-   nosso.';
+  'A turma ocupa ESTE predio? O sync decide pelo DONO da Turma__c no Salesforce
+   (PEDAGOGICO FEBRACIS BAHIA = aqui) e escreve so ao criar a linha ou na
+   PRIMEIRA vez que a toca; depois a coluna e DA PESSOA. Quem consome
+   dim_turmas para medir movimento da loja filtra por ela; quem consome para
+   acompanhar ALUNO (represados, presenca) NAO deve -- o aluno de Goiania
+   continua sendo nosso.';
 
 comment on column public.dim_turmas.status_sf is
   'Status__c cru do Salesforce (Aberta, Fechada, ...). Escrito SO pelo sync.
@@ -142,21 +142,22 @@ comment on column public.dim_turmas.sf_turma_id is
 
 
 -- ------------------------------------------------------------
--- 2b. O chute inicial para as 234 linhas que ja existem
+-- 2b. Um chute PROVISORIO para as 234 linhas que ja existem
 --
--- A convencao de nome e a unica pista: turma de fora leva a cidade no fim
--- (`2026 - CIS250 - Curitiba`). O `SALVADOR` fica de fora do filtro porque
--- `2026 - TCE01 - TOUR PV SALVADOR` tem sufixo e acontece aqui.
+-- O criterio bom -- o dono da turma no Salesforce -- so existe do lado do ETL;
+-- SQL nao consulta Salesforce. Entao aqui vai a unica pista disponivel em
+-- texto: turma de fora leva a cidade no fim do nome (`2026 - CIS250 -
+-- Curitiba`), com excecao para SALVADOR, porque `2026 - TCE01 - TOUR PV
+-- SALVADOR` tem sufixo e acontece aqui.
 --
--- Conferido antes de rodar: isso marca 53 linhas, e NENHUMA delas e turma
--- curta de 2026 -- ou seja, nenhum numero de meta ja calculado muda. As 12
--- turmas de fora que importam ainda nem estao na tabela; vao chegar com o
--- primeiro sync, ja marcadas.
+-- Isto e provisorio de proposito: na PRIMEIRA vez que o sync tocar cada linha
+-- (`sincronizado_em` nulo), ele substitui este chute pelo dono real. Dai em
+-- diante a coluna e da pessoa e ninguem mais escreve nela automaticamente.
 --
--- E chute, e esta escrito que e: heuristica de nome erra. `2025 - TCL -
--- ACOLHIDOS245` vai ser marcada como de fora e nao e -- ACOLHIDOS nao e
--- cidade. Um dia sozinho, e corrigivel na mao. Preferi o falso positivo
--- visivel ao falso negativo silencioso.
+-- Conferido antes de rodar: marca 53 linhas, e NENHUMA delas e turma curta de
+-- 2026 -- nenhum numero de meta ja calculado muda. E o chute erra pelo menos
+-- uma: `2025 - TCL - ACOLHIDOS245` vai sair como de fora e nao e (ACOLHIDOS
+-- nao e cidade). Um dia sozinho, corrigido no primeiro sync.
 -- ------------------------------------------------------------
 update public.dim_turmas
    set acontece_aqui = false
