@@ -2587,17 +2587,59 @@ const botaoMes = {
    tiverem o deles, a mesma estrutura serve. */
 const ROTULO_TIPO = {
   "IF": "Inteligência Financeira", "FCIS": "FCIS", "CIS": "CIS Global",
-  "FOP": "FOP", "TCE": "Tour Crescimento", "OUTRO": "outro curso",
+  "FOP": "FOP", "TCE": "Tour Crescimento", "TV": "Técnicas de Vendas",
+  "BHP": "Business High Performance", "OUTRO": "outro curso",
   "WORKSHOP-CURSO": "workshop de 8h", "WORKSHOP-EVENTO": "workshop da Central",
   "PALESTRA": "palestra", "UTIL": "dia útil comum", "SAB": "sábado", "DOM": "domingo",
 };
 
-function textoDaSugestao(s) {
-  const linhas = (s.linhas ?? []).filter((l) => l.dias > 0).map((l) =>
-    `${l.dias}x ${ROTULO_TIPO[l.tipo] ?? l.tipo} a ${moeda(l.valor_dia)}` +
-    (l.estimado ? " (ARBITRADO, sem histórico)" : ` (medido em ${l.n} dias)`));
-  return `Calculado pelo método dias x tipo em ${dataBR(new Date().toISOString())}. `
-    + linhas.join("; ") + `. Máster = previsão; básica = -20%; mínima = -10% da básica.`;
+/* A MEMÓRIA DE CÁLCULO, uma linha por tipo de dia.
+
+   É a mesma tabela antes de salvar (dentro da sugestão) e depois (na meta
+   gravada), de propósito: é o mesmo dado, e mostrar diferente dá a impressão
+   de que mudou.
+
+   Antes isto era achatado numa frase de mil caracteres dentro da `observacao`
+   — nove linhas de "dias × valor" viravam um parágrafo que ninguém lia, e a
+   informação que de fato importava (uma turma cancelada) ficava enterrada no
+   meio dele. Tabela nasceu tabela; continua tabela. */
+function MemoriaCalculo({ m }) {
+  const linhas = (m?.linhas ?? []).filter((l) => l.dias > 0);
+  if (!linhas.length) return null;
+  return (
+    <div>
+      {linhas.map((l) => (
+        <div key={l.tipo} style={{ display: "grid", gridTemplateColumns: "22px minmax(0,1fr) 88px 92px",
+                                   gap: 8, alignItems: "baseline", padding: "2px 0" }}>
+          <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700, color: C.muted, textAlign: "right" }}>{l.dias}×</span>
+          <span style={{ fontSize: 11.5, color: l.estimado ? C.warn : C.muted }}>
+            {ROTULO_TIPO[l.tipo] ?? l.tipo}
+            {/* o n é parte do número: "medi em 6 dias" e "medi em 60" não se
+                defendem igual quando alguém questionar a meta */}
+            <span style={{ fontSize: 10, color: C.dim }}>
+              {l.estimado ? " · arbitrado" : ` · n=${l.n}`}
+            </span>
+          </span>
+          <span style={{ fontFamily: GROTESK, fontSize: 11.5, color: C.faint, textAlign: "right" }}>{moeda(l.valor_dia)}</span>
+          <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700, color: C.text, textAlign: "right" }}>{moeda(l.subtotal)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AvisosMeta({ avisos }) {
+  if (!avisos?.length) return null;
+  return (
+    <>
+      {avisos.map((a, i) => (
+        <div key={i} style={{ display: "flex", gap: 6, marginTop: 8, fontSize: 10.5, color: C.warn, lineHeight: 1.5 }}>
+          <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+          <span>{a}</span>
+        </div>
+      ))}
+    </>
+  );
 }
 
 function SugestaoMeta({ mesRef, onAplicar }) {
@@ -2645,20 +2687,7 @@ function SugestaoMeta({ mesRef, onAplicar }) {
             }}>descartar</button>
           </div>
 
-          {(s.linhas ?? []).filter((l) => l.dias > 0).map((l) => (
-            <div key={l.tipo} style={{ display: "grid", gridTemplateColumns: "22px minmax(0,1fr) 88px 92px",
-                                       gap: 8, alignItems: "baseline", padding: "2px 0" }}>
-              <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700, color: C.muted, textAlign: "right" }}>{l.dias}×</span>
-              <span style={{ fontSize: 11.5, color: l.estimado ? C.warn : C.muted }}>
-                {ROTULO_TIPO[l.tipo] ?? l.tipo}
-                <span style={{ fontSize: 10, color: C.dim }}>
-                  {l.estimado ? " · arbitrado" : ` · n=${l.n}`}
-                </span>
-              </span>
-              <span style={{ fontFamily: GROTESK, fontSize: 11.5, color: C.faint, textAlign: "right" }}>{moeda(l.valor_dia)}</span>
-              <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700, color: C.text, textAlign: "right" }}>{moeda(l.subtotal)}</span>
-            </div>
-          ))}
+          <MemoriaCalculo m={s} />
 
           <div style={{ display: "flex", gap: 16, marginTop: 9, paddingTop: 8, borderTop: `1px solid ${C.hair}`, flexWrap: "wrap" }}>
             {[["mínima", s.minima], ["básica", s.basica], ["máster", s.master]].map(([r, v]) => (
@@ -2669,12 +2698,7 @@ function SugestaoMeta({ mesRef, onAplicar }) {
             ))}
           </div>
 
-          {(s.avisos ?? []).map((a, i) => (
-            <div key={i} style={{ display: "flex", gap: 6, marginTop: 8, fontSize: 10.5, color: C.warn, lineHeight: 1.5 }}>
-              <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />
-              <span>{a}</span>
-            </div>
-          ))}
+          <AvisosMeta avisos={s.avisos} />
         </div>
       )}
     </div>
@@ -2750,15 +2774,22 @@ function HubMetas({ admin }) {
    níveis por campos. O realizado continua visível DURANTE a edição — definir
    meta sem ver o que o setor vem fazendo é chutar. */
 function LinhaMeta({ cfg, mesRef, linha, admin, editando, onEditar, onFechar, onSalvo, onErro }) {
-  const [f, setF] = useState({ minima: "", basica: "", master: "", observacao: "" });
+  const [f, setF] = useState({ minima: "", basica: "", master: "", observacao: "", memoria: null });
   const [salvando, setSalvando] = useState(false);
+  const [verMemoria, setVerMemoria] = useState(false);
 
   useEffect(() => {
     if (editando) setF({
       minima: linha?.minima ?? "", basica: linha?.basica ?? "",
       master: linha?.master ?? "", observacao: linha?.observacao ?? "",
+      memoria: linha?.memoria ?? null,
     });
   }, [editando, linha]);
+
+  /* Mexeu no número na mão, a memória para de valer: ela descreve uma conta que
+     não é mais a que gerou aquele valor. Guardá-la seria pior do que não ter —
+     a tela explicaria 40 mil com uma conta que dá 34. */
+  const mudarNivel = (campo, valor) => setF((v) => ({ ...v, [campo]: valor, memoria: null }));
 
   const salvar = async () => {
     setSalvando(true);
@@ -2770,6 +2801,7 @@ function LinhaMeta({ cfg, mesRef, linha, admin, editando, onEditar, onFechar, on
         sentido: cfg.menor ? "menor_melhor" : "maior_melhor",
         unidade: cfg.unidade,
         observacao: f.observacao || null,
+        memoria: f.memoria ?? null,
       });
       onSalvo(`Meta do ${cfg.rotulo} salva.`);
     } catch (e) {
@@ -2831,10 +2863,14 @@ function LinhaMeta({ cfg, mesRef, linha, admin, editando, onEditar, onFechar, on
       {editando && (
         <div style={{ marginTop: 10 }}>
           {cfg.setor === "loja" && (
+            /* A sugestão preenche os números e guarda a MEMÓRIA; não escreve
+               nada na observação. Aquele campo é para o que só uma pessoa
+               sabe, e antes a memória o ocupava inteiro. */
             <SugestaoMeta mesRef={mesRef} onAplicar={(s) => setF((v) => ({
               ...v,
               minima: s.minima, basica: s.basica, master: s.master,
-              observacao: v.observacao || textoDaSugestao(s),
+              memoria: { ...s, calculado_em: new Date().toISOString().slice(0, 10),
+                         metodo: "dias × tipo (docs/METODO_META_LOJA.md)" },
             }))} />
           )}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
@@ -2845,7 +2881,7 @@ function LinhaMeta({ cfg, mesRef, linha, admin, editando, onEditar, onFechar, on
               <div key={campo} style={{ minWidth: 118 }}>
                 <label style={labelAv}>{rot}</label>
                 <input value={f[campo]} inputMode="decimal"
-                  onChange={(e) => setF({ ...f, [campo]: e.target.value })}
+                  onChange={(e) => mudarNivel(campo, e.target.value)}
                   style={inputAv} placeholder="—" />
               </div>
             ))}
@@ -2856,13 +2892,14 @@ function LinhaMeta({ cfg, mesRef, linha, admin, editando, onEditar, onFechar, on
               </div>
             </div>
           </div>
-          <label style={labelAv}>como este número foi calculado</label>
+          <label style={labelAv}>o que os números não contam</label>
           <textarea value={f.observacao} onChange={(e) => setF({ ...f, observacao: e.target.value })}
-            rows={3} style={{ ...inputAv, resize: "vertical" }}
-            placeholder="O que foi medido, o que foi estimado, e em quantos dias cada número se apoia." />
+            rows={2} style={{ ...inputAv, resize: "vertical" }}
+            placeholder="Ex.: a IF37 foi cancelada. Duas linhas bastam." />
           <div style={{ fontSize: 10, color: C.dim, margin: "4px 0 10px", lineHeight: 1.5 }}>
-            Escreva mesmo quando parecer óbvio. Daqui a seis meses ninguém lembra
-            por que a meta era esta, e meta sem justificativa não se defende.
+            Só o que uma pessoa sabe e a conta não mostra — turma cancelada, loja
+            parada, decisão da direção. A memória de cálculo fica guardada
+            sozinha; não precisa repetir aqui.
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <BotaoSalvar onClick={salvar} salvando={salvando} disabled={salvando}>Salvar meta</BotaoSalvar>
@@ -2874,11 +2911,37 @@ function LinhaMeta({ cfg, mesRef, linha, admin, editando, onEditar, onFechar, on
         </div>
       )}
 
-      {!editando && linha?.observacao && (
-        <div style={{ fontSize: 10.5, color: C.faint, marginTop: 8, lineHeight: 1.55,
-                      borderTop: `1px solid ${C.hair}`, paddingTop: 7 }}>
-          {linha.observacao}
-          {linha.definido_por && <span style={{ color: C.dim }}> — {linha.definido_por}</span>}
+      {!editando && (linha?.observacao || linha?.memoria) && (
+        <div style={{ marginTop: 8, borderTop: `1px solid ${C.hair}`, paddingTop: 7 }}>
+          {/* A observação vem PRIMEIRO e em cor de texto, não de rodapé: é a
+              parte que muda uma decisão. A conta fica um clique atrás — quem
+              quiser conferir, abre. */}
+          {linha.observacao && (
+            <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.55 }}>
+              {linha.observacao}
+              {linha.definido_por && <span style={{ color: C.dim }}> — {linha.definido_por}</span>}
+            </div>
+          )}
+          {linha.memoria && (
+            <div style={{ marginTop: linha.observacao ? 7 : 0 }}>
+              <button onClick={() => setVerMemoria((v) => !v)} style={{
+                display: "inline-flex", alignItems: "center", gap: 4, background: "none",
+                border: "none", padding: 0, cursor: "pointer", fontFamily: SANS,
+                fontSize: 10.5, fontWeight: 700, color: C.faint,
+              }}>
+                {verMemoria ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+                memória de cálculo
+                {linha.memoria.calculado_em &&
+                  <span style={{ fontWeight: 600, color: C.dim }}> · {dataBR(linha.memoria.calculado_em)}</span>}
+              </button>
+              {verMemoria && (
+                <div style={{ marginTop: 6 }}>
+                  <MemoriaCalculo m={linha.memoria} />
+                  <AvisosMeta avisos={linha.memoria.avisos} />
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
