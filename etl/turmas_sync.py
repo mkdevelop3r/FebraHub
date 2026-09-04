@@ -37,6 +37,18 @@ outra.
    Conferido: para outubro a uniao devolve exatamente as quatro turmas que a
    meta ja usava -- IF37, CIS-GL252, TV09 e BHP26 -- com as mesmas datas.
 
+   A PROVA MAIS FORTE de que o dono e o criterio certo: das 36 turmas CURTAS de
+   2026 que o time carregou a mao em dim_turmas -- que sao exatamente as que a
+   meta conta -- as 36 tem o nosso pedagogico como dono. A regra nao excluiria
+   nenhuma. 36 de 36.
+
+   E ela explica um caso que enganava: `2026 - ML510` (julho) esta em
+   dim_turmas e e nossa; `2026 - ML514` (outubro) NAO e -- e edicao de outra
+   unidade em que nossos alunos compraram. Mesmo curso, nomes quase iguais,
+   sem sufixo de cidade em nenhum dos dois. Nenhuma heuristica de nome separa
+   os dois; o dono separa. O mesmo vale para MASTER06 e PCE10-16, que somariam
+   12 dias a outubro se entrassem por engano.
+
    Antes de achar o dono eu usava so a venda, e a consequencia era feia: turma
    futura sem nenhuma venda ainda era INVISIVEL -- exatamente a turma sobre a
    qual a meta mais precisa saber, porque e a que ainda vai encher a loja.
