@@ -57,12 +57,14 @@ create policy meta_setor_leitura on public.meta_setor
 
 -- Escrita: so admin.
 --
--- ATENCAO -- ISTO PRECISA DE DECISAO SUA. Quem vai definir as metas (Bruno
--- Cordeiro, b4b31008-...) tem papel = 'membro', nao 'admin'. Com esta policy
--- ele NAO consegue salvar pela tela. As opcoes sao promove-lo a admin, ou
--- trocar a policy por algo como `gestor_marketing = true or papel = 'admin'`.
--- Deixo como esta ate voce decidir -- afrouxar permissao sozinho nao e minha
--- alcada.
+-- CORRIGIDO EM 04/09: eu tinha escrito aqui que a policy bloquearia quem vai
+-- definir as metas, deduzindo o perfil pelo e-mail da sessao. Premissa errada
+-- -- quem define e a Dulce, que tem papel = 'admin' e setor = 'geral'. A
+-- policy esta correta como esta e nao precisa de mudanca.
+--
+-- Fica o registro do erro em vez da correcao silenciosa: quem ler o historico
+-- precisa saber que a afirmacao anterior era minha deducao, nao um fato
+-- medido no banco.
 drop policy if exists meta_setor_escrita on public.meta_setor;
 create policy meta_setor_escrita on public.meta_setor
   for all to authenticated

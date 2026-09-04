@@ -827,6 +827,28 @@ export const useRankingUnidades = () =>
 export const useUnidadeComposicao = () =>
   useView("vw_unidade_composicao", { ordem: ["mes", "unidade", "dimensao", "valor"], staleTime: 5 * 60 * 1000 });
 
+/* METAS POR SETOR (migration 179). Uma linha por (setor, indicador, mês), com
+   os três níveis, o realizado e o nível atingido — a view já cruza cada setor
+   com a fonte certa e já inverte a escala quando `sentido = menor_melhor`
+   (inadimplência: menos é melhor).
+   `observacao` guarda COMO a meta foi calculada. Não é decorativo: a meta de
+   09/2026 da Loja tem 8 de 30 dias sem histórico nenhum, e quem ler o número
+   meses depois precisa saber disso. */
+export const useMetaSetor = () =>
+  useView("vw_meta_realizado_setor", { ordem: ["mes_ref", "setor", "indicador"], staleTime: 60 * 1000 });
+
+/* Grava a meta. A RLS exige `papel = 'admin'` — não há RPC porque a policy já
+   é o portão; quem não for admin recebe erro do próprio banco, e a tela mostra
+   a mensagem como veio. */
+export async function salvarMeta(linha) {
+  const { data, error } = await supabase
+    .from("meta_setor")
+    .upsert(linha, { onConflict: "setor,indicador,mes_ref" })
+    .select();
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data;
+}
+
 /* Saúde da carga de presença: última carga, dias desde então, volume. A carga
    é manual, e a fonte anterior (credenciamento) morreu ao longo de um ano sem
    ninguém perceber. Este número precisa estar na tela sempre que um número de

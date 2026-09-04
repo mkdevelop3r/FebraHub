@@ -27,6 +27,7 @@ import {
   useFinanceiroInadimp, useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   usePeriodoLimites, useRankingUnidades, useUnidadeComposicao,
+  useMetaSetor, salvarMeta,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroReceitaCategoriaDetalhe, useFinanceiroDespesaCategoriaPeriodo,
   useLojaReceitaPeriodo, useLojaReceitaTotalMes, useLojaReceitaConsolidada,
   useLojaSerie, useLojaKpisAno, useLojaKpisPeriodo,
@@ -120,6 +121,11 @@ const HUBS = [
   { key: "eventos",    nome: "Eventos",    Icone: CalendarDays,  desc: "Ingressos e receita líquida" },
   { key: "loja",       nome: "Loja",       Icone: ShoppingBag,   desc: "Vendas, formas de pagamento e recebimento" },
   { key: "estoque",    nome: "Estoque",    Icone: Package,       desc: "Sem fonte conectada" },
+  /* `setor: "geral"` = só direção. Não existe setor 'metas': quem define meta
+     de TODOS os setores é quem enxerga todos, e no filtro de visibilidade
+     'geral' só pertence a admin. */
+  { key: "metas", setor: "geral", nome: "Metas", Icone: Target,
+    desc: "Meta de cada setor, mês a mês" },
 ];
 
 const agrupar = (linhas, chave, valor) => {
@@ -2538,7 +2544,300 @@ function ComoVende({ detalhe }) {
   );
 }
 
+/* ============ HUB DE METAS (Direção · setor 'geral') ============
+
+   Onde a meta de cada setor é definida, e onde se vê quanto dela foi feito.
+
+   POR QUE ELA VIVE AQUI E APARECE LÁ. A meta é escrita num lugar só — senão
+   cada setor define a sua e ninguém compara — mas precisa aparecer DENTRO do
+   hub que ela cobra, ao lado do número. Meta que só existe numa tela de
+   administração ninguém lê. É o que a Loja já faz, e a migration 179 fez a
+   `vw_loja_serie` preferir esta tabela à planilha para que os dois lugares
+   mostrem o mesmo número.
+
+   O MÊS PADRÃO É O SEGUINTE, não o corrente: a meta é escrita no dia 25 para
+   o mês que vem, e abrir no mês corrente obrigaria a navegar toda vez. */
+
+const SETORES_META = [
+  { setor: "comercial",  indicador: "faturamento",    rotulo: "Comercial",  sub: "faturamento",    unidade: "reais",  niveis: 3 },
+  { setor: "loja",       indicador: "faturamento",    rotulo: "Loja",       sub: "faturamento",    unidade: "reais",  niveis: 3 },
+  { setor: "marketing",  indicador: "leads",          rotulo: "Marketing",  sub: "leads",          unidade: "numero", niveis: 1 },
+  { setor: "pedagogico", indicador: "comparecimento", rotulo: "Pedagógico", sub: "comparecimento", unidade: "pct",    niveis: 1 },
+  { setor: "financeiro", indicador: "inadimplencia",  rotulo: "Financeiro", sub: "inadimplência",  unidade: "reais",  niveis: 1, menor: true },
+];
+
+const fmtMeta = (v, unidade) => v == null ? "—"
+  : unidade === "pct" ? `${Number(v).toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`
+    : unidade === "numero" ? numero(v) : moeda(v);
+
+const botaoMes = {
+  display: "flex", alignItems: "center", justifyContent: "center", width: 28, height: 28,
+  borderRadius: 7, border: `1px solid ${C.cardLine}`, background: "rgba(255,255,255,.04)",
+  color: C.muted, cursor: "pointer",
+};
+
+function HubMetas({ admin }) {
+  const q = useMetaSetor();
+  const [mes, setMes] = useState(() => {
+    const h = new Date();
+    return new Date(h.getFullYear(), h.getMonth() + 1, 1);
+  });
+  const [edit, setEdit] = useState(null);
+  const [toast, setToast] = useState(null);
+  const qc = useQueryClient();
+
+  const mesRef = `${mes.getFullYear()}-${String(mes.getMonth() + 1).padStart(2, "0")}-01`;
+  const doMes = useMemo(() => {
+    const m = new Map();
+    for (const l of q.data ?? []) {
+      if (String(l.mes_ref).slice(0, 10) === mesRef) m.set(`${l.setor}|${l.indicador}`, l);
+    }
+    return m;
+  }, [q.data, mesRef]);
+
+  const andar = (d) => setMes(new Date(mes.getFullYear(), mes.getMonth() + d, 1));
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: C.bright }}>Metas por setor</h2>
+        <span style={{ fontSize: 11.5, color: C.faint }}>escrita no dia 25, para o mês seguinte</span>
+        <span style={{ flex: 1 }} />
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button onClick={() => andar(-1)} aria-label="Mês anterior" style={botaoMes}><ChevronLeft size={14} /></button>
+          <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: C.gold, minWidth: 118, textAlign: "center" }}>
+            {MESES[mes.getMonth()]} {mes.getFullYear()}
+          </span>
+          <button onClick={() => andar(1)} aria-label="Próximo mês" style={botaoMes}><ChevronRight size={14} /></button>
+        </div>
+      </div>
+
+      <Bloco titulo="Meta e realizado" canto={`${MESES[mes.getMonth()]} ${mes.getFullYear()}`}>
+        <Estado carregando={q.isLoading} erro={q.error} vazio={false}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {SETORES_META.map((cfg) => (
+              <LinhaMeta key={`${cfg.setor}|${cfg.indicador}`} cfg={cfg} mesRef={mesRef}
+                linha={doMes.get(`${cfg.setor}|${cfg.indicador}`)}
+                admin={admin}
+                editando={edit === `${cfg.setor}|${cfg.indicador}`}
+                onEditar={() => setEdit(`${cfg.setor}|${cfg.indicador}`)}
+                onFechar={() => setEdit(null)}
+                onSalvo={(msg) => { setEdit(null); setToast({ texto: msg, tipo: "ok" }); qc.invalidateQueries({ queryKey: ["view", "vw_meta_realizado_setor"] }); }}
+                onErro={(msg) => setToast({ texto: msg, tipo: "erro" })} />
+            ))}
+          </div>
+          {!admin && (
+            <div style={{ fontSize: 10.5, color: C.dim, marginTop: 12 }}>
+              Só a direção edita meta. Você vê o número e quanto dele foi feito.
+            </div>
+          )}
+        </Estado>
+      </Bloco>
+
+      <ComoCalculaMeta />
+
+      {toast && <Toast toast={toast} onFechar={() => setToast(null)} />}
+    </>
+  );
+}
+
+/* Uma linha por setor. Fechada mostra os níveis e o realizado; aberta troca os
+   níveis por campos. O realizado continua visível DURANTE a edição — definir
+   meta sem ver o que o setor vem fazendo é chutar. */
+function LinhaMeta({ cfg, mesRef, linha, admin, editando, onEditar, onFechar, onSalvo, onErro }) {
+  const [f, setF] = useState({ minima: "", basica: "", master: "", observacao: "" });
+  const [salvando, setSalvando] = useState(false);
+
+  useEffect(() => {
+    if (editando) setF({
+      minima: linha?.minima ?? "", basica: linha?.basica ?? "",
+      master: linha?.master ?? "", observacao: linha?.observacao ?? "",
+    });
+  }, [editando, linha]);
+
+  const salvar = async () => {
+    setSalvando(true);
+    try {
+      const num = (v) => v === "" || v == null ? null : Number(String(v).replace(",", "."));
+      await salvarMeta({
+        setor: cfg.setor, indicador: cfg.indicador, mes_ref: mesRef,
+        minima: num(f.minima), basica: num(f.basica), master: num(f.master),
+        sentido: cfg.menor ? "menor_melhor" : "maior_melhor",
+        unidade: cfg.unidade,
+        observacao: f.observacao || null,
+      });
+      onSalvo(`Meta do ${cfg.rotulo} salva.`);
+    } catch (e) {
+      onErro(semPermissao(e) ? "Só a direção pode definir meta." : (e.message || "Não foi possível salvar."));
+    } finally { setSalvando(false); }
+  };
+
+  const nivel = linha?.nivel_atingido;
+  const corNivel = nivel === "master" || nivel === "basica" ? C.up
+    : nivel === "minima" ? C.warn : nivel === "abaixo" ? C.down : C.dim;
+
+  return (
+    <div style={{
+      border: `1px solid ${C.cardLine}`, borderRadius: 12, padding: "11px 13px",
+      background: editando ? "rgba(255,255,255,.03)" : "transparent",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 128 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.bright }}>{cfg.rotulo}</div>
+          <div style={{ fontSize: 10.5, color: C.faint }}>
+            {cfg.sub}{cfg.menor && " · menos é melhor"}
+          </div>
+        </div>
+
+        {!editando && (
+          <>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", flex: 1 }}>
+              {(cfg.niveis === 3
+                ? [["mínima", linha?.minima], ["básica", linha?.basica], ["máster", linha?.master]]
+                : [["meta", linha?.basica]]
+              ).map(([rot, v]) => (
+                <div key={rot}>
+                  <div style={{ fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: C.dim }}>{rot}</div>
+                  <div style={{ fontFamily: GROTESK, fontSize: 14, fontWeight: 700, color: v == null ? C.dim : C.text }}>
+                    {fmtMeta(v, cfg.unidade)}
+                  </div>
+                </div>
+              ))}
+              <div>
+                <div style={{ fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: C.dim }}>realizado</div>
+                <div style={{ fontFamily: GROTESK, fontSize: 14, fontWeight: 700, color: corNivel }}>
+                  {fmtMeta(linha?.realizado, cfg.unidade)}
+                  {linha?.atingido_pct != null &&
+                    <span style={{ fontSize: 10.5, fontWeight: 600, color: C.faint }}> · {linha.atingido_pct}%</span>}
+                </div>
+              </div>
+            </div>
+            {admin && (
+              <button onClick={onEditar} style={{
+                display: "flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 8,
+                fontFamily: SANS, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                color: C.gold, background: `${C.gold}14`, border: `1px solid ${C.gold}3A`,
+              }}><Pencil size={11} /> {linha ? "editar" : "definir"}</button>
+            )}
+          </>
+        )}
+      </div>
+
+      {editando && (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+            {(cfg.niveis === 3
+              ? [["mínima", "minima"], ["básica", "basica"], ["máster", "master"]]
+              : [["meta", "basica"]]
+            ).map(([rot, campo]) => (
+              <div key={campo} style={{ minWidth: 118 }}>
+                <label style={labelAv}>{rot}</label>
+                <input value={f[campo]} inputMode="decimal"
+                  onChange={(e) => setF({ ...f, [campo]: e.target.value })}
+                  style={inputAv} placeholder="—" />
+              </div>
+            ))}
+            <div style={{ minWidth: 118 }}>
+              <label style={labelAv}>realizado</label>
+              <div style={{ fontFamily: GROTESK, fontSize: 14, fontWeight: 700, color: corNivel, padding: "9px 0" }}>
+                {fmtMeta(linha?.realizado, cfg.unidade)}
+              </div>
+            </div>
+          </div>
+          <label style={labelAv}>como este número foi calculado</label>
+          <textarea value={f.observacao} onChange={(e) => setF({ ...f, observacao: e.target.value })}
+            rows={3} style={{ ...inputAv, resize: "vertical" }}
+            placeholder="O que foi medido, o que foi estimado, e em quantos dias cada número se apoia." />
+          <div style={{ fontSize: 10, color: C.dim, margin: "4px 0 10px", lineHeight: 1.5 }}>
+            Escreva mesmo quando parecer óbvio. Daqui a seis meses ninguém lembra
+            por que a meta era esta, e meta sem justificativa não se defende.
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <BotaoSalvar onClick={salvar} salvando={salvando} disabled={salvando}>Salvar meta</BotaoSalvar>
+            <button onClick={onFechar} style={{
+              background: "none", border: "none", padding: "9px 4px", cursor: "pointer",
+              color: C.muted, fontFamily: SANS, fontSize: 12.5, fontWeight: 700,
+            }}>cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {!editando && linha?.observacao && (
+        <div style={{ fontSize: 10.5, color: C.faint, marginTop: 8, lineHeight: 1.55,
+                      borderTop: `1px solid ${C.hair}`, paddingTop: 7 }}>
+          {linha.observacao}
+          {linha.definido_por && <span style={{ color: C.dim }}> — {linha.definido_por}</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* A explicação do método, na tela em que a meta é escrita.
+
+   Existe porque o número sozinho é indefensável: na primeira vez que alguém
+   perguntar "por que 49 mil?", a resposta não pode ser "foi o que deu". E
+   porque metade dela é AVISO — o que está medido, o que foi arbitrado, e onde
+   o método já errou feio. */
+function ComoCalculaMeta() {
+  const linhaTab = (a, b, c) => (
+    <div key={a} style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 96px 82px", gap: 8, padding: "4px 0" }}>
+      <span style={{ fontSize: 11.5, color: C.muted }}>{a}</span>
+      <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700, color: C.text, textAlign: "right" }}>{b}</span>
+      <span style={{ fontSize: 10.5, color: c === "sem medida" ? C.warn : C.dim, textAlign: "right" }}>{c}</span>
+    </div>
+  );
+  return (
+    <Bloco titulo="Como a meta da Loja é calculada" canto="método validado em 04/09/2026">
+      <p style={{ fontSize: 12, color: C.muted, lineHeight: 1.6, marginBottom: 12 }}>
+        A receita da loja <b style={{ color: C.bright }}>não é série temporal, é função do calendário</b>.
+        Um dia de Inteligência Financeira vende R$ 12.883; um dia comum vende R$ 111 de mediana.
+        O que muda de um mês para o outro não é tendência — é quantos dias de curso o mês tem.
+        Maio teve IF e fez R$ 69 mil; junho não teve e fez R$ 19 mil.
+      </p>
+      <p style={{ fontSize: 12, color: C.muted, lineHeight: 1.6, marginBottom: 14 }}>
+        Então: conte os dias de cada tipo que o mês vai ter, multiplique pelo que aquele tipo
+        costuma vender, some. O total é a <b style={{ color: C.bright }}>máster</b>; a básica é
+        −20% dela; a mínima, −10% da básica.
+      </p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 96px 82px", gap: 8, paddingBottom: 5, borderBottom: `1px solid ${C.hair}`, marginBottom: 4 }}>
+        {["tipo de dia", "vende", "medido em"].map((h, i) => (
+          <span key={h} style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.dim, textAlign: i ? "right" : "left" }}>{h}</span>
+        ))}
+      </div>
+      {[["Inteligência Financeira", "R$ 12.883", "6 dias"],
+        ["Workshop de 8h (PAPW)", "R$ 17.002", "1 dia"],
+        ["Tour Crescimento Empresarial", "R$ 6.866", "1 dia"],
+        ["FCIS", "R$ 4.548", "4 dias"],
+        ["CIS Global", "R$ 2.261", "9 dias"],
+        ["FOP", "R$ 1.618", "6 dias"],
+        ["dia útil comum (mediana)", "R$ 111", "91 dias"],
+        ["sábado comum (mediana)", "R$ 0", "23 dias"],
+        ["domingo comum (mediana)", "R$ 0", "30 dias"],
+        ["palestra", "R$ 544", "sem medida"],
+        ["workshop da Central", "R$ 2.363", "sem medida"]].map((l) => linhaTab(...l))}
+
+      <div style={{ fontSize: 11, color: C.faint, lineHeight: 1.6, marginTop: 14, borderTop: `1px solid ${C.hair}`, paddingTop: 11 }}>
+        <b style={{ color: C.warn }}>O que ainda não se sabe.</b> Palestra e workshop da Central não
+        têm medida nenhuma — o calendário só existe desde 19/08/2026 e nenhum aconteceu antes de
+        setembro. Os valores acima são arbitrados e cobrem 8 dos 30 dias de setembro.
+        <br /><br />
+        <b style={{ color: C.muted }}>Fevereiro/2026 está fora da amostra:</b> a loja ficou parada de
+        13 a 23/02, onze dias corridos sem um cupom. Tirá-lo derrubou o erro médio do método de
+        43% para 24%.
+        <br /><br />
+        <b style={{ color: C.muted }}>Onde o método erra:</b> quando o mês tem um tipo de evento
+        inédito. Março realizou R$ 60 mil contra R$ 18 mil previstos, porque o workshop que fez
+        R$ 17 mil num sábado era o primeiro do ano — sem histórico, o dia é previsto como comum.
+        Quando entrar um tipo novo, arbitre o valor e escreva isso na justificativa.
+      </div>
+    </Bloco>
+  );
+}
+
 /* ============ HUBS SETORIAIS ============ */
+
 
 function HubComercial() {
   const { inicio, fim, rotulo, modo, ano, mesIdx, setMesAno, escolherModo } = usePeriodo();
@@ -9308,6 +9607,7 @@ function Shell({ perfil }) {
   const conteudo = () => {
     switch (tela) {
       case "executivo":  return <HubExecutivo onIr={setTela} />;
+      case "metas":      return <HubMetas admin={admin} />;
       case "comercial":  return <HubComercial />;
       case "financeiro": return <HubFinanceiro />;
       case "marketing":  return <HubMarketing />;

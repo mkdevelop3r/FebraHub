@@ -71,11 +71,11 @@ tutoria não entram: são internas.
 | Workshop de 8h (PAPW) | R$ 17.002 | **1 dia** |
 | TCE | R$ 6.866 | **1 dia** |
 | FCIS | R$ 4.548 | 4 dias |
-| CIS Global | R$ 2.066 | 12 dias |
+| CIS Global | R$ 2.261 | 9 dias |
 | FOP | R$ 1.618 | 6 dias |
-| dia útil comum | R$ 75 *(mediana)* | 109 dias |
-| sábado comum | R$ 0 *(mediana)* | 26 dias |
-| domingo comum | R$ 0 *(mediana)* | 34 dias |
+| dia útil comum | R$ 111 *(mediana)* | 91 dias |
+| sábado comum | R$ 0 *(mediana)* | 23 dias |
+| domingo comum | R$ 0 *(mediana)* | 30 dias |
 | palestra | **sem medida** | **0 dias** |
 | workshop da Central | **sem medida** | **0 dias** |
 
@@ -98,7 +98,7 @@ Backtest de 2026, prevendo cada mês com as médias dos outros:
 
 | método | erro médio | pior mês |
 |---|---:|---:|
-| **dias × tipo** | **43%** | 182% |
+| **dias × tipo** (sem fevereiro) | **24%** | 69% |
 | média dos 3 meses anteriores | 95% | 287% |
 | repetir o mês anterior | 170% | 691% |
 
@@ -114,16 +114,20 @@ um tipo novo, **arbitre o valor e registre na `observacao`**; não deixe o
 modelo prever zero.
 
 **Algo fora do calendário.** Fevereiro tinha evento e a loja vendeu R$ 6.993 no
-mês inteiro, com venda em 10 dias de 28. Todos os três métodos erraram feio
-ali. Enquanto não se souber o que houve — loja fechada, estoque, reforma —,
-fevereiro deveria ficar **fora da amostra**, não dentro puxando as médias.
+mês inteiro. O dia a dia mostrou o porquê: **onze dias corridos sem um único
+cupom, de 13 a 23/02** — a loja esteve parada. Confirmado com o Bruno em
+04/09/2026, fevereiro **saiu da amostra**.
+
+O efeito foi grande no método e quase nulo na meta de setembro. No método, o
+erro médio caiu de **43% para 24%** e quatro dos sete meses ficaram abaixo de
+12% — os onze zeros estavam rebaixando a mediana de todos os dias comuns. Em
+setembro mudou R$ 27, porque aquele mês é dominado pelos três dias de IF, e o
+IF aconteceu em janeiro e maio, que fevereiro nunca tocou.
 
 ---
 
 ## O que ainda está em aberto
 
-- **Por que fevereiro.** É o único mês sem explicação, e ele está dentro da
-  amostra que gera todas as médias.
 - **Calendário completo no dia 25.** A meta do mês seguinte é escrita no dia
   25. Se turma ou evento entrar no calendário depois disso, a meta nasce
   contando menos dias do que o mês vai ter. Ninguém mediu esse atraso ainda.
