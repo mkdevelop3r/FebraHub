@@ -105,14 +105,14 @@ const HUBS = [
   { key: "central-febracis", publico: true,
     nome: "Central Febracis", Icone: CalendarDays,
     desc: "Calendário de cursos, eventos e palestras" },
-  { key: "central-eventos", setores: ["marketing", "central-eventos"],
+  { key: "central-eventos", pai: "marketing", setores: ["marketing", "central-eventos"],
     nome: "Central de Eventos", Icone: ClipboardList,
     desc: "Demandas do Marketing para os eventos do mês" },
   { key: "pedagogico", nome: "Pedagógico", Icone: GraduationCap, desc: "Turmas, matrículas e conclusão" },
   /* A Central é operação, não setor: quem enxerga é quem tem o setor
      'pedagogico'. `setor` existe só por isso — nos outros, a chave já é o
      próprio setor. */
-  { key: "central", setor: "pedagogico", nome: "Central Pedagógica", Icone: ClipboardList, desc: "Operação: turmas, represados e presença" },
+  { key: "central", pai: "pedagogico", setor: "pedagogico", nome: "Central Pedagógica", Icone: ClipboardList, desc: "Operação: turmas, represados e presença" },
   /* Placar fechado: setor próprio ('auditoria'), concedido por perfil_setores
      a gestão de marketing, gestão comercial, CEO e gerência. NÃO pode ser
      'comercial' — as consultoras têm esse setor e cairiam dentro. */
@@ -2401,7 +2401,7 @@ function BlocoRankingUnidades() {
         onKeyDown={(e) => { if (detalhe && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setAberta(expandida ? null : l.unidade); } }}
         title={detalhe ? "Ver como esta unidade vende" : "Sem composição carregada"}
         style={{
-        display: "grid", gridTemplateColumns: "26px minmax(0,1fr) 108px 62px",
+        display: "grid", gridTemplateColumns: "26px minmax(0,1fr) 108px 62px 18px",
         alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8,
         cursor: detalhe ? "pointer" : "default",
         background: expandida ? "rgba(255,255,255,.05)" : destaque ? `${C.gold}14` : "transparent",
@@ -2417,6 +2417,9 @@ function BlocoRankingUnidades() {
                        color: destaque ? C.gold : C.text }}>{moeda(l.valor)}</span>
         <span style={{ fontSize: 10.5, fontWeight: 700, textAlign: "right",
                        color: seta?.c ?? C.dim }}>{seta?.t ?? "—"}</span>
+        <span style={{ display: "flex", justifyContent: "flex-end", color: detalhe ? (expandida ? C.gold : C.dim) : "transparent" }}>
+          {expandida ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+        </span>
       </div>
       {expandida && detalhe && <ComoVende detalhe={detalhe} />}
       </div>
@@ -9716,6 +9719,10 @@ function Shell({ perfil }) {
   const admin = perfil.papel === "admin" || setores.includes("geral");
   const responsavelEventos = ["Carmen Acassia", "Bruno Cordeiro", "Elis Figueiredo", "Daniele Oliveira"].includes(perfil.nome);
   const [tela, setTela] = useState(admin ? "executivo" : (perfil.setor || setores[0]));
+  const [subHubsAbertos, setSubHubsAbertos] = useState(() => {
+    const paiInicial = HUBS.find((h) => h.key === (perfil.setor || setores[0]))?.pai;
+    return paiInicial ? { [paiInicial]: true } : {};
+  });
   const [modo, setModo] = useState("ano");
   const [ano, setAno] = useState(() => new Date().getFullYear());
   const [mesIdx, setMesIdx] = useState(() => new Date().getMonth());
@@ -9777,7 +9784,14 @@ function Shell({ perfil }) {
     (h.key === "central-eventos" && responsavelEventos)
     ||
     (h.setores ?? [h.setor ?? h.key]).some((s) => setores.includes(s)));
+  const chavesVisiveis = new Set(visiveis.map((h) => h.key));
+  const hubsRaiz = visiveis.filter((h) => !h.pai || !chavesVisiveis.has(h.pai));
   const hub = HUBS.find((h) => h.key === tela);
+
+  useEffect(() => {
+    const paiAtivo = HUBS.find((h) => h.key === tela)?.pai;
+    if (paiAtivo) setSubHubsAbertos((atuais) => ({ ...atuais, [paiAtivo]: true }));
+  }, [tela]);
 
   const conteudo = () => {
     switch (tela) {
@@ -9798,18 +9812,45 @@ function Shell({ perfil }) {
     }
   };
 
-  const Item = ({ chave, label, Icone }) => {
+  const Item = ({ chave, label, Icone, filho = false, filhos = [] }) => {
     const ativo = tela === chave;
+    const grupoAtivo = ativo || filhos.some((filhoHub) => filhoHub.key === tela);
+    const expansivel = filhos.length > 0;
+    const aberto = !!subHubsAbertos[chave];
+    const selecionar = () => {
+      setTela(chave);
+      if (expansivel) setSubHubsAbertos((atuais) => ({ ...atuais, [chave]: !atuais[chave] }));
+    };
     return (
-      <button onClick={() => setTela(chave)} style={{
+      <button onClick={selecionar} aria-expanded={expansivel ? aberto : undefined} style={{
         width: "100%", display: "flex", alignItems: "center", gap: 11,
-        padding: "9px 12px", borderRadius: 9, fontSize: 13.5, fontWeight: 600,
+        padding: filho ? "8px 10px" : "9px 12px", borderRadius: 9,
+        fontSize: filho ? 12.5 : 13.5, fontWeight: filho ? 600 : 650,
         background: ativo ? `${C.gold}1F` : "transparent",
-        color: ativo ? C.gold : C.muted,
+        color: grupoAtivo ? C.gold : C.muted,
         border: "none", cursor: "pointer", fontFamily: SANS, textAlign: "left",
       }}>
-        <Icone size={16} /> {label}
+        <Icone size={filho ? 14 : 16} />
+        <span style={{ flex: 1 }}>{label}</span>
+        {expansivel && (aberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />)}
       </button>
+    );
+  };
+
+  const GrupoHub = ({ hubRaiz }) => {
+    const filhos = visiveis.filter((h) => h.pai === hubRaiz.key);
+    const aberto = !!subHubsAbertos[hubRaiz.key];
+    return (
+      <div>
+        <Item chave={hubRaiz.key} label={hubRaiz.nome} Icone={hubRaiz.Icone} filhos={filhos} />
+        {filhos.length > 0 && aberto && (
+          <div style={{ margin: "2px 0 4px 19px", paddingLeft: 8, borderLeft: `1px solid ${C.cardLine}` }}>
+            {filhos.map((filhoHub) => (
+              <Item key={filhoHub.key} chave={filhoHub.key} label={filhoHub.nome} Icone={filhoHub.Icone} filho />
+            ))}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -9948,7 +9989,7 @@ function Shell({ perfil }) {
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "1.2px", color: C.dim, textTransform: "uppercase", padding: "20px 12px 8px" }}>
             {admin ? "Setores" : "Seu hub"}
           </div>
-          {visiveis.map((h) => <Item key={h.key} chave={h.key} label={h.nome} Icone={h.Icone} />)}
+          {hubsRaiz.map((h) => <GrupoHub key={h.key} hubRaiz={h} />)}
         </div>
 
         <div style={{ padding: 12, borderTop: `1px solid rgba(255,255,255,.07)` }}>

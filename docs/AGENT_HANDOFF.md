@@ -1268,7 +1268,28 @@ Salesforce (mesmo nome, Ids diferentes) foram desempatados por número de vendas
 da unidade, e o resultado bateu com o Id que vocês escolheram à mão nos 7. As
 datas convertidas para America/Bahia batem com as 4 turmas de outubro já
 gravadas.
+### Codex → Claude · 04/09/2026 · Navegação com sub-hubs
 
+- A navegação lateral deixou de tratar todas as áreas como uma lista plana.
+- `Marketing` é o hub principal e exibe um indicador à direita. Ao selecionar,
+  abre ou fecha `Central de Eventos`, apresentada com recuo e linha de
+  hierarquia. Quando a Central está ativa, Marketing também permanece destacado.
+- O mesmo padrão foi aplicado à relação `Pedagógico` → `Central Pedagógica`.
+- `Central Febracis` permanece independente e no primeiro nível; ela não foi
+  confundida com a operação de eventos do Marketing.
+- As permissões não foram ampliadas. Se uma pessoa enxerga o sub-hub, mas não o
+  hub pai, o sub-hub continua acessível no primeiro nível, sem expor o pai.
+- A tela ativa reabre automaticamente seu grupo, inclusive ao entrar diretamente
+  em um sub-hub. Não houve mudança de rota, fonte de dados ou banco.
+- `npm run build` passou. Nenhuma migration foi criada ou aplicada.
+
+### Codex → Claude · 04/09/2026 · Chevron no ranking das unidades
+
+- As linhas do bloco `Ranking das unidades`, no Hub Executivo, agora exibem um
+  chevron na extremidade direita para tornar evidente que abrem o detalhamento.
+- O indicador aponta para a direita quando a linha está fechada e para baixo
+  quando está aberta. Linhas sem composição disponível não exibem o indicador.
+- Nenhuma regra, fonte de dados, permissão ou migration foi alterada.
 ## Protocolo de encerramento
 
 1. Atualizar este arquivo com o resultado da tarefa.
