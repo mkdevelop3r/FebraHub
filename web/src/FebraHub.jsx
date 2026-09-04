@@ -8,7 +8,7 @@ import {
   TrendingUp, Wallet, Megaphone, GraduationCap, ShoppingBag, CalendarDays,
   LayoutDashboard, Lock, Mail, AlertTriangle, Package, LogOut, Power,
   Database, ShieldAlert, Loader2, ArrowRight, Bell,
-  Clock, Receipt, Hourglass, ChevronLeft, ChevronRight, ChevronDown,
+  Clock, Receipt, Hourglass, ChevronLeft, ChevronRight, ChevronDown, Calculator,
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
   Users, Target, Construction, Percent, Filter, ChevronUp,
   Boxes, PackageX, Repeat, UserCheck, BookOpen, ShieldCheck,
@@ -27,7 +27,7 @@ import {
   useFinanceiroInadimp, useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   usePeriodoLimites, useRankingUnidades, useUnidadeComposicao,
-  useMetaSetor, salvarMeta,
+  useMetaSetor, salvarMeta, sugerirMetaLoja,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroReceitaCategoriaDetalhe, useFinanceiroDespesaCategoriaPeriodo,
   useLojaReceitaPeriodo, useLojaReceitaTotalMes, useLojaReceitaConsolidada,
   useLojaSerie, useLojaKpisAno, useLojaKpisPeriodo,
@@ -2576,6 +2576,111 @@ const botaoMes = {
   color: C.muted, cursor: "pointer",
 };
 
+/* O cálculo automático da meta da Loja (migration 181).
+
+   SUGERE, NUNCA GRAVA. Preenche os campos e mostra a memória de cálculo —
+   quantos dias de cada tipo, quanto vale cada um, e em quantos dias esse
+   valor foi medido. A pessoa confere linha a linha e sobrescreve o que
+   quiser antes de salvar.
+
+   Botão só na Loja porque só a Loja tem método. Quando os outros setores
+   tiverem o deles, a mesma estrutura serve. */
+const ROTULO_TIPO = {
+  "IF": "Inteligência Financeira", "FCIS": "FCIS", "CIS": "CIS Global",
+  "FOP": "FOP", "TCE": "Tour Crescimento", "OUTRO": "outro curso",
+  "WORKSHOP-CURSO": "workshop de 8h", "WORKSHOP-EVENTO": "workshop da Central",
+  "PALESTRA": "palestra", "UTIL": "dia útil comum", "SAB": "sábado", "DOM": "domingo",
+};
+
+function textoDaSugestao(s) {
+  const linhas = (s.linhas ?? []).filter((l) => l.dias > 0).map((l) =>
+    `${l.dias}x ${ROTULO_TIPO[l.tipo] ?? l.tipo} a ${moeda(l.valor_dia)}` +
+    (l.estimado ? " (ARBITRADO, sem histórico)" : ` (medido em ${l.n} dias)`));
+  return `Calculado pelo método dias x tipo em ${dataBR(new Date().toISOString())}. `
+    + linhas.join("; ") + `. Máster = previsão; básica = -20%; mínima = -10% da básica.`;
+}
+
+function SugestaoMeta({ mesRef, onAplicar }) {
+  const [s, setS] = useState(null);
+  const [carregando, setCarregando] = useState(false);
+  const [erro, setErro] = useState(null);
+
+  const calcular = async () => {
+    setCarregando(true); setErro(null);
+    try { setS(await sugerirMetaLoja(mesRef)); }
+    catch (e) { setErro(e.message || "Não foi possível calcular."); }
+    finally { setCarregando(false); }
+  };
+
+  return (
+    <div style={{ marginBottom: 10 }}>
+      {!s && (
+        <button onClick={calcular} disabled={carregando} style={{
+          display: "inline-flex", alignItems: "center", gap: 6, padding: "6px 11px",
+          borderRadius: 8, fontFamily: SANS, fontSize: 11.5, fontWeight: 700,
+          cursor: carregando ? "default" : "pointer",
+          color: C.gold, background: `${C.gold}14`, border: `1px solid ${C.gold}3A`,
+        }}>
+          {carregando ? <Loader2 size={12} className="girar" /> : <Calculator size={12} />}
+          {carregando ? "calculando…" : "calcular pelo método"}
+        </button>
+      )}
+      {erro && <div style={{ fontSize: 11, color: C.down, marginTop: 6 }}>{erro}</div>}
+
+      {s && (
+        <div style={{ border: `1px solid ${C.cardLine}`, borderRadius: 10, padding: "10px 12px" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".4px", color: C.gold }}>
+              memória de cálculo
+            </span>
+            <span style={{ flex: 1 }} />
+            <button onClick={() => onAplicar(s)} style={{
+              padding: "5px 10px", borderRadius: 7, fontFamily: SANS, fontSize: 11,
+              fontWeight: 700, cursor: "pointer", color: C.up,
+              background: `${C.up}16`, border: `1px solid ${C.up}4D`,
+            }}>usar estes valores</button>
+            <button onClick={() => setS(null)} style={{
+              background: "none", border: "none", padding: "5px 2px", cursor: "pointer",
+              color: C.faint, fontFamily: SANS, fontSize: 11, fontWeight: 700,
+            }}>descartar</button>
+          </div>
+
+          {(s.linhas ?? []).filter((l) => l.dias > 0).map((l) => (
+            <div key={l.tipo} style={{ display: "grid", gridTemplateColumns: "22px minmax(0,1fr) 88px 92px",
+                                       gap: 8, alignItems: "baseline", padding: "2px 0" }}>
+              <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700, color: C.muted, textAlign: "right" }}>{l.dias}×</span>
+              <span style={{ fontSize: 11.5, color: l.estimado ? C.warn : C.muted }}>
+                {ROTULO_TIPO[l.tipo] ?? l.tipo}
+                <span style={{ fontSize: 10, color: C.dim }}>
+                  {l.estimado ? " · arbitrado" : ` · n=${l.n}`}
+                </span>
+              </span>
+              <span style={{ fontFamily: GROTESK, fontSize: 11.5, color: C.faint, textAlign: "right" }}>{moeda(l.valor_dia)}</span>
+              <span style={{ fontFamily: GROTESK, fontSize: 11.5, fontWeight: 700, color: C.text, textAlign: "right" }}>{moeda(l.subtotal)}</span>
+            </div>
+          ))}
+
+          <div style={{ display: "flex", gap: 16, marginTop: 9, paddingTop: 8, borderTop: `1px solid ${C.hair}`, flexWrap: "wrap" }}>
+            {[["mínima", s.minima], ["básica", s.basica], ["máster", s.master]].map(([r, v]) => (
+              <div key={r}>
+                <div style={{ fontSize: 9.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px", color: C.dim }}>{r}</div>
+                <div style={{ fontFamily: GROTESK, fontSize: 14, fontWeight: 700, color: r === "máster" ? C.gold : C.text }}>{moeda(v)}</div>
+              </div>
+            ))}
+          </div>
+
+          {(s.avisos ?? []).map((a, i) => (
+            <div key={i} style={{ display: "flex", gap: 6, marginTop: 8, fontSize: 10.5, color: C.warn, lineHeight: 1.5 }}>
+              <AlertTriangle size={11} style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>{a}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HubMetas({ admin }) {
   const q = useMetaSetor();
   const [mes, setMes] = useState(() => {
@@ -2725,6 +2830,13 @@ function LinhaMeta({ cfg, mesRef, linha, admin, editando, onEditar, onFechar, on
 
       {editando && (
         <div style={{ marginTop: 10 }}>
+          {cfg.setor === "loja" && (
+            <SugestaoMeta mesRef={mesRef} onAplicar={(s) => setF((v) => ({
+              ...v,
+              minima: s.minima, basica: s.basica, master: s.master,
+              observacao: v.observacao || textoDaSugestao(s),
+            }))} />
+          )}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
             {(cfg.niveis === 3
               ? [["mínima", "minima"], ["básica", "basica"], ["máster", "master"]]

@@ -837,6 +837,16 @@ export const useUnidadeComposicao = () =>
 export const useMetaSetor = () =>
   useView("vw_meta_realizado_setor", { ordem: ["mes_ref", "setor", "indicador"], staleTime: 60 * 1000 });
 
+/* Sugere a meta da Loja pelo método de dias x tipo (migration 181). NÃO grava:
+   devolve os três níveis e a MEMÓRIA DE CÁLCULO, para a tela mostrar de onde
+   cada real veio. Sem isso vira caixa-preta, que é o oposto do que a tela de
+   metas existe para ser. */
+export async function sugerirMetaLoja(mesRef) {
+  const { data, error } = await supabase.rpc("sugerir_meta_loja", { p_mes: mesRef });
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data;
+}
+
 /* Grava a meta. A RLS exige `papel = 'admin'` — não há RPC porque a policy já
    é o portão; quem não for admin recebe erro do próprio banco, e a tela mostra
    a mensagem como veio. */
