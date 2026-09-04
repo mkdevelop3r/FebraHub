@@ -101,13 +101,29 @@ receita as (
   select data_emissao::date as dia, sum(valor) as receita
     from fato_loja_cupom where not cancelado group by 1
 ),
--- ---------- historico: tudo ANTES do mes alvo, menos fevereiro ----------
+-- ---------- historico ----------
+--
+-- A JANELA TERMINA NO ULTIMO DIA COM CARGA, nao na vespera do mes alvo.
+--
+-- Parecia obvio ir ate `a.ini - 1`, e estava errado: calculando OUTUBRO no
+-- dia 4 de setembro, os dias de 5 a 30/09 ainda nao aconteceram e entravam
+-- como dias que venderam zero. Os tres dias de IF de setembro (17 a 19) sao
+-- futuro, e puxavam a media de IF de 12.883 para 8.589 -- e junto com ela
+-- FCIS (4.548 -> 3.032) e o dia util (111 -> 73). A meta sairia ~25% menor
+-- sem nenhum sinal de erro.
+--
+-- Dia sem dado NAO e dia sem venda. `max(data_emissao)` e o unico limite
+-- honesto: alem dele nao ha informacao, so ausencia dela.
+ultimo_dia as (
+  select max(data_emissao)::date as dia from fato_loja_cupom where not cancelado
+),
 hist as (
   select d::date as dia,
          coalesce(e.tipo, case extract(dow from d) when 0 then 'DOM'
                                                    when 6 then 'SAB' else 'UTIL' end) as tipo,
          coalesce(r.receita, 0) as receita
-    from alvo a, generate_series('2026-01-01'::date, a.ini - 1, '1 day') d
+    from alvo a, ultimo_dia u,
+         generate_series('2026-01-01'::date, least(a.ini - 1, u.dia), '1 day') d
     left join escolhido e on e.dia = d::date
     left join receita r on r.dia = d::date
    where date_trunc('month', d) <> '2026-02-01'          -- regra 5
@@ -151,15 +167,21 @@ select jsonb_build_object(
                 'subtotal', round(dias * valor_dia),
                 'n', n, 'estimado', estimado, 'sem_historico', sem_historico)
                 order by dias * valor_dia desc) from linhas),
+  -- HAVING sem GROUP BY, e nao `group by 1`: a expressao do select contem
+  -- agregados, e agrupar por ela da 42803. Sem GROUP BY o bloco ja e uma
+  -- linha so; o HAVING existe para SUPRIMI-LA quando nao ha dia na situacao
+  -- -- senao o aviso sairia com "null dia(s)" toda vez que estivesse tudo bem.
   'avisos', (select coalesce(jsonb_agg(txt), '[]'::jsonb) from (
       select 'Sem historico para ' || sum(dias) || ' dia(s) de tipo ' ||
              string_agg(distinct tipo, ', ') ||
              ' -- entram como zero. Arbitre o valor antes de salvar.' as txt
-        from linhas where sem_historico group by 1
+        from linhas where sem_historico
+       having sum(dias) > 0
       union all
       select 'Palestra e workshop da Central sao valores ARBITRADOS (' ||
              sum(dias) || ' dia(s)): nao ha historico ate 09/2026.'
-        from linhas where estimado and dias > 0
+        from linhas where estimado
+       having sum(dias) > 0
     ) x)
 );
 $FN$;
