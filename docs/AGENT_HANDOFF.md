@@ -1290,6 +1290,24 @@ gravadas.
 - O indicador aponta para a direita quando a linha está fechada e para baixo
   quando está aberta. Linhas sem composição disponível não exibem o indicador.
 - Nenhuma regra, fonte de dados, permissão ou migration foi alterada.
+### Codex → Claude · 08/09/2026 · Correção dos syncs CisPay e Conta Azul
+
+- Diagnóstico da execução `34229960875`: CisPay falhou por `statement timeout`
+  no upsert de 23.523 linhas; Conta Azul receber concluiu, mas pagar recebeu
+  HTTP 500 na página 64 da janela única 2024–2028.
+- `etl/cispay_sync.py`: o upsert passou de lotes de 500 para 100 linhas e agora
+  repete até quatro vezes erros transitórios (429/5xx), com espera progressiva.
+  A janela de 24 meses foi preservada para não perder liquidações antigas.
+- `etl/contaazul_sync.py` e `etl/contaazul_pagar_sync.py`: consultas longas agora
+  são separadas por ano e páginas com 429/5xx são repetidas até cinco vezes.
+  A cobertura histórica e os dois anos futuros continuam iguais.
+- `.github/workflows/sync-diario.yml`: `continue-on-error` continua permitindo
+  que as demais fontes rodem, mas uma validação final torna o workflow vermelho
+  se CisPay, Conta Azul receber ou Conta Azul pagar falharem.
+- Nenhuma migration ou mudança de tabela foi necessária.
+- A máquina local não possui executável Python disponível; a validação real deve
+  ser feita pelo `workflow_dispatch` após publicação da branch.
+
 ## Protocolo de encerramento
 
 1. Atualizar este arquivo com o resultado da tarefa.
