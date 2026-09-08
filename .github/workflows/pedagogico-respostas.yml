@@ -1,0 +1,45 @@
+# FebraHub · retorno das confirmações do Pedagógico
+# Esta rotina só lê tags no CRM e atualiza o Supabase. Nunca envia mensagem.
+
+name: Respostas Pedagógico
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: pedagogico-respostas
+  cancel-in-progress: false
+
+jobs:
+  colher:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependências
+        run: pip install -r etl/requirements.txt
+      - name: Colher respostas no CRM
+        id: respostas
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
+          CRM_LOCATION_ID: ${{ secrets.CRM_LOCATION_ID }}
+        run: python etl/pedagogico_mensagens.py --colher-respostas
+      - name: Registrar status
+        if: always()
+        run: |
+          curl -s --fail-with-body -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"respostas_pedagogico\",\"nome_exibicao\":\"Respostas Pedagógico\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.respostas.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+      - name: Falhar se a coleta falhou
+        if: always() && steps.respostas.outcome != 'success'
+        run: exit 1
