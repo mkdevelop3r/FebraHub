@@ -146,6 +146,29 @@ jobs:
             -H "Prefer: resolution=merge-duplicates" \
             -d "{\"fonte\":\"meta_ads\",\"nome_exibicao\":\"Meta Ads\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.meta.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 
+      # ---------------- Leads por anúncio (Meta) ----------------
+      # DEPOIS do Meta Ads, e a ordem não é estética: este script lê do
+      # Supabase quais anúncios tiveram gasto na janela para saber a quem
+      # perguntar. Rodando antes, perguntaria pela lista de ontem.
+      #
+      # Fecha o elo anúncio -> lead, que está quebrado desde 13/07/2026: a
+      # integração nativa do Meta com o Black CRM entrega o formulário, não o
+      # anúncio (`adId` vem nulo). Ver o cabeçalho de db/191.
+      - name: Leads por anúncio (Meta)
+        id: metaleads
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          META_TOKEN: ${{ secrets.META_TOKEN }}
+          META_ACCOUNT_ID: ${{ secrets.META_ACCOUNT_ID }}
+        run: python etl/meta_leads_sync.py --aplicar
+        continue-on-error: true
+
+      - name: Status — Leads por anúncio
+        if: always()
+        run: |
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte"             -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}"             -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}"             -H "Content-Type: application/json"             -H "Prefer: resolution=merge-duplicates"             -d "{\"fonte\":\"meta_leads\",\"nome_exibicao\":\"Leads por anúncio (Meta)\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.metaleads.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+
       # ---------------- Loja (Omie) ----------------
       # Só o ano corrente; 2025 é histórico fechado e não muda mais.
       # O Omie limita o intervalo de busca — nunca pedir vários anos de uma vez.
