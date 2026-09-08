@@ -246,3 +246,15 @@ jobs:
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=merge-duplicates" \
             -d "{\"fonte\":\"sheets\",\"nome_exibicao\":\"Planilha da Loja\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.sheets_fat.outcome == 'success' && steps.sheets_metas.outcome == 'success' && steps.sheets_extras.outcome == 'success' && steps.sheets_fech.outcome == 'success' && 'ok' || 'parcial' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+
+      # continue-on-error deixa as outras fontes rodarem. A validação final
+      # evita, porém, que falhas financeiras fiquem escondidas num run verde.
+      - name: Validar sincronizações financeiras
+        if: always()
+        run: |
+          if [[ "${{ steps.cispay.outcome }}" != "success" || \
+                "${{ steps.ca_receber.outcome }}" != "success" || \
+                "${{ steps.ca_pagar.outcome }}" != "success" ]]; then
+            echo "CisPay=${{ steps.cispay.outcome }} ContaAzulReceber=${{ steps.ca_receber.outcome }} ContaAzulPagar=${{ steps.ca_pagar.outcome }}"
+            exit 1
+          fi

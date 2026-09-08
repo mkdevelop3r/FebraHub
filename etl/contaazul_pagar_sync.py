@@ -108,24 +108,30 @@ def buscar(desde: str, ate: str) -> Iterator[Dict[str, Any]]:
     token = ca.access_token_valido()
     pagina = 1
     while True:
-        r = requests.get(
-            f"{ca.BASE}{ENDPOINT}",
-            headers={"Authorization": f"Bearer {token}"},
-            params={
-                "pagina": pagina,
-                "tamanho_pagina": TAM_PAGINA,
-                "data_vencimento_de": desde,
-                "data_vencimento_ate": ate,
-            },
-            timeout=TIMEOUT,
-        )
-        if r.status_code == 401:
-            token = ca.access_token_valido()
-            continue
-        if r.status_code == 429:
-            time.sleep(5)
-            continue
-        r.raise_for_status()
+        for tentativa in range(1, ca.MAX_TENTATIVAS_API + 1):
+            r = requests.get(
+                f"{ca.BASE}{ENDPOINT}",
+                headers={"Authorization": f"Bearer {token}"},
+                params={
+                    "pagina": pagina,
+                    "tamanho_pagina": TAM_PAGINA,
+                    "data_vencimento_de": desde,
+                    "data_vencimento_ate": ate,
+                },
+                timeout=TIMEOUT,
+            )
+            if r.status_code == 401:
+                token = ca.access_token_valido()
+            elif r.status_code == 429 or r.status_code >= 500:
+                pass
+            else:
+                r.raise_for_status()
+                break
+            if tentativa == ca.MAX_TENTATIVAS_API:
+                r.raise_for_status()
+            espera = min(30, 2 ** tentativa)
+            print(f"  página {pagina}: HTTP {r.status_code}; nova tentativa em {espera}s")
+            time.sleep(espera)
 
         corpo = r.json()
         itens = corpo.get("itens") or corpo.get("data") or corpo.get("content") or []
@@ -187,7 +193,10 @@ def upsert(linhas: List[Dict]) -> None:
 
 def sincronizar(desde: str) -> None:
     ate = date.today().replace(year=date.today().year + 2).isoformat()
-    linhas = [montar(r) for r in buscar(desde, ate)]
+    linhas = []
+    for inicio_janela, fim_janela in ca.intervalos_anuais(desde, ate):
+        print(f"Buscando {inicio_janela} a {fim_janela}")
+        linhas.extend(montar(r) for r in buscar(inicio_janela, fim_janela))
     print(f"\n{len(linhas)} parcelas de contas a pagar")
     if not linhas:
         sys.exit("Zero registros — nada a gravar.")

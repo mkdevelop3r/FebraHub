@@ -54,7 +54,7 @@ import sys
 import time
 import webbrowser
 from collections import Counter
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Iterator, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -74,6 +74,7 @@ BASE = "https://api-v2.contaazul.com"
 ENDPOINT = "/v1/financeiro/eventos-financeiros/contas-a-receber/buscar"
 TAM_PAGINA = 100
 TIMEOUT = 60
+MAX_TENTATIVAS_API = 5
 LIMITE = 0.50
 INTEGRACAO = "contaazul"
 
@@ -430,25 +431,30 @@ def buscar(desde: str, ate: str) -> Iterator[Dict[str, Any]]:
     token = access_token_valido()
     pagina = 1
     while True:
-        r = requests.get(
-            f"{BASE}{ENDPOINT}",
-            headers={"Authorization": f"Bearer {token}"},
-            params={
-                "pagina": pagina,
-                "tamanho_pagina": TAM_PAGINA,
-                "data_vencimento_de": desde,
-                "data_vencimento_ate": ate,
-            },
-            timeout=TIMEOUT,
-        )
-        if r.status_code == 401:
-            # token expirou no meio — renova uma vez e retoma
-            token = access_token_valido()
-            continue
-        if r.status_code == 429:
-            time.sleep(5)
-            continue
-        r.raise_for_status()
+        for tentativa in range(1, MAX_TENTATIVAS_API + 1):
+            r = requests.get(
+                f"{BASE}{ENDPOINT}",
+                headers={"Authorization": f"Bearer {token}"},
+                params={
+                    "pagina": pagina,
+                    "tamanho_pagina": TAM_PAGINA,
+                    "data_vencimento_de": desde,
+                    "data_vencimento_ate": ate,
+                },
+                timeout=TIMEOUT,
+            )
+            if r.status_code == 401:
+                token = access_token_valido()
+            elif r.status_code == 429 or r.status_code >= 500:
+                pass
+            else:
+                r.raise_for_status()
+                break
+            if tentativa == MAX_TENTATIVAS_API:
+                r.raise_for_status()
+            espera = min(30, 2 ** tentativa)
+            print(f"  página {pagina}: HTTP {r.status_code}; nova tentativa em {espera}s")
+            time.sleep(espera)
 
         corpo = r.json()
         itens = corpo.get("itens") or corpo.get("data") or corpo.get("content") or []
@@ -462,6 +468,15 @@ def buscar(desde: str, ate: str) -> Iterator[Dict[str, Any]]:
             return
         pagina += 1
         time.sleep(0.3)
+
+
+def intervalos_anuais(desde: str, ate: str) -> Iterator[tuple[str, str]]:
+    atual = date.fromisoformat(desde)
+    fim = date.fromisoformat(ate)
+    while atual <= fim:
+        limite = min(date(atual.year, 12, 31), fim)
+        yield atual.isoformat(), limite.isoformat()
+        atual = limite + timedelta(days=1)
 
 
 # ============================================================
@@ -534,7 +549,10 @@ def validar(linhas: List[Dict]) -> None:
 
 def sincronizar(desde: str) -> None:
     ate = date.today().replace(year=date.today().year + 2).isoformat()  # inclui futuro
-    linhas = [montar(r) for r in buscar(desde, ate)]
+    linhas = []
+    for inicio_janela, fim_janela in intervalos_anuais(desde, ate):
+        print(f"Buscando {inicio_janela} a {fim_janela}")
+        linhas.extend(montar(r) for r in buscar(inicio_janela, fim_janela))
     print(f"\n{len(linhas)} parcelas de contas a receber")
     validar(linhas)
 

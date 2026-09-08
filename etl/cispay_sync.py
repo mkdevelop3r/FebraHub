@@ -56,6 +56,8 @@ CHAVE_LISTA = "schedules"
 EXTRATO = "/services/checking-account"
 PAGE_SIZE = 1000
 TIMEOUT = 60
+LOTE_UPSERT = 100
+MAX_TENTATIVAS_UPSERT = 4
 LIMITE = 0.50
 
 SUBSELLERS = ["5618b38a-70cb-473c-b77e-6950c1475b4f"]
@@ -328,19 +330,25 @@ def upsert(tabela: str, linhas: List[Dict], pk: str) -> None:
     key = os.environ.get("SUPABASE_SERVICE_KEY")
     if not url or not key:
         sys.exit("Faltam SUPABASE_URL / SUPABASE_SERVICE_KEY no .env")
-    for i in range(0, len(linhas), 500):
-        lote = linhas[i : i + 500]
-        r = requests.post(
-            f"{url}/rest/v1/{tabela}",
-            headers={"apikey": key, "Authorization": f"Bearer {key}",
-                     "Content-Type": "application/json",
-                     "Prefer": "resolution=merge-duplicates,return=minimal"},
-            params={"on_conflict": pk},
-            data=json.dumps(lote, ensure_ascii=False, default=str),
-            timeout=90,
-        )
-        if r.status_code >= 300:
-            raise RuntimeError(f"{tabela}: HTTP {r.status_code}\n{r.text[:500]}")
+    for i in range(0, len(linhas), LOTE_UPSERT):
+        lote = linhas[i : i + LOTE_UPSERT]
+        for tentativa in range(1, MAX_TENTATIVAS_UPSERT + 1):
+            r = requests.post(
+                f"{url}/rest/v1/{tabela}",
+                headers={"apikey": key, "Authorization": f"Bearer {key}",
+                         "Content-Type": "application/json",
+                         "Prefer": "resolution=merge-duplicates,return=minimal"},
+                params={"on_conflict": pk},
+                data=json.dumps(lote, ensure_ascii=False, default=str),
+                timeout=90,
+            )
+            if r.status_code < 300:
+                break
+            if r.status_code not in {429, 500, 502, 503, 504} or tentativa == MAX_TENTATIVAS_UPSERT:
+                raise RuntimeError(f"{tabela}: HTTP {r.status_code}\n{r.text[:500]}")
+            espera = 2 ** tentativa
+            print(f"  {tabela}: lote {i + 1} falhou (HTTP {r.status_code}); nova tentativa em {espera}s")
+            time.sleep(espera)
         print(f"  {tabela}: {i + len(lote)}/{len(linhas)}")
 
 
