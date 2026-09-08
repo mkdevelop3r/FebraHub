@@ -4595,6 +4595,17 @@ const mktGeraLead = (linha) => {
    (nenhuma origem do CRM aponta para ela, e nunca vai apontar), na de eventos
    com número de verdade. Aqui ela é removida da primeira — senão o gasto dela
    entraria duas vezes no total do topo. */
+/* O dia em que passou a existir lead rastreável: `min(criado_em)` de
+   fato_crm_lead, quando a operação migrou para o Black CRM. Campanha que
+   terminou ANTES disto não tem como ser julgada por lead — não é de-para
+   faltando, é fonte que não alcança.
+
+   Tratar as duas como a mesma coisa põe R$ 106 mil de 2024 e 2025 num alerta
+   âmbar que ninguém pode resolver, e alerta que não se resolve é alerta que se
+   aprende a ignorar. Se um dia o histórico do CRM for carregado para trás,
+   esta data desce junto. */
+const INICIO_DO_RASTREIO = "2026-07-10";
+
 function HubMarketing() {
   const per = usePeriodo();
   const saude = useMarketingSaudeCaptacao();
@@ -4626,7 +4637,7 @@ function HubMarketing() {
       retorno: c.retorno == null ? null : Number(c.retorno),
       unitario: c.custo_por_inscrito == null ? null : Number(c.custo_por_inscrito),
       parcial: !!c.resultado_parcial, dias: Number(c.dias_desde_o_evento ?? 0),
-      jaAlunos: Number(c.ja_eram_alunos ?? 0), semMapa: false,
+      jaAlunos: Number(c.ja_eram_alunos ?? 0), semMapa: false, anterior: false,
     }));
 
     const deLead = (lead.data ?? [])
@@ -4634,9 +4645,11 @@ function HubMarketing() {
       .filter((c) => !comEvento.has(c.campanha_nome))
       .map((c) => ({
         chave: c.campanha_nome, tipo: "lead", nome: c.campanha_nome,
-        detalhe: c.sem_de_para
-          ? "sem de-para — nenhuma origem aponta para esta campanha"
-          : `${dataBR(c.comecou)} a ${dataBR(c.terminou)} · ${numero(c.anuncios)} anúncios`,
+        detalhe: !c.sem_de_para
+          ? `${dataBR(c.comecou)} a ${dataBR(c.terminou)} · ${numero(c.anuncios)} anúncios`
+          : String(c.terminou ?? "").slice(0, 10) < INICIO_DO_RASTREIO
+            ? `anterior ao rastreio — não havia lead registrado até ${dataBR(INICIO_DO_RASTREIO)}`
+            : "sem de-para — nenhuma origem aponta para esta campanha",
         gasto: Number(c.gasto ?? 0),
         meio: Number(c.leads ?? 0), meioRotulo: "leads",
         vendas: Number(c.vendas ?? 0), receita: Number(c.receita ?? 0),
@@ -4644,6 +4657,10 @@ function HubMarketing() {
         unitario: c.cpl == null ? null : Number(c.cpl),
         parcial: false, dias: null, jaAlunos: 0,
         semMapa: !!c.sem_de_para,
+        // Sem de-para PORQUE a fonte não alcança — não porque falta trabalho.
+        // Fica cinza e fora do alerta; ver INICIO_DO_RASTREIO.
+        anterior: !!c.sem_de_para
+                  && String(c.terminou ?? "").slice(0, 10) < INICIO_DO_RASTREIO,
       }));
 
     /* Mapeadas primeiro, por retorno. As sem de-para vão para o fim: o número
@@ -4658,9 +4675,10 @@ function HubMarketing() {
     gasto: a.gasto + l.gasto,
     receita: a.receita + l.receita,
     vendas: a.vendas + l.vendas,
-    semMapa: a.semMapa + (l.semMapa ? l.gasto : 0),
+    semMapa: a.semMapa + (l.semMapa && !l.anterior ? l.gasto : 0),
+    anterior: a.anterior + (l.anterior ? l.gasto : 0),
     parcial: a.parcial + (l.parcial ? l.gasto : 0),
-  }), { gasto: 0, receita: 0, vendas: 0, semMapa: 0, parcial: 0 }), [linhas]);
+  }), { gasto: 0, receita: 0, vendas: 0, semMapa: 0, anterior: 0, parcial: 0 }), [linhas]);
 
   const alerta = saude.data?.[0];
   const retornoGeral = totais.gasto > 0 ? totais.receita / totais.gasto : null;
@@ -4723,10 +4741,19 @@ function HubMarketing() {
           <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(totais.gasto)}</b> investidos</span>
           <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(totais.receita)}</b> de curso vendido</span>
           <span style={{ color: C.muted, fontSize: 13 }}>{numero(totais.vendas)} matrículas</span>
+          {/* Três motivos diferentes para o retorno não julgar um gasto, e só
+              um deles é acionável. Misturá-los transformava R$ 106 mil de
+              histórico num alerta que ninguém pode resolver. */}
           {(totais.semMapa > 0 || totais.parcial > 0) && (
             <span style={{ flexBasis: "100%", color: C.warn, fontSize: 10.5, lineHeight: 1.5 }}>
-              {totais.semMapa > 0 && <>{moeda(totais.semMapa)} em campanhas sem de-para — o retorno acima não as julga. </>}
+              {totais.semMapa > 0 && <>{moeda(totais.semMapa)} em campanhas sem de-para — dá para mapear. </>}
               {totais.parcial > 0 && <>{moeda(totais.parcial)} em eventos recentes demais para ter resultado.</>}
+            </span>
+          )}
+          {totais.anterior > 0 && (
+            <span style={{ flexBasis: "100%", color: C.faint, fontSize: 10.5, lineHeight: 1.5 }}>
+              {moeda(totais.anterior)} anterior a {dataBR(INICIO_DO_RASTREIO)}, quando
+              não havia lead registrado. Não há o que mapear aí.
             </span>
           )}
         </div>
@@ -4777,7 +4804,8 @@ function HubMarketing() {
                           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
                         }}>{l.nome}</span>
                       </div>
-                      <div style={{ fontSize: 10.5, color: l.semMapa ? C.warn : C.faint,
+                      <div style={{ fontSize: 10.5,
+                                    color: l.anterior ? C.dim : l.semMapa ? C.warn : C.faint,
                                     overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                         {l.detalhe}
                         {l.jaAlunos > 0 && (
