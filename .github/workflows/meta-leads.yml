@@ -31,6 +31,11 @@ on:
         required: false
         type: boolean
         default: true
+      permissoes:
+        description: Só mostrar o que o token tem, e sair (não consulta leads)
+        required: false
+        type: boolean
+        default: false
       desde:
         description: Data inicial (AAAA-MM-DD). Vazio = 60 dias atrás
         required: false
@@ -63,8 +68,9 @@ jobs:
         # em branco -- o caso comum -- quebraria o workflow.
         run: |
           args=""
-          if [ "${{ inputs.diagnostico }}" = "true" ]; then args="$args --diagnostico"; fi
-          if [ "${{ inputs.aplicar }}" = "true" ];     then args="$args --aplicar"; fi
-          if [ -n "${{ inputs.desde }}" ];             then args="$args --desde ${{ inputs.desde }}"; fi
+          if [ "${{ inputs.permissoes }}" = "true" ];  then args="--permissoes"; fi
+          if [ "${{ inputs.diagnostico }}" = "true" ] && [ -z "$args" ]; then args="$args --diagnostico"; fi
+          if [ "${{ inputs.aplicar }}" = "true" ] && [ "$args" != "--permissoes" ]; then args="$args --aplicar"; fi
+          if [ -n "${{ inputs.desde }}" ] && [ "$args" != "--permissoes" ]; then args="$args --desde ${{ inputs.desde }}"; fi
           echo "rodando: python etl/meta_leads_sync.py $args"
           python etl/meta_leads_sync.py $args

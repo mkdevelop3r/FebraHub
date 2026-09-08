@@ -134,6 +134,49 @@ def leads_do_anuncio(anuncio_id, token, desde_unix):
         time.sleep(0.3)
 
 
+def diagnostico_do_token(token):
+    """Le o que o token REALMENTE tem, em vez de deduzir pelo erro.
+
+    Depois de duas tentativas falhando com o mesmo (#100), adivinhar a causa
+    -- token curto? papel na Pagina? escopo nao concedido? -- e mais caro que
+    perguntar. `/me/permissions` responde permissao a permissao, e diz
+    `declined` quando o Facebook recusou um escopo que foi PEDIDO: e a
+    diferenca entre "esqueci de pedir" e "pedi e nao me deram".
+    """
+    log("PERMISSOES DO TOKEN")
+    try:
+        perms = get("me/permissions", {}, token).get("data", [])
+        if perms:
+            for p in sorted(perms, key=lambda x: (x.get("status"), x.get("permission"))):
+                marca = "  " if p.get("status") == "granted" else "! "
+                log(f"  {marca}{p.get('permission'):<32} {p.get('status')}")
+            tem = {p["permission"] for p in perms if p.get("status") == "granted"}
+            falta = {"leads_retrieval", "pages_manage_ads"} - tem
+            log("")
+            log("  leads_retrieval/pages_manage_ads: "
+                + ("FALTA -- e a causa do erro 100" if len(falta) == 2 else "presente"))
+        else:
+            log("  (vazio -- token de System User nao responde /me/permissions)")
+    except RuntimeError as e:
+        log(f"  nao deu para ler: {e}")
+
+    log("")
+    log("VALIDADE E TIPO")
+    try:
+        d = get("debug_token", {"input_token": token}, token).get("data", {})
+        exp = d.get("expires_at")
+        quando = (datetime.fromtimestamp(exp, timezone.utc).isoformat()
+                  if exp else "nunca (token de longa duracao ou de sistema)")
+        log(f"  tipo ............ {d.get('type')}")
+        log(f"  app ............. {d.get('app_id')}")
+        log(f"  valido .......... {d.get('is_valid')}")
+        log(f"  expira em ....... {quando}")
+        if d.get("scopes"):
+            log(f"  escopos ......... {', '.join(sorted(d['scopes']))}")
+    except RuntimeError as e:
+        log(f"  nao deu para ler: {e}")
+
+
 # ---------------------------------------------------------------- transformar
 def so_digitos(v):
     return re.sub(r"\D", "", str(v or ""))
@@ -213,9 +256,14 @@ def main():
                    help="so 5 anuncios, para conferir permissao e formato")
     p.add_argument("--desde", default=None,
                    help="data inicial (padrao: 60 dias atras)")
+    p.add_argument("--permissoes", action="store_true",
+                   help="so mostra o que o token tem, e sai")
     args = p.parse_args()
 
     token = env("META_TOKEN")
+    if args.permissoes:
+        diagnostico_do_token(token)
+        return
     sb_url, sb_key = env("SUPABASE_URL").rstrip("/"), env("SUPABASE_SERVICE_KEY")
 
     desde = args.desde or (date.today() - timedelta(days=60)).isoformat()
