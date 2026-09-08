@@ -401,17 +401,27 @@ function Kpi({ label, valor, unidade, delta, up, serie, nota, destaque, parcial 
 /* Rodapé discreto: quando cada fonte que alimenta o hub foi atualizada.
    Usa o `rotulo` já formatado da view. Neutro quando fresco (hoje/ontem);
    alerta quando velho (ha_dias), com erro/parcial (falha real) ou nunca.
-   "Nunca sincronizado" do Salesforce é manual (import de CSV), não falha —
-   por isso sai âmbar com nota "manual", nunca vermelho como um erro. */
-const FONTES_MANUAIS = new Set(["salesforce"]); // sync registrado à mão
+
+   FONTE MANUAL NÃO ENVELHECE. Ela só se move quando alguém a dispara, então
+   contar dias desde a última vez não diz nada sobre saúde — diz há quanto
+   tempo ninguém precisou dela. Fica em cinza, com a nota de que é manual.
+
+   Isto existe porque o rodapé passou seis dias mostrando "Salesforce ·
+   Atualizado há 5 dias" em âmbar. Não era atraso: a fonte `salesforce` (CSV
+   do Gmail) virou contingência em 02/09, quando a API assumiu, e desde então
+   só se move a mão. Um alerta que acende sem motivo ensina a ignorar o
+   painel — e é o mesmo painel onde um atraso de verdade vai aparecer. */
+const FONTES_MANUAIS = new Set(["salesforce"]); // contingência: só disparo à mão
 
 function visualFonte(r) {
+  const manual = FONTES_MANUAIS.has(r.fonte);
   if (r.status === "erro" || r.status === "parcial")
     return { cor: C.down, alerta: true, nota: "falha na última sincronização" };
-  if (r.frescor === "nunca")
-    return { cor: C.warn, alerta: true, manual: FONTES_MANUAIS.has(r.fonte) };
-  if (r.frescor === "ha_dias")
-    return { cor: C.warn, alerta: true };
+  // Falha continua sendo falha mesmo em fonte manual — o que não é falha é a
+  // idade dela. Por isso este teste vem depois do de erro.
+  if (manual) return { cor: C.dim, alerta: false, manual: true };
+  if (r.frescor === "nunca") return { cor: C.warn, alerta: true };
+  if (r.frescor === "ha_dias") return { cor: C.warn, alerta: true };
   return { cor: C.up, alerta: false }; // hoje / ontem, ok
 }
 
@@ -3502,7 +3512,7 @@ function HubComercial() {
         </div>
       </div>
 
-      <RodapeIntegracoes fontes={ehSympla ? ["sympla"] : ["salesforce", "cispay"]} />
+      <RodapeIntegracoes fontes={ehSympla ? ["sympla"] : ["salesforce_api", "cispay"]} />
 
       {verdesDe && (
         <PainelVerdes
@@ -4036,7 +4046,7 @@ function HubFinanceiro() {
         )}
       </Bloco>
 
-      <RodapeIntegracoes fontes={["salesforce", "conta_azul", "cispay"]} />
+      <RodapeIntegracoes fontes={["salesforce_api", "conta_azul", "cispay"]} />
     </>
   );
 }
@@ -6543,7 +6553,7 @@ function HubPedagogico() {
         continuam sem medição: não estão no Salesforce.
       </div>
 
-      <RodapeIntegracoes fontes={["salesforce"]} />
+      <RodapeIntegracoes fontes={["salesforce_api"]} />
 
       {/* ---- Modais de entrada (gravam nas tabelas; RLS gate pedagógico) ---- */}
       {retEdit && (
