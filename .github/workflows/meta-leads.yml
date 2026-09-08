@@ -1,0 +1,67 @@
+name: Leads por anúncio (Meta) — sob demanda
+
+# A rotina diária já roda este ETL dentro do sync-diario, com --aplicar.
+# Este workflow existe para a PRIMEIRA execução, e para depuração: sem marcar
+# "aplicar", ele consulta e mostra, sem gravar nada.
+#
+# Faz falta porque o META_TOKEN só existe nos secrets — não dá para rodar o
+# diagnóstico na máquina de ninguém. Sem isto, a primeira execução seria uma
+# escrita às 06:00, sem ninguém ter visto o retorno antes.
+#
+# O QUE OLHAR NO LOG
+#
+# Se TODOS os anúncios voltarem sem lead, a causa provável não é ausência de
+# leads: é o token sem a permissão `leads_retrieval`. Sem ela a Meta responde
+# 200 com lista vazia em vez de erro — em silêncio, para todo anúncio. O
+# script diz isso na cara quando acontece.
+
+on:
+  workflow_dispatch:
+    inputs:
+      aplicar:
+        description: Gravar no Supabase (desmarcado = só consulta e mostra)
+        required: false
+        type: boolean
+        default: false
+      diagnostico:
+        description: Só 5 anúncios (rápido, para conferir permissão e formato)
+        required: false
+        type: boolean
+        default: true
+      desde:
+        description: Data inicial (AAAA-MM-DD). Vazio = 60 dias atrás
+        required: false
+        type: string
+
+# Grupo próprio: escreve em fato_meta_lead, que o sync-diario só toca por
+# este mesmo script. Compartilhar grupo com outro sync só faria esperar.
+concurrency:
+  group: meta-leads
+  cancel-in-progress: false
+
+jobs:
+  leads:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependências
+        run: pip install -r etl/requirements.txt
+      - name: Leads por anúncio
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          META_TOKEN: ${{ secrets.META_TOKEN }}
+          META_ACCOUNT_ID: ${{ secrets.META_ACCOUNT_ID }}
+        # `if` e nao `[ ... ] && ...`: o step roda com `bash -e`, e um teste
+        # que da FALSO na ultima linha derruba o passo inteiro. Deixar a data
+        # em branco -- o caso comum -- quebraria o workflow.
+        run: |
+          args=""
+          if [ "${{ inputs.diagnostico }}" = "true" ]; then args="$args --diagnostico"; fi
+          if [ "${{ inputs.aplicar }}" = "true" ];     then args="$args --aplicar"; fi
+          if [ -n "${{ inputs.desde }}" ];             then args="$args --desde ${{ inputs.desde }}"; fi
+          echo "rodando: python etl/meta_leads_sync.py $args"
+          python etl/meta_leads_sync.py $args
