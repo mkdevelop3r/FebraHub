@@ -86,6 +86,16 @@ TAG_PRAZO = "pedagogico prazo"
 TAG_CONFIRMACAO = "pedagogico:confirmacao"
 TAG_GRUPO = "pedagogico:grupo"
 
+# Tags de volta aplicadas pelo workflow do CRM conforme a resposta do aluno.
+TAG_RESPOSTA = {
+    "pedagogico confirmado":   "sim",
+    "pedagogico nao vem":      "nao",
+    "pedagogico sem resposta": "sem_resposta",
+}
+
+# Consultar tags não envia mensagem. Zero significa ler todas as pendentes.
+RESP_LIMITE = int(os.environ.get("RESP_LIMITE") or 0)
+
 
 def log(m):
     print(m, flush=True)
@@ -217,6 +227,96 @@ def horario_faixa(ini, fim):
     return f"das {ini} às {fim}" if fim else f"a partir das {ini}"
 
 
+def buscar_contato(telefone, email):
+    """Localiza o contato no CRM por telefone e, depois, por e-mail."""
+    tentativas = []
+    digitos = "".join(c for c in (telefone or "") if c.isdigit())
+    if digitos:
+        if digitos.startswith("55") and len(digitos) in (12, 13):
+            digitos = digitos[2:]
+        if len(digitos) in (10, 11):
+            tentativas.append("+55" + digitos)
+    if email:
+        tentativas.append(email)
+
+    for consulta in tentativas:
+        r = requests.get(
+            f"{CRM_API}/contacts/", headers=CRM, timeout=30,
+            params={"query": consulta, "limit": 1, "locationId": CRM_LOCATION},
+        )
+        if not r.ok:
+            continue
+        contatos = (r.json() or {}).get("contacts") or []
+        if contatos:
+            return contatos[0]
+    return None
+
+
+def resposta_da_tag(contato):
+    """Traduz as tags do CRM para a resposta reconhecida pelo Hub."""
+    tags = {str(t).strip().lower() for t in (contato.get("tags") or [])}
+    # Em caso de tags conflitantes, a negativa é o sinal mais conservador.
+    for tag in ("pedagogico nao vem", "pedagogico confirmado", "pedagogico sem resposta"):
+        if tag in tags:
+            return TAG_RESPOSTA[tag]
+    return None
+
+
+def colher_respostas(diagnostico=False):
+    """Consulta as tags das confirmações pendentes e atualiza o Hub em lote."""
+    fila = ler_fila("vw_respostas_pendentes", RESP_LIMITE)
+    log(f"\nrespostas: {len(fila)} pendentes")
+    if not fila:
+        return
+
+    itens, sem_tag, sem_contato, falhas = [], 0, 0, 0
+    for linha in fila:
+        rotulo = linha.get("aluno_id")
+        try:
+            contato = buscar_contato(linha.get("telefone"), linha.get("email"))
+        except Exception as e:
+            falhas += 1
+            log(f"  ERRO  {rotulo}: {e}")
+            continue
+
+        if not contato:
+            sem_contato += 1
+            if diagnostico:
+                log(f"  ?     {rotulo}: nao achei no CRM")
+            time.sleep(0.3)
+            continue
+
+        resposta = resposta_da_tag(contato)
+        if diagnostico:
+            tags = ", ".join(
+                str(t) for t in (contato.get("tags") or [])
+                if str(t).lower().startswith("pedagogico")
+            ) or "(nenhuma do pedagogico)"
+            log(f"  {resposta or '-':12} {rotulo} {linha.get('tipo')} :: {tags}")
+
+        if resposta is None:
+            sem_tag += 1
+        else:
+            itens.append({
+                "aluno_id": linha["aluno_id"], "turma_id": linha["turma_id"],
+                "tipo": linha["tipo"], "resposta": resposta,
+            })
+        time.sleep(0.3)
+
+    log(f"respostas: {len(itens)} com tag, {sem_tag} ainda sem responder, "
+        f"{sem_contato} sem contato no CRM, {falhas} falhas")
+
+    if diagnostico:
+        log("respostas: DIAGNOSTICO — nada foi gravado.")
+        return
+    if itens:
+        r = erro_com_corpo(requests.post(
+            f"{SUPABASE_URL}/rest/v1/rpc/registrar_respostas",
+            headers=SB, json={"p_itens": itens}, timeout=120,
+        ))
+        log(f"respostas: {r.json()}")
+
+
 def processar(view, tag, funcao_registro, monta_campos, exige=()):
     """`exige` lista campos que não podem vir vazios.
 
@@ -342,6 +442,12 @@ def main():
 
 if __name__ == "__main__":
     try:
+        if "--diagnostico-respostas" in sys.argv:
+            colher_respostas(diagnostico=True)
+            sys.exit(0)
+        if "--colher-respostas" in sys.argv:
+            colher_respostas()
+            sys.exit(0)
         main()
     except Exception as e:
         log(f"ERRO: {e}")

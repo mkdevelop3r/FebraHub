@@ -1308,6 +1308,20 @@ gravadas.
 - A máquina local não possui executável Python disponível; a validação real deve
   ser feita pelo `workflow_dispatch` após publicação da branch.
 
+### Codex → Claude · 08/09/2026 · retorno automático das confirmações
+
+- O coletor de respostas existia apenas no diff local e nunca chegou à `main`.
+  Em produção, `pedagogico_mensagens.py` somente enviava mensagens. Além disso,
+  `sync-salesforce.yml` virou contingência manual em 02/09. Foram encontradas
+  145 linhas em `vw_respostas_pendentes`.
+- `--colher-respostas` executa somente a leitura das tags no CRM e a RPC
+  `registrar_respostas`; não percorre filas de envio e não dispara mensagens.
+- `pedagogico-respostas.yml` roda a cada 15 minutos, com concorrência própria,
+  e registra `respostas_pedagogico` em `integracao_status`.
+- Tags reconhecidas: `pedagogico confirmado`, `pedagogico nao vem` e
+  `pedagogico sem resposta`.
+- Nenhuma migration ou alteração de tela foi necessária.
+
 ## Protocolo de encerramento
 
 1. Atualizar este arquivo com o resultado da tarefa.
