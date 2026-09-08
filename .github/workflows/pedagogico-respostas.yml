@@ -7,6 +7,16 @@ on:
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
+    inputs:
+      recuperar_turma:
+        description: Turma para diagnosticar respostas sem tag (vazio = não recuperar)
+        required: false
+        type: string
+      aplicar_recuperacao:
+        description: Gravar os SIM inequívocos encontrados
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: pedagogico-respostas
@@ -31,6 +41,17 @@ jobs:
           CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
           CRM_LOCATION_ID: ${{ secrets.CRM_LOCATION_ID }}
         run: python etl/pedagogico_mensagens.py --colher-respostas
+      - name: Recuperar respostas sem tag
+        if: github.event_name == 'workflow_dispatch' && inputs.recuperar_turma != ''
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
+          CRM_LOCATION_ID: ${{ secrets.CRM_LOCATION_ID }}
+        run: >-
+          python etl/recuperar_confirmacoes.py
+          --turma "${{ inputs.recuperar_turma }}"
+          ${{ inputs.aplicar_recuperacao && '--aplicar' || '' }}
       - name: Registrar status
         if: always()
         run: |
