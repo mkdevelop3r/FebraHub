@@ -384,6 +384,35 @@ export const useMarketingDesempenho = () =>
 export const useMarketingOrigemVendas = () =>
   useView("vw_marketing_origem_vendas", { ordem: ["mes", "canal"] });
 
+/* RESULTADO POR CAMPANHA — gasto, leads, vendas e retorno (db/192).
+
+   Substitui a leitura só de CPL. O CPL sozinho classifica a coisa errada: em
+   09/2026 a campanha de Jequié tinha o lead mais barato da casa (R$ 8) e o
+   pior retorno (0,23x), enquanto Salvador custava R$ 18 por lead e devolvia
+   7x. Ordenar por "menor CPL primeiro" punha a pior no topo.
+
+   A atribuição só vale dentro da janela de veiculação da campanha — landing
+   page vive mais que a campanha. Isso é decidido no banco, não aqui. */
+export const useMarketingCampanhaResultado = () =>
+  useView("vw_mkt_campanha_resultado", { ordem: ["gasto"] });
+
+/* RESULTADO DA CAMPANHA DE EVENTO (db/193).
+
+   Mede o retorno em CURSO vendido a quem se inscreveu, nunca em ingresso: o
+   ingresso custa R$ 30 e a palestra existe para vender curso — medir por ele
+   diria que toda palestra dá prejuízo.
+
+   `resultado_parcial` marca evento com menos de 30 dias, cuja janela de
+   conversão (60 dias) mal começou. Zero ali não é fracasso. */
+export const useMarketingEventoResultado = () =>
+  useView("vw_mkt_evento_resultado", { ordem: ["gasto"] });
+
+/* Origens que trazem lead e ninguém mapeou para campanha. Aparece na tela de
+   propósito: painel que só mostra o que já está mapeado esconde o que falta
+   mapear, e o buraco cresce em silêncio. */
+export const useMarketingOrigemSemMapa = () =>
+  useView("vw_mkt_origem_sem_mapa");
+
 /* Hub de Marketing acionável: captação e investimento, sem atribuição de
    receita. As quatro views abaixo já aplicam pode_ver('marketing') no banco. */
 export const useMarketingSaudeCaptacao = () =>

@@ -33,7 +33,9 @@ import {
   useLojaSerie, useLojaKpisAno, useLojaKpisPeriodo,
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
-  useMarketingSaudeCaptacao, useMarketingCaptacaoDiaria,
+  useMarketingSaudeCaptacao,
+  useMarketingCampanhaResultado, useMarketingEventoResultado,
+  useMarketingOrigemSemMapa,
   usePedagogicoKpis, usePedagogicoKpisPeriodo, usePedagogicoPresencaKpis, usePedagogicoPresencaTempo,
   usePedagogicoRecompraCurso, usePedagogicoNaoFizeramCurso,
   usePedagogicoMaestrosCompleto, usePedagogicoMaestrosKpis, usePedagogicoMaestroAnotacoes,
@@ -4557,15 +4559,6 @@ function FunilConversao({ leads }) {
   );
 }
 
-const mktNoIntervaloMensal = (linhas, per) => {
-  const inicio = per.inicio.slice(0, 7);
-  const fim = per.fim.slice(0, 7);
-  return (linhas ?? []).filter((l) => {
-    const mes = String(l.mes ?? "").slice(0, 7);
-    return mes && mes >= inicio && mes <= fim;
-  });
-};
-
 const mktObjetivo = (linha) => {
   if (linha.objetivo) return linha.objetivo;
   const nome = String(linha.campanha_nome ?? "").toLowerCase();
@@ -4582,85 +4575,136 @@ const mktGeraLead = (linha) => {
   return /whats|mensag|lead|capta|cadastro|formul/i.test(String(linha.campanha_nome ?? ""));
 };
 
+/* HUB DE MARKETING — o que voltou, não o que custou.
+
+   A tela anterior parava no CPL e ordenava por "menor CPL primeiro", chamando
+   isso de eficiência. Com os dados de venda (db/192) essa ordenação se revela
+   invertida: em 09/2026 a campanha de Jequié tinha o lead mais barato da casa
+   — R$ 8 — e o pior retorno, 0,23x. Ordenar por CPL punha a pior no topo.
+
+   DUAS ESPÉCIES DE CAMPANHA, UMA COLUNA DE RETORNO
+
+   Campanha de lead (landing page, formulário) converte em LEAD; campanha de
+   evento converte em INSCRITO no Sympla. O meio do caminho é diferente e leva
+   rótulo próprio em cada linha — mas as duas terminam na mesma moeda, receita
+   de curso sobre gasto, e por isso o retorno fica numa coluna só e a lista é
+   uma só. Separar em duas tabelas obrigaria a comparar de cabeça o que a
+   máquina já sabe comparar.
+
+   A campanha de evento aparece nas DUAS views: na de leads como "sem de-para"
+   (nenhuma origem do CRM aponta para ela, e nunca vai apontar), na de eventos
+   com número de verdade. Aqui ela é removida da primeira — senão o gasto dela
+   entraria duas vezes no total do topo. */
+/* O dia em que passou a existir lead rastreável: `min(criado_em)` de
+   fato_crm_lead, quando a operação migrou para o Black CRM. Campanha que
+   terminou ANTES disto não tem como ser julgada por lead — não é de-para
+   faltando, é fonte que não alcança.
+
+   Tratar as duas como a mesma coisa põe R$ 106 mil de 2024 e 2025 num alerta
+   âmbar que ninguém pode resolver, e alerta que não se resolve é alerta que se
+   aprende a ignorar. Se um dia o histórico do CRM for carregado para trás,
+   esta data desce junto. */
+const INICIO_DO_RASTREIO = "2026-07-10";
+
 function HubMarketing() {
   const per = usePeriodo();
   const saude = useMarketingSaudeCaptacao();
-  const captacao = useMarketingCaptacaoDiaria();
-  const desempenho = useMarketingDesempenho();
-  const consultas = [saude, captacao, desempenho];
-  const [semLeadAberto, setSemLeadAberto] = useState(false);
+  const lead = useMarketingCampanhaResultado();
+  const evento = useMarketingEventoResultado();
+  const semMapa = useMarketingOrigemSemMapa();
+  const consultas = [saude, lead, evento, semMapa];
+  const [semMapaAberto, setSemMapaAberto] = useState(false);
 
-  const resumo = useMemo(() => {
-    const linhas = noPeriodo(captacao.data, per, "dia");
-    return linhas.reduce((a, l) => ({
-      leads: a.leads + Number(l.leads ?? 0),
-      origem: a.origem + Number(l.com_origem ?? 0),
-      telefone: a.telefone + Number(l.com_telefone ?? 0),
-    }), { leads: 0, origem: 0, telefone: 0 });
-  }, [captacao.data, per.inicio, per.fim]);
+  /* A campanha entra no recorte se a VEICULAÇÃO tocou o período. Filtrar pela
+     data de início excluiria campanha que começou antes e ainda está no ar —
+     que é justamente a que se quer olhar durante o mês. */
+  const tocaOPeriodo = (c) => {
+    const c0 = String(c.comecou ?? "").slice(0, 10);
+    const c1 = String(c.terminou ?? "").slice(0, 10);
+    return c0 && c1 && c0 <= per.fim && c1 >= per.inicio;
+  };
 
-  const performance = useMemo(
-    () => mktNoIntervaloMensal(desempenho.data, per),
-    [desempenho.data, per.inicio, per.fim]
-  );
+  const linhas = useMemo(() => {
+    const eventos = (evento.data ?? []).filter(tocaOPeriodo);
+    const comEvento = new Set(eventos.map((c) => c.campanha_nome));
 
-  const totaisPerformance = useMemo(() => performance.reduce((a, l) => ({
-    gasto: a.gasto + Number(l.gasto ?? 0),
-    leads: a.leads + Number(l.leads ?? 0),
-  }), { gasto: 0, leads: 0 }), [performance]);
-
-  const porCategoria = useMemo(() => {
-    const ordem = ["CIS", "GGB", "LL", "Eventos", "Outros"];
-    const mapa = new Map(ordem.map((categoria) => [categoria, { categoria, gasto: 0, leads: 0 }]));
-    for (const l of performance) {
-      const categoria = l.categoria || "Outros";
-      const atual = mapa.get(categoria) ?? { categoria, gasto: 0, leads: 0 };
-      atual.gasto += Number(l.gasto ?? 0);
-      atual.leads += Number(l.leads ?? 0);
-      mapa.set(categoria, atual);
-    }
-    return [...mapa.values()].map((l) => ({ ...l, cpl: l.leads > 0 ? l.gasto / l.leads : null }));
-  }, [performance]);
-
-  const porCampanha = useMemo(() => {
-    const mapa = new Map();
-    for (const l of performance) {
-      const nome = l.campanha_nome || "Campanha sem nome";
-      const atual = mapa.get(nome) ?? {
-        campanha_nome: nome, categoria: l.categoria || "Outros", gasto: 0, leads: 0,
-      };
-      atual.gasto += Number(l.gasto ?? 0);
-      atual.leads += Number(l.leads ?? 0);
-      mapa.set(nome, atual);
-    }
-    return [...mapa.values()].map((l) => ({
-      ...l, cpl: l.leads > 0 ? l.gasto / l.leads : null,
+    const deEvento = eventos.map((c) => ({
+      chave: c.campanha_nome, tipo: "evento", nome: c.campanha_nome,
+      detalhe: `${c.nome_evento} · ${dataBR(c.data_evento)}`,
+      gasto: Number(c.gasto ?? 0),
+      meio: Number(c.inscritos ?? 0), meioRotulo: "inscritos",
+      vendas: Number(c.compraram ?? 0), receita: Number(c.receita ?? 0),
+      retorno: c.retorno == null ? null : Number(c.retorno),
+      unitario: c.custo_por_inscrito == null ? null : Number(c.custo_por_inscrito),
+      parcial: !!c.resultado_parcial, dias: Number(c.dias_desde_o_evento ?? 0),
+      jaAlunos: Number(c.ja_eram_alunos ?? 0), semMapa: false, anterior: false,
     }));
-  }, [performance]);
 
-  const campanhasComCpl = useMemo(
-    () => porCampanha.filter((l) => l.cpl != null).sort((a, b) => a.cpl - b.cpl),
-    [porCampanha]
-  );
-  const campanhasSemLead = useMemo(
-    () => porCampanha.filter((l) => l.cpl == null).sort((a, b) => b.gasto - a.gasto),
-    [porCampanha]
-  );
-  const gastoSemLead = useMemo(
-    () => campanhasSemLead.reduce((s, l) => s + l.gasto, 0),
-    [campanhasSemLead]
-  );
+    const deLead = (lead.data ?? [])
+      .filter(tocaOPeriodo)
+      .filter((c) => !comEvento.has(c.campanha_nome))
+      .map((c) => ({
+        chave: c.campanha_nome, tipo: "lead", nome: c.campanha_nome,
+        detalhe: !c.sem_de_para
+          ? `${dataBR(c.comecou)} a ${dataBR(c.terminou)} · ${numero(c.anuncios)} anúncios`
+          : String(c.terminou ?? "").slice(0, 10) < INICIO_DO_RASTREIO
+            ? `anterior ao rastreio — não havia lead registrado até ${dataBR(INICIO_DO_RASTREIO)}`
+            : "sem de-para — nenhuma origem aponta para esta campanha",
+        gasto: Number(c.gasto ?? 0),
+        meio: Number(c.leads ?? 0), meioRotulo: "leads",
+        vendas: Number(c.vendas ?? 0), receita: Number(c.receita ?? 0),
+        retorno: c.retorno == null ? null : Number(c.retorno),
+        unitario: c.cpl == null ? null : Number(c.cpl),
+        parcial: false, dias: null,
+        jaAlunos: Number(c.ja_eram_alunos ?? 0),
+        semMapa: !!c.sem_de_para,
+        // Sem de-para PORQUE a fonte não alcança — não porque falta trabalho.
+        // Fica cinza e fora do alerta; ver INICIO_DO_RASTREIO.
+        anterior: !!c.sem_de_para
+                  && String(c.terminou ?? "").slice(0, 10) < INICIO_DO_RASTREIO,
+      }));
+
+    /* Mapeadas primeiro, por retorno. As sem de-para vão para o fim: o número
+       delas não é comparável, e misturá-las sugeriria que é. */
+    return [...deEvento, ...deLead].sort((a, b) => {
+      if (a.semMapa !== b.semMapa) return a.semMapa ? 1 : -1;
+      return (b.retorno ?? -1) - (a.retorno ?? -1);
+    });
+  }, [lead.data, evento.data, per.inicio, per.fim]);
+
+  const totais = useMemo(() => linhas.reduce((a, l) => ({
+    gasto: a.gasto + l.gasto,
+    receita: a.receita + l.receita,
+    vendas: a.vendas + l.vendas,
+    semMapa: a.semMapa + (l.semMapa && !l.anterior ? l.gasto : 0),
+    anterior: a.anterior + (l.anterior ? l.gasto : 0),
+    parcial: a.parcial + (l.parcial ? l.gasto : 0),
+  }), { gasto: 0, receita: 0, vendas: 0, semMapa: 0, anterior: 0, parcial: 0 }), [linhas]);
 
   const alerta = saude.data?.[0];
-  const maiorGastoCategoria = Math.max(1, ...porCategoria.map((l) => l.gasto));
-  const pct = (parte, total) => total > 0 ? Math.round(parte / total * 100) : 0;
+  const retornoGeral = totais.gasto > 0 ? totais.receita / totais.gasto : null;
+  const semMapaLista = semMapa.data ?? [];
 
   return (
     <Estado
       carregando={consultas.some((q) => q.isLoading)}
       erro={consultas.find((q) => q.error)?.error}
     >
+      <style>{`
+        .mkGrade { display: grid;
+                   grid-template-columns: minmax(0,1.7fr) 96px 76px 68px 108px 88px 84px;
+                   align-items: center; gap: 10px; }
+        @media (max-width: 1040px) { .mkGrade { grid-template-columns: minmax(0,1.5fr) 92px 72px 64px 100px 80px; }
+                                     .mkUnit { display: none; } }
+        @media (max-width: 820px)  { .mkGrade { grid-template-columns: minmax(0,1.4fr) 88px 68px 96px 80px; }
+                                     .mkVendas { display: none; } }
+        @media (max-width: 620px)  { .mkGrade { grid-template-columns: minmax(0,1fr) 84px 76px; }
+                                     .mkMeio, .mkReceita { display: none; } }
+        .mkLinha:hover { background: rgba(255,255,255,.02); }
+      `}</style>
+
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
         {alerta?.alerta && (
           <div style={{
             display: "flex", alignItems: "center", gap: 11, padding: "12px 15px",
@@ -4673,92 +4717,192 @@ function HubMarketing() {
                 Captação parada há {numero(alerta.dias_sem_lead)} dias
               </div>
               <div style={{ color: C.muted, fontSize: 11.5, marginTop: 2 }}>
-                Nenhum lead novo desde {alerta.ultimo_lead ? new Date(`${String(alerta.ultimo_lead).slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR") : "a última sincronização"}. Verifique a ponte do CRM.
+                Nenhum lead novo desde {alerta.ultimo_lead
+                  ? new Date(`${String(alerta.ultimo_lead).slice(0, 10)}T12:00:00`).toLocaleDateString("pt-BR")
+                  : "a última sincronização"}. Verifique a ponte do CRM.
               </div>
             </div>
           </div>
         )}
 
+        {/* O retorno é o número herói. Investimento e receita ao lado porque é
+            a razão entre eles que se está lendo. */}
         <div style={{
           display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px 26px",
           minHeight: 48, padding: "9px 15px", borderRadius: 11,
           background: C.card, border: `1px solid ${C.cardLine}`,
         }}>
           <span style={{ color: C.muted, fontSize: 11, fontWeight: 750, textTransform: "uppercase", letterSpacing: ".08em" }}>
-            Performance · {per.rotulo}
+            Retorno · {per.rotulo}
           </span>
-          <span style={{ color: C.bright, fontSize: 14 }}><b>{numero(totaisPerformance.leads)}</b> leads atribuíveis</span>
-          <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(totaisPerformance.gasto)}</b> investidos</span>
-          <span style={{ color: C.goldTop, fontSize: 17, fontWeight: 800 }}>
-            {totaisPerformance.leads > 0 ? `${moeda(totaisPerformance.gasto / totaisPerformance.leads)} CPL` : "sem lead atribuível"}
+          <span style={{ fontFamily: GROTESK, fontSize: 19, fontWeight: 800,
+                         color: retornoGeral == null ? C.faint : retornoGeral >= 1 ? C.up : C.down }}>
+            {retornoGeral == null ? "—" : `${retornoGeral.toFixed(2)}×`}
           </span>
-          <span style={{ flexBasis: "100%", color: C.faint, fontSize: 10.5 }}>
-            Qualidade da captação no CRM: {numero(resumo.leads)} cadastros · {pct(resumo.origem, resumo.leads)}% com origem · {pct(resumo.telefone, resumo.leads)}% com telefone
-          </span>
-        </div>
-
-        <Bloco titulo="Investimento e CPL por categoria" canto="comparação de eficiência">
-          <div style={{ display: "flex", flexDirection: "column", gap: 13, padding: "4px 0 2px" }}>
-            {porCategoria.map((l) => (
-              <div key={l.categoria} style={{ display: "grid", gridTemplateColumns: "82px minmax(160px, 1fr) 112px 150px", gap: 12, alignItems: "center" }}>
-                <div style={{ color: C.bright, fontSize: 12.5, fontWeight: 750 }}>{l.categoria}</div>
-                <div style={{ height: 10, borderRadius: 999, background: "rgba(255,255,255,.055)", overflow: "hidden" }}>
-                  <div style={{ width: `${Math.max(l.gasto > 0 ? 2 : 0, l.gasto / maiorGastoCategoria * 100)}%`, height: "100%", borderRadius: 999, background: `linear-gradient(90deg, ${C.goldBase}, ${C.goldTop})` }} />
-                </div>
-                <div style={{ color: C.muted, fontSize: 11.5, textAlign: "right", whiteSpace: "nowrap" }}>{moeda(l.gasto)}</div>
-                <div style={{ color: l.cpl != null ? C.up : C.faint, fontSize: 11.5, fontWeight: l.cpl != null ? 750 : 500, textAlign: "right", whiteSpace: "nowrap" }}>
-                  {l.cpl != null ? `${moeda(l.cpl)} / lead` : "sem lead atribuível"}
-                </div>
-              </div>
-            ))}
-          </div>
-        </Bloco>
-
-        <Bloco titulo="Campanhas com CPL" canto="menor CPL primeiro">
-          {campanhasComCpl.length ? (
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}>
-                <thead><tr>
-                  {["Campanha", "Categoria", "Investimento", "Leads", "CPL"].map((h, i) => (
-                    <th key={h} style={{ padding: "8px 10px", textAlign: i < 2 ? "left" : "right", color: C.faint, fontSize: 10, textTransform: "uppercase", letterSpacing: ".07em", borderBottom: `1px solid ${C.cardLine}` }}>{h}</th>
-                  ))}
-                </tr></thead>
-                <tbody>{campanhasComCpl.map((l) => (
-                  <tr key={l.campanha_nome} style={{ borderBottom: `1px solid ${C.hair}` }}>
-                    <td style={{ padding: "10px", color: C.bright, fontSize: 11.5, fontWeight: 650, borderLeft: `2px solid ${C.up}` }}>{l.campanha_nome}</td>
-                    <td style={{ padding: "10px", color: C.muted, fontSize: 11 }}>{l.categoria}</td>
-                    <td style={{ padding: "10px", color: C.bright, fontSize: 11.5, textAlign: "right", whiteSpace: "nowrap" }}>{moeda(l.gasto)}</td>
-                    <td style={{ padding: "10px", color: C.bright, fontSize: 11.5, textAlign: "right" }}>{numero(l.leads)}</td>
-                    <td style={{ padding: "10px", color: C.goldTop, fontSize: 12.5, fontWeight: 800, textAlign: "right" }}>{moeda(l.cpl)}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-          ) : <Estado vazio vazioTitulo="Sem campanha com CPL" vazioDica="Nenhuma campanha tem gasto e lead atribuível no recorte." />}
-        </Bloco>
-
-        <div style={{ border: `1px solid ${C.cardLine}`, borderRadius: 11, background: C.card, overflow: "hidden" }}>
-          <button type="button" onClick={() => setSemLeadAberto((v) => !v)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 9, padding: "12px 14px", color: C.bright, background: "transparent", border: 0, cursor: "pointer", fontFamily: SANS, textAlign: "left" }}>
-            {semLeadAberto ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-            <b style={{ fontSize: 12.5 }}>Campanhas sem lead atribuível</b>
-            <span style={{ color: C.goldTop, fontSize: 12, marginLeft: "auto" }}>{moeda(gastoSemLead)}</span>
-          </button>
-          <div style={{ padding: semLeadAberto ? "0 14px 12px" : "0 14px 11px", color: C.muted, fontSize: 11.5, lineHeight: 1.45 }}>
-            Investimento em alcance, landing page e WhatsApp; o cadastro ou contato acontece fora do Meta.
-          </div>
-          {semLeadAberto && campanhasSemLead.length > 0 && (
-            <div style={{ borderTop: `1px solid ${C.hair}`, padding: "5px 14px 10px" }}>
-              {campanhasSemLead.map((l) => (
-                <div key={l.campanha_nome} style={{ display: "flex", gap: 12, justifyContent: "space-between", padding: "7px 0", color: C.muted, fontSize: 11.5 }}>
-                  <span>{l.campanha_nome} · {l.categoria}</span><b style={{ color: C.bright, whiteSpace: "nowrap" }}>{moeda(l.gasto)}</b>
-                </div>
-              ))}
-            </div>
+          <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(totais.gasto)}</b> investidos</span>
+          <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(totais.receita)}</b> de curso vendido</span>
+          <span style={{ color: C.muted, fontSize: 13 }}>{numero(totais.vendas)} matrículas</span>
+          {/* Três motivos diferentes para o retorno não julgar um gasto, e só
+              um deles é acionável. Misturá-los transformava R$ 106 mil de
+              histórico num alerta que ninguém pode resolver. */}
+          {(totais.semMapa > 0 || totais.parcial > 0) && (
+            <span style={{ flexBasis: "100%", color: C.warn, fontSize: 10.5, lineHeight: 1.5 }}>
+              {totais.semMapa > 0 && <>{moeda(totais.semMapa)} em campanhas sem de-para — dá para mapear. </>}
+              {totais.parcial > 0 && <>{moeda(totais.parcial)} em eventos recentes demais para ter resultado.</>}
+            </span>
+          )}
+          {totais.anterior > 0 && (
+            <span style={{ flexBasis: "100%", color: C.faint, fontSize: 10.5, lineHeight: 1.5 }}>
+              {moeda(totais.anterior)} anterior a {dataBR(INICIO_DO_RASTREIO)}, quando
+              não havia lead registrado. Não há o que mapear aí.
+            </span>
           )}
         </div>
 
+        <Bloco titulo="Campanhas por retorno" canto="quanto de curso voltou para cada real">
+          {linhas.length ? (
+            <div className="rolagem" style={{
+              maxHeight: 480, overflowY: "auto",
+              border: `1px solid ${C.hair}`, borderRadius: 10,
+            }}>
+              <div className="mkGrade" style={{
+                position: "sticky", top: 0, zIndex: 2, background: "#17171c",
+                padding: "8px 12px", borderBottom: `1px solid ${C.cardLine}`,
+              }}>
+                {[["Campanha", "left", ""], ["Investido", "right", ""],
+                  ["Leads / inscritos", "right", "mkMeio"], ["Matrículas", "right", "mkVendas"],
+                  ["Receita", "right", "mkReceita"], ["Unitário", "right", "mkUnit"],
+                  ["Retorno", "right", ""]].map(([r, al, cls]) => (
+                  <div key={r} className={cls} style={{
+                    fontSize: 10, fontWeight: 800, textTransform: "uppercase",
+                    letterSpacing: ".4px", color: C.dim, textAlign: al,
+                  }}>{r}</div>
+                ))}
+              </div>
+
+              {linhas.map((l, i) => {
+                const corRet = l.semMapa ? C.dim : l.parcial ? C.warn
+                  : l.retorno == null ? C.faint : l.retorno >= 1 ? C.up : C.down;
+                return (
+                  <div key={l.chave} className="mkGrade mkLinha" style={{
+                    minHeight: 50, padding: "0 12px",
+                    borderBottom: i < linhas.length - 1 ? `1px solid ${C.hair}` : "none",
+                  }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{
+                        display: "flex", alignItems: "center", gap: 6, minWidth: 0,
+                      }}>
+                        {/* A espécie da campanha muda o que a coluna do meio
+                            significa; sem a marca, "6" pode ser lead ou inscrito. */}
+                        <span style={{
+                          flexShrink: 0, fontSize: 9, fontWeight: 800, letterSpacing: ".4px",
+                          textTransform: "uppercase", padding: "1px 5px", borderRadius: 3,
+                          color: l.tipo === "evento" ? C.gold : C.faint,
+                          background: l.tipo === "evento" ? `${C.gold}1F` : "rgba(255,255,255,.05)",
+                        }}>{l.tipo === "evento" ? "evento" : "lead"}</span>
+                        <span style={{
+                          fontSize: 12.5, fontWeight: 700, color: C.text,
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>{l.nome}</span>
+                      </div>
+                      <div style={{ fontSize: 10.5,
+                                    color: l.anterior ? C.dim : l.semMapa ? C.warn : C.faint,
+                                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {l.detalhe}
+                        {l.jaAlunos > 0 && (
+                          <span style={{ color: C.dim }}> · {numero(l.jaAlunos)} já eram alunos</span>
+                        )}
+                      </div>
+                    </div>
+                    <div style={{ fontFamily: GROTESK, fontSize: 12, color: C.muted, textAlign: "right" }}>
+                      {moeda(l.gasto)}
+                    </div>
+                    <div className="mkMeio" style={{ textAlign: "right" }}>
+                      <div style={{ fontFamily: GROTESK, fontSize: 12, color: C.muted }}>
+                        {l.semMapa ? "—" : numero(l.meio)}
+                      </div>
+                      {!l.semMapa && (
+                        <div style={{ fontSize: 9, color: C.dim }}>{l.meioRotulo}</div>
+                      )}
+                    </div>
+                    <div className="mkVendas" style={{ fontFamily: GROTESK, fontSize: 12, color: C.muted, textAlign: "right" }}>
+                      {l.semMapa ? "—" : numero(l.vendas)}
+                    </div>
+                    <div className="mkReceita" style={{ fontFamily: GROTESK, fontSize: 12, fontWeight: 700, color: C.text, textAlign: "right" }}>
+                      {l.semMapa ? "—" : moeda(l.receita)}
+                    </div>
+                    <div className="mkUnit" style={{ fontFamily: GROTESK, fontSize: 11.5, color: C.faint, textAlign: "right" }}>
+                      {l.unitario == null ? "—" : moeda(l.unitario)}
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 800, color: corRet }}>
+                        {l.semMapa ? "—" : l.retorno == null ? "0×" : `${l.retorno.toFixed(2)}×`}
+                      </div>
+                      {/* Zero de evento recente não é fracasso: a janela de
+                          conversão tem 60 dias. Sem isto, alguém corta verba
+                          de campanha que ainda não teve chance. */}
+                      {l.parcial && (
+                        <div style={{ fontSize: 9, color: C.warn }}>
+                          parcial · {numero(l.dias)}d
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <Estado vazio vazioTitulo="Sem campanha no período"
+                    vazioDica="Nenhuma campanha teve veiculação no recorte escolhido." />
+          )}
+        </Bloco>
+
+        {/* O buraco, e não só o resultado. Origem grande sem de-para é
+            investimento que a tela acima não consegue julgar. */}
+        {semMapaLista.length > 0 && (
+          <div style={{ border: `1px solid ${C.cardLine}`, borderRadius: 11, background: C.card, overflow: "hidden" }}>
+            <button type="button" onClick={() => setSemMapaAberto((v) => !v)} style={{
+              width: "100%", display: "flex", alignItems: "center", gap: 9,
+              padding: "12px 14px", color: C.bright, background: "transparent",
+              border: 0, cursor: "pointer", fontFamily: SANS, textAlign: "left",
+            }}>
+              {semMapaAberto ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+              <b style={{ fontSize: 12.5 }}>Origens sem campanha mapeada</b>
+              <span style={{ color: C.warn, fontSize: 12, marginLeft: "auto" }}>
+                {numero(semMapaLista.length)}
+              </span>
+            </button>
+            <div style={{ padding: semMapaAberto ? "0 14px 12px" : "0 14px 11px", color: C.muted, fontSize: 11.5, lineHeight: 1.45 }}>
+              Trazem lead e ninguém disse a que campanha pertencem. Nem todas devem
+              ser mapeadas — Instagram Direct e WhatsApp não têm campanha de landing
+              page — mas a decisão de não mapear precisa ser de alguém.
+            </div>
+            {semMapaAberto && (
+              <div style={{ borderTop: `1px solid ${C.hair}`, padding: "5px 14px 10px" }}>
+                {semMapaLista.map((o) => (
+                  <div key={o.fonte} style={{
+                    display: "flex", gap: 12, justifyContent: "space-between",
+                    padding: "7px 0", color: C.muted, fontSize: 11.5,
+                  }}>
+                    <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {o.fonte}
+                      <span style={{ color: C.faint }}> · {dataBR(o.desde)} a {dataBR(o.ate)}</span>
+                    </span>
+                    <b style={{ fontFamily: GROTESK, color: C.bright, whiteSpace: "nowrap" }}>
+                      {numero(o.leads)} leads
+                    </b>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         <div style={{ color: C.faint, fontSize: 10.5, lineHeight: 1.5, padding: "0 2px" }}>
-          A série de captação começa em 17/07/2026, data da migração do CRM. Não há dado de canal antes disso.
+          Receita é sempre CURSO vendido, nunca ingresso — a palestra existe para
+          vender curso, e medi-la pelo ingresso de R$ 30 diria que toda palestra dá
+          prejuízo. A venda é ligada por e-mail ou telefone e só conta a partir do
+          evento, ou dentro da janela em que a campanha esteve no ar.
         </div>
       </div>
     </Estado>

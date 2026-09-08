@@ -35,13 +35,24 @@ Do Supabase, nao do Meta: `fato_meta_insights` ja sabe quais anuncios tiveram
 gasto na janela. Sao 181 desde 10/07 -- 181 chamadas, nao 3.755. Anuncio sem
 gasto nao gera lead, entao perguntar por ele seria so queimar rate limit.
 
-A PERMISSAO QUE COSTUMA FALTAR
+A PERMISSAO QUE FALTA
 
-`/{ad_id}/leads` exige `leads_retrieval` no token, alem do `ads_read` que o
-`meta_sync.py` ja usa. Se o token nao tiver, a Meta responde 200 com lista
-vazia em vez de erro -- silenciosamente, para todo anuncio. Por isso o modo
-diagnostico existe e por isso ele RECLAMA quando todos os anuncios voltam
-vazios: e o sintoma exato dessa falta.
+`/{ad_id}/leads` exige `leads_retrieval` (ou `pages_manage_ads`) no token,
+alem do `ads_read` que o `meta_sync.py` usa. Conferido na primeira execucao,
+em 08/09/2026, a Meta responde ALTO:
+
+    Meta 400: (#100) Requires pages_manage_ads or leads_retrieval permission
+    to manage the object
+
+Eu tinha escrito aqui que ela responderia 200 com lista vazia, em silencio.
+Estava errado, e a realidade e melhor: o erro nomeia a permissao que falta. A
+checagem de "todos vazios" continua abaixo por seguranca -- nao custa nada e
+cobre o caso de um token que veja o anuncio mas nao o formulario -- mas o
+sintoma esperado desta falta e o 400, nao o silencio.
+
+COMO CONSERTAR: gerar um token novo incluindo `leads_retrieval`, com o usuario
+tendo papel na Pagina dona do formulario, e trocar por token de longa duracao.
+O segredo e o mesmo `META_TOKEN` que o meta_sync ja usa.
 
 USO
     python meta_leads_sync.py --diagnostico   # 5 anuncios, nao grava
@@ -123,6 +134,49 @@ def leads_do_anuncio(anuncio_id, token, desde_unix):
         time.sleep(0.3)
 
 
+def diagnostico_do_token(token):
+    """Le o que o token REALMENTE tem, em vez de deduzir pelo erro.
+
+    Depois de duas tentativas falhando com o mesmo (#100), adivinhar a causa
+    -- token curto? papel na Pagina? escopo nao concedido? -- e mais caro que
+    perguntar. `/me/permissions` responde permissao a permissao, e diz
+    `declined` quando o Facebook recusou um escopo que foi PEDIDO: e a
+    diferenca entre "esqueci de pedir" e "pedi e nao me deram".
+    """
+    log("PERMISSOES DO TOKEN")
+    try:
+        perms = get("me/permissions", {}, token).get("data", [])
+        if perms:
+            for p in sorted(perms, key=lambda x: (x.get("status"), x.get("permission"))):
+                marca = "  " if p.get("status") == "granted" else "! "
+                log(f"  {marca}{p.get('permission'):<32} {p.get('status')}")
+            tem = {p["permission"] for p in perms if p.get("status") == "granted"}
+            falta = {"leads_retrieval", "pages_manage_ads"} - tem
+            log("")
+            log("  leads_retrieval/pages_manage_ads: "
+                + ("FALTA -- e a causa do erro 100" if len(falta) == 2 else "presente"))
+        else:
+            log("  (vazio -- token de System User nao responde /me/permissions)")
+    except RuntimeError as e:
+        log(f"  nao deu para ler: {e}")
+
+    log("")
+    log("VALIDADE E TIPO")
+    try:
+        d = get("debug_token", {"input_token": token}, token).get("data", {})
+        exp = d.get("expires_at")
+        quando = (datetime.fromtimestamp(exp, timezone.utc).isoformat()
+                  if exp else "nunca (token de longa duracao ou de sistema)")
+        log(f"  tipo ............ {d.get('type')}")
+        log(f"  app ............. {d.get('app_id')}")
+        log(f"  valido .......... {d.get('is_valid')}")
+        log(f"  expira em ....... {quando}")
+        if d.get("scopes"):
+            log(f"  escopos ......... {', '.join(sorted(d['scopes']))}")
+    except RuntimeError as e:
+        log(f"  nao deu para ler: {e}")
+
+
 # ---------------------------------------------------------------- transformar
 def so_digitos(v):
     return re.sub(r"\D", "", str(v or ""))
@@ -202,9 +256,14 @@ def main():
                    help="so 5 anuncios, para conferir permissao e formato")
     p.add_argument("--desde", default=None,
                    help="data inicial (padrao: 60 dias atras)")
+    p.add_argument("--permissoes", action="store_true",
+                   help="so mostra o que o token tem, e sai")
     args = p.parse_args()
 
     token = env("META_TOKEN")
+    if args.permissoes:
+        diagnostico_do_token(token)
+        return
     sb_url, sb_key = env("SUPABASE_URL").rstrip("/"), env("SUPABASE_SERVICE_KEY")
 
     desde = args.desde or (date.today() - timedelta(days=60)).isoformat()
@@ -251,14 +310,15 @@ def main():
         log(f"  formularios distintos .................. {len(nome_do_form)}")
     log("-" * 66)
 
-    # O sintoma exato da falta de `leads_retrieval`: a Meta responde 200 com
-    # lista vazia, para todos. Ver o cabecalho.
+    # Rede de seguranca, nao o sintoma esperado: quando falta
+    # `leads_retrieval`, a Meta devolve 400 e o script morre antes de chegar
+    # aqui (conferido em 08/09/2026). Isto cobre o caso mais sutil -- token
+    # que enxerga o anuncio mas nao o formulario, voltando vazio sem erro.
     if vazios == len(anuncios):
         log("")
-        log("NENHUM anuncio devolveu lead. Nao conclua que nao houve lead:")
-        log("a causa provavel e o token sem a permissao `leads_retrieval`, que")
-        log("faz a Meta responder 200 com lista vazia em vez de erro. Confira")
-        log("no Business Manager antes de investigar outra coisa.")
+        log("NENHUM anuncio devolveu lead, e sem erro da Meta. Antes de concluir")
+        log("que nao houve lead, confira se o token enxerga os FORMULARIOS --")
+        log("permissao de anuncio e permissao de formulario sao separadas.")
         return
 
     for l in todos[:8]:
