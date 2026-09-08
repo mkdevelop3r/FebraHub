@@ -160,13 +160,19 @@ select j.campanha_nome,
        round(j.gasto / nullif(count(c.pessoa), 0))      as cpl,
        round(j.gasto / nullif(count(c.valor_venda), 0)) as cac,
        round(coalesce(sum(c.valor_venda), 0) / nullif(j.gasto, 0), 2) as retorno,
-       count(*) filter (where c.ja_era_aluno)                          as ja_eram_alunos,
        -- Agora significa "nenhuma das DUAS fontes alcanca esta campanha".
        -- Antes so olhava o de-para, e por isso 30 campanhas do Clint apareciam
        -- como se ninguem as tivesse mapeado.
        (count(c.pessoa) = 0
         and not exists (select 1 from mkt_origem_campanha o
-                         where o.campanha_nome = j.campanha_nome))       as sem_de_para
+                         where o.campanha_nome = j.campanha_nome))       as sem_de_para,
+       -- NO FIM, e nao ao lado de `retorno`, onde ela faria sentido para quem
+       -- le: `create or replace view` so aceita coluna acrescentada no FIM, com
+       -- as anteriores intactas em nome, tipo e ordem. Posta no meio, a
+       -- migration falha inteira com "cannot change name of view column
+       -- sem_de_para to ja_eram_alunos" -- e falha silenciosa para quem so olha
+       -- a tela depois. Mesma regra ja anotada na db/184; errei de novo.
+       count(*) filter (where c.ja_era_aluno)                          as ja_eram_alunos
   from janela j
   left join casado c on c.campanha_nome = j.campanha_nome
  where pode_ver('marketing') or pode_ver('geral')
