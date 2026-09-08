@@ -396,6 +396,39 @@ export const useMarketingOrigemVendas = () =>
 export const useMarketingCampanhaResultado = () =>
   useView("vw_mkt_campanha_resultado", { ordem: ["gasto"] });
 
+/* O PERÍODO É ENTRADA, NÃO FILTRO APLICADO DEPOIS (db/196).
+
+   A view acima soma o gasto da campanha inteira; a tela só escolhia quais
+   linhas mostrar. Uma campanha de 14/08 a 08/09 aparecia com o mesmo valor em
+   agosto e em setembro. Como a pergunta tem um período dentro — "quanto gastei
+   em setembro e quanto voltou" — o período virou parâmetro.
+
+   São DUAS funções porque elas respondem coisas diferentes e discordam de
+   propósito: a de campanha credita a venda a cada campanha que tocou a pessoa,
+   e por isso a coluna NÃO SOMA; a de total conta matrícula distinta. Em
+   09/2026 a diferença era 40%. */
+const rpc = async (nome, args) => {
+  const { data, error } = await supabase.rpc(nome, args);
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data ?? [];
+};
+
+export const useMarketingCampanhaPeriodo = (ini, fim) =>
+  useQuery({
+    queryKey: ["rpc", "mkt_campanha_resultado", ini, fim],
+    staleTime: 60 * 1000,
+    enabled: Boolean(ini && fim),
+    queryFn: () => rpc("mkt_campanha_resultado", { p_ini: ini, p_fim: fim }),
+  });
+
+export const useMarketingTotalPeriodo = (ini, fim) =>
+  useQuery({
+    queryKey: ["rpc", "mkt_marketing_total", ini, fim],
+    staleTime: 60 * 1000,
+    enabled: Boolean(ini && fim),
+    queryFn: async () => (await rpc("mkt_marketing_total", { p_ini: ini, p_fim: fim }))[0] ?? null,
+  });
+
 /* RESULTADO DA CAMPANHA DE EVENTO (db/193).
 
    Mede o retorno em CURSO vendido a quem se inscreveu, nunca em ingresso: o

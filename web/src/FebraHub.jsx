@@ -34,7 +34,8 @@ import {
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingSaudeCaptacao,
-  useMarketingCampanhaResultado, useMarketingEventoResultado,
+  useMarketingCampanhaPeriodo, useMarketingTotalPeriodo,
+  useMarketingEventoResultado,
   useMarketingOrigemSemMapa,
   usePedagogicoKpis, usePedagogicoKpisPeriodo, usePedagogicoPresencaKpis, usePedagogicoPresencaTempo,
   usePedagogicoRecompraCurso, usePedagogicoNaoFizeramCurso,
@@ -4609,10 +4610,12 @@ const INICIO_DO_RASTREIO = "2026-07-10";
 function HubMarketing() {
   const per = usePeriodo();
   const saude = useMarketingSaudeCaptacao();
-  const lead = useMarketingCampanhaResultado();
+  // O periodo entra na consulta, nao filtra depois — ver db/196.
+  const lead = useMarketingCampanhaPeriodo(per.inicio, per.fim);
+  const total = useMarketingTotalPeriodo(per.inicio, per.fim);
   const evento = useMarketingEventoResultado();
   const semMapa = useMarketingOrigemSemMapa();
-  const consultas = [saude, lead, evento, semMapa];
+  const consultas = [saude, lead, total, evento, semMapa];
   const [semMapaAberto, setSemMapaAberto] = useState(false);
 
   /* A campanha entra no recorte se a VEICULAÇÃO tocou o período. Filtrar pela
@@ -4640,8 +4643,10 @@ function HubMarketing() {
       jaAlunos: Number(c.ja_eram_alunos ?? 0), semMapa: false, anterior: false,
     }));
 
+    // Sem `tocaOPeriodo` aqui: a funcao ja devolve so o periodo pedido, e
+    // filtrar de novo pela veiculacao esconderia campanha que gastou no mes
+    // mas comecou antes.
     const deLead = (lead.data ?? [])
-      .filter(tocaOPeriodo)
       .filter((c) => !comEvento.has(c.campanha_nome))
       .map((c) => ({
         chave: c.campanha_nome, tipo: "lead", nome: c.campanha_nome,
@@ -4672,17 +4677,23 @@ function HubMarketing() {
     });
   }, [lead.data, evento.data, per.inicio, per.fim]);
 
+  /* O topo NAO soma a coluna da lista. A receita por campanha credita a mesma
+     venda a cada campanha que tocou a pessoa -- 194 pares para 145 matriculas
+     em 09/2026, 40% de diferenca. Somar a coluna seria contar a venda duas
+     vezes. O total vem de `mkt_marketing_total`, que conta matricula distinta.
+
+     O que a lista ainda soma sao os gastos por MOTIVO de nao poder ser
+     julgado, que sao propriedades da linha e nao se repetem. */
   const totais = useMemo(() => linhas.reduce((a, l) => ({
-    gasto: a.gasto + l.gasto,
-    receita: a.receita + l.receita,
-    vendas: a.vendas + l.vendas,
     semMapa: a.semMapa + (l.semMapa && !l.anterior ? l.gasto : 0),
     anterior: a.anterior + (l.anterior ? l.gasto : 0),
     parcial: a.parcial + (l.parcial ? l.gasto : 0),
-  }), { gasto: 0, receita: 0, vendas: 0, semMapa: 0, anterior: 0, parcial: 0 }), [linhas]);
+  }), { semMapa: 0, anterior: 0, parcial: 0 }), [linhas]);
+
+  const geral = total.data ?? null;
 
   const alerta = saude.data?.[0];
-  const retornoGeral = totais.gasto > 0 ? totais.receita / totais.gasto : null;
+  const retornoGeral = geral?.retorno == null ? null : Number(geral.retorno);
   const semMapaLista = semMapa.data ?? [];
 
   return (
@@ -4739,9 +4750,11 @@ function HubMarketing() {
                          color: retornoGeral == null ? C.faint : retornoGeral >= 1 ? C.up : C.down }}>
             {retornoGeral == null ? "—" : `${retornoGeral.toFixed(2)}×`}
           </span>
-          <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(totais.gasto)}</b> investidos</span>
-          <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(totais.receita)}</b> de curso vendido</span>
-          <span style={{ color: C.muted, fontSize: 13 }}>{numero(totais.vendas)} matrículas</span>
+          <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(geral?.gasto ?? 0)}</b> investidos</span>
+          <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(geral?.receita ?? 0)}</b> de curso vendido</span>
+          <span style={{ color: C.muted, fontSize: 13 }}>
+            {numero(geral?.leads ?? 0)} leads · {numero(geral?.matriculas ?? 0)} matrículas
+          </span>
           {/* Três motivos diferentes para o retorno não julgar um gasto, e só
               um deles é acionável. Misturá-los transformava R$ 106 mil de
               histórico num alerta que ninguém pode resolver. */}
@@ -4899,7 +4912,11 @@ function HubMarketing() {
         )}
 
         <div style={{ color: C.faint, fontSize: 10.5, lineHeight: 1.5, padding: "0 2px" }}>
-          Receita é sempre CURSO vendido, nunca ingresso — a palestra existe para
+          <b style={{ color: C.muted }}>A coluna de receita não soma:</b> quem foi lead
+          de duas campanhas tem a venda creditada às duas, porque as duas o
+          alcançaram. O total acima conta cada matrícula uma vez, e por isso é
+          menor que a soma da lista.
+          {" "}Receita é sempre CURSO vendido, nunca ingresso — a palestra existe para
           vender curso, e medi-la pelo ingresso de R$ 30 diria que toda palestra dá
           prejuízo. A venda é ligada por e-mail ou telefone e só conta a partir do
           evento, ou dentro da janela em que a campanha esteve no ar.
