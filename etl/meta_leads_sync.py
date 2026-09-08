@@ -35,13 +35,24 @@ Do Supabase, nao do Meta: `fato_meta_insights` ja sabe quais anuncios tiveram
 gasto na janela. Sao 181 desde 10/07 -- 181 chamadas, nao 3.755. Anuncio sem
 gasto nao gera lead, entao perguntar por ele seria so queimar rate limit.
 
-A PERMISSAO QUE COSTUMA FALTAR
+A PERMISSAO QUE FALTA
 
-`/{ad_id}/leads` exige `leads_retrieval` no token, alem do `ads_read` que o
-`meta_sync.py` ja usa. Se o token nao tiver, a Meta responde 200 com lista
-vazia em vez de erro -- silenciosamente, para todo anuncio. Por isso o modo
-diagnostico existe e por isso ele RECLAMA quando todos os anuncios voltam
-vazios: e o sintoma exato dessa falta.
+`/{ad_id}/leads` exige `leads_retrieval` (ou `pages_manage_ads`) no token,
+alem do `ads_read` que o `meta_sync.py` usa. Conferido na primeira execucao,
+em 08/09/2026, a Meta responde ALTO:
+
+    Meta 400: (#100) Requires pages_manage_ads or leads_retrieval permission
+    to manage the object
+
+Eu tinha escrito aqui que ela responderia 200 com lista vazia, em silencio.
+Estava errado, e a realidade e melhor: o erro nomeia a permissao que falta. A
+checagem de "todos vazios" continua abaixo por seguranca -- nao custa nada e
+cobre o caso de um token que veja o anuncio mas nao o formulario -- mas o
+sintoma esperado desta falta e o 400, nao o silencio.
+
+COMO CONSERTAR: gerar um token novo incluindo `leads_retrieval`, com o usuario
+tendo papel na Pagina dona do formulario, e trocar por token de longa duracao.
+O segredo e o mesmo `META_TOKEN` que o meta_sync ja usa.
 
 USO
     python meta_leads_sync.py --diagnostico   # 5 anuncios, nao grava
@@ -251,14 +262,15 @@ def main():
         log(f"  formularios distintos .................. {len(nome_do_form)}")
     log("-" * 66)
 
-    # O sintoma exato da falta de `leads_retrieval`: a Meta responde 200 com
-    # lista vazia, para todos. Ver o cabecalho.
+    # Rede de seguranca, nao o sintoma esperado: quando falta
+    # `leads_retrieval`, a Meta devolve 400 e o script morre antes de chegar
+    # aqui (conferido em 08/09/2026). Isto cobre o caso mais sutil -- token
+    # que enxerga o anuncio mas nao o formulario, voltando vazio sem erro.
     if vazios == len(anuncios):
         log("")
-        log("NENHUM anuncio devolveu lead. Nao conclua que nao houve lead:")
-        log("a causa provavel e o token sem a permissao `leads_retrieval`, que")
-        log("faz a Meta responder 200 com lista vazia em vez de erro. Confira")
-        log("no Business Manager antes de investigar outra coisa.")
+        log("NENHUM anuncio devolveu lead, e sem erro da Meta. Antes de concluir")
+        log("que nao houve lead, confira se o token enxerga os FORMULARIOS --")
+        log("permissao de anuncio e permissao de formulario sao separadas.")
         return
 
     for l in todos[:8]:

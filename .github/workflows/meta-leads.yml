@@ -10,10 +10,13 @@ name: Leads por anúncio (Meta) — sob demanda
 #
 # O QUE OLHAR NO LOG
 #
-# Se TODOS os anúncios voltarem sem lead, a causa provável não é ausência de
-# leads: é o token sem a permissão `leads_retrieval`. Sem ela a Meta responde
-# 200 com lista vazia em vez de erro — em silêncio, para todo anúncio. O
-# script diz isso na cara quando acontece.
+# `/{ad_id}/leads` exige `leads_retrieval` (ou `pages_manage_ads`) no token,
+# além do `ads_read` que o meta_sync já usa. Faltando, a Meta responde:
+#
+#   Meta 400: (#100) Requires pages_manage_ads or leads_retrieval permission
+#
+# Foi o que aconteceu na primeira execução, em 08/09/2026. O conserto é gerar
+# um token novo com essa permissão — o segredo é o mesmo META_TOKEN.
 
 on:
   workflow_dispatch:
