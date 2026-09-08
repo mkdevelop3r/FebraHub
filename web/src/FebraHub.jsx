@@ -4655,7 +4655,8 @@ function HubMarketing() {
         vendas: Number(c.vendas ?? 0), receita: Number(c.receita ?? 0),
         retorno: c.retorno == null ? null : Number(c.retorno),
         unitario: c.cpl == null ? null : Number(c.cpl),
-        parcial: false, dias: null, jaAlunos: 0,
+        parcial: false, dias: null,
+        jaAlunos: Number(c.ja_eram_alunos ?? 0),
         semMapa: !!c.sem_de_para,
         // Sem de-para PORQUE a fonte não alcança — não porque falta trabalho.
         // Fica cinza e fora do alerta; ver INICIO_DO_RASTREIO.
