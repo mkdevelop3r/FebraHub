@@ -396,6 +396,17 @@ export const useMarketingOrigemVendas = () =>
 export const useMarketingCampanhaResultado = () =>
   useView("vw_mkt_campanha_resultado", { ordem: ["gasto"] });
 
+/* RESULTADO DA CAMPANHA DE EVENTO (db/193).
+
+   Mede o retorno em CURSO vendido a quem se inscreveu, nunca em ingresso: o
+   ingresso custa R$ 30 e a palestra existe para vender curso — medir por ele
+   diria que toda palestra dá prejuízo.
+
+   `resultado_parcial` marca evento com menos de 30 dias, cuja janela de
+   conversão (60 dias) mal começou. Zero ali não é fracasso. */
+export const useMarketingEventoResultado = () =>
+  useView("vw_mkt_evento_resultado", { ordem: ["gasto"] });
+
 /* Origens que trazem lead e ninguém mapeou para campanha. Aparece na tela de
    propósito: painel que só mostra o que já está mapeado esconde o que falta
    mapear, e o buraco cresce em silêncio. */

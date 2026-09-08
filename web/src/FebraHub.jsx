@@ -34,7 +34,8 @@ import {
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingSaudeCaptacao,
-  useMarketingCampanhaResultado, useMarketingOrigemSemMapa,
+  useMarketingCampanhaResultado, useMarketingEventoResultado,
+  useMarketingOrigemSemMapa,
   usePedagogicoKpis, usePedagogicoKpisPeriodo, usePedagogicoPresencaKpis, usePedagogicoPresencaTempo,
   usePedagogicoRecompraCurso, usePedagogicoNaoFizeramCurso,
   usePedagogicoMaestrosCompleto, usePedagogicoMaestrosKpis, usePedagogicoMaestroAnotacoes,
@@ -4579,53 +4580,87 @@ const mktGeraLead = (linha) => {
    A tela anterior parava no CPL e ordenava por "menor CPL primeiro", chamando
    isso de eficiência. Com os dados de venda (db/192) essa ordenação se revela
    invertida: em 09/2026 a campanha de Jequié tinha o lead mais barato da casa
-   — R$ 8 — e o pior retorno, 0,23x. Salvador custava o dobro por lead e
-   devolvia 7x. Ordenar por CPL punha a pior campanha no topo.
+   — R$ 8 — e o pior retorno, 0,23x. Ordenar por CPL punha a pior no topo.
 
-   Por isso o RETORNO manda aqui, e o CPL virou coluna. Custo de lead sem
-   contrapartida de receita é métrica de meio de caminho: mede o preço da
-   promessa, não o da entrega.
+   DUAS ESPÉCIES DE CAMPANHA, UMA COLUNA DE RETORNO
 
-   O QUE A TELA RECUSA A ESCONDER
+   Campanha de lead (landing page, formulário) converte em LEAD; campanha de
+   evento converte em INSCRITO no Sympla. O meio do caminho é diferente e leva
+   rótulo próprio em cada linha — mas as duas terminam na mesma moeda, receita
+   de curso sobre gasto, e por isso o retorno fica numa coluna só e a lista é
+   uma só. Separar em duas tabelas obrigaria a comparar de cabeça o que a
+   máquina já sabe comparar.
 
-   Campanha sem de-para aparece, marcada. O zero dela significa "ninguém
-   mapeou", não "não vendeu" — e as duas coisas na mesma cor seriam mentira.
-   Origem sem mapa também aparece, com volume, porque foi exatamente assim que
-   a rastreabilidade se perdeu em julho: em silêncio. */
+   A campanha de evento aparece nas DUAS views: na de leads como "sem de-para"
+   (nenhuma origem do CRM aponta para ela, e nunca vai apontar), na de eventos
+   com número de verdade. Aqui ela é removida da primeira — senão o gasto dela
+   entraria duas vezes no total do topo. */
 function HubMarketing() {
   const per = usePeriodo();
   const saude = useMarketingSaudeCaptacao();
-  const resultado = useMarketingCampanhaResultado();
+  const lead = useMarketingCampanhaResultado();
+  const evento = useMarketingEventoResultado();
   const semMapa = useMarketingOrigemSemMapa();
-  const consultas = [saude, resultado, semMapa];
+  const consultas = [saude, lead, evento, semMapa];
   const [semMapaAberto, setSemMapaAberto] = useState(false);
 
   /* A campanha entra no recorte se a VEICULAÇÃO tocou o período. Filtrar pela
      data de início excluiria campanha que começou antes e ainda está no ar —
      que é justamente a que se quer olhar durante o mês. */
-  const campanhas = useMemo(() => {
-    const ini = per.inicio, fim = per.fim;
-    return (resultado.data ?? []).filter((c) => {
-      const c0 = String(c.comecou ?? "").slice(0, 10);
-      const c1 = String(c.terminou ?? "").slice(0, 10);
-      return c0 && c1 && c0 <= fim && c1 >= ini;
+  const tocaOPeriodo = (c) => {
+    const c0 = String(c.comecou ?? "").slice(0, 10);
+    const c1 = String(c.terminou ?? "").slice(0, 10);
+    return c0 && c1 && c0 <= per.fim && c1 >= per.inicio;
+  };
+
+  const linhas = useMemo(() => {
+    const eventos = (evento.data ?? []).filter(tocaOPeriodo);
+    const comEvento = new Set(eventos.map((c) => c.campanha_nome));
+
+    const deEvento = eventos.map((c) => ({
+      chave: c.campanha_nome, tipo: "evento", nome: c.campanha_nome,
+      detalhe: `${c.nome_evento} · ${dataBR(c.data_evento)}`,
+      gasto: Number(c.gasto ?? 0),
+      meio: Number(c.inscritos ?? 0), meioRotulo: "inscritos",
+      vendas: Number(c.compraram ?? 0), receita: Number(c.receita ?? 0),
+      retorno: c.retorno == null ? null : Number(c.retorno),
+      unitario: c.custo_por_inscrito == null ? null : Number(c.custo_por_inscrito),
+      parcial: !!c.resultado_parcial, dias: Number(c.dias_desde_o_evento ?? 0),
+      jaAlunos: Number(c.ja_eram_alunos ?? 0), semMapa: false,
+    }));
+
+    const deLead = (lead.data ?? [])
+      .filter(tocaOPeriodo)
+      .filter((c) => !comEvento.has(c.campanha_nome))
+      .map((c) => ({
+        chave: c.campanha_nome, tipo: "lead", nome: c.campanha_nome,
+        detalhe: c.sem_de_para
+          ? "sem de-para — nenhuma origem aponta para esta campanha"
+          : `${dataBR(c.comecou)} a ${dataBR(c.terminou)} · ${numero(c.anuncios)} anúncios`,
+        gasto: Number(c.gasto ?? 0),
+        meio: Number(c.leads ?? 0), meioRotulo: "leads",
+        vendas: Number(c.vendas ?? 0), receita: Number(c.receita ?? 0),
+        retorno: c.retorno == null ? null : Number(c.retorno),
+        unitario: c.cpl == null ? null : Number(c.cpl),
+        parcial: false, dias: null, jaAlunos: 0,
+        semMapa: !!c.sem_de_para,
+      }));
+
+    /* Mapeadas primeiro, por retorno. As sem de-para vão para o fim: o número
+       delas não é comparável, e misturá-las sugeriria que é. */
+    return [...deEvento, ...deLead].sort((a, b) => {
+      if (a.semMapa !== b.semMapa) return a.semMapa ? 1 : -1;
+      return (b.retorno ?? -1) - (a.retorno ?? -1);
     });
-  }, [resultado.data, per.inicio, per.fim]);
+  }, [lead.data, evento.data, per.inicio, per.fim]);
 
-  const totais = useMemo(() => campanhas.reduce((a, c) => ({
-    gasto: a.gasto + Number(c.gasto ?? 0),
-    leads: a.leads + Number(c.leads ?? 0),
-    vendas: a.vendas + Number(c.vendas ?? 0),
-    receita: a.receita + Number(c.receita ?? 0),
-    semMapa: a.semMapa + (c.sem_de_para ? Number(c.gasto ?? 0) : 0),
-  }), { gasto: 0, leads: 0, vendas: 0, receita: 0, semMapa: 0 }), [campanhas]);
-
-  /* Mapeadas primeiro, por retorno. As sem de-para vão para o fim: o número
-     delas não é comparável, e misturá-las na mesma ordenação sugeriria que é. */
-  const ordenadas = useMemo(() => [...campanhas].sort((a, b) => {
-    if (!!a.sem_de_para !== !!b.sem_de_para) return a.sem_de_para ? 1 : -1;
-    return Number(b.retorno ?? -1) - Number(a.retorno ?? -1);
-  }), [campanhas]);
+  const totais = useMemo(() => linhas.reduce((a, l) => ({
+    gasto: a.gasto + l.gasto,
+    receita: a.receita + l.receita,
+    vendas: a.vendas + l.vendas,
+    semMapa: a.semMapa + (l.semMapa ? l.gasto : 0),
+    parcial: a.parcial + (l.parcial ? l.gasto : 0),
+  }), { gasto: 0, receita: 0, vendas: 0, semMapa: 0, parcial: 0 }), [linhas]);
 
   const alerta = saude.data?.[0];
   const retornoGeral = totais.gasto > 0 ? totais.receita / totais.gasto : null;
@@ -4638,14 +4673,14 @@ function HubMarketing() {
     >
       <style>{`
         .mkGrade { display: grid;
-                   grid-template-columns: minmax(0,1.7fr) 96px 68px 68px 108px 92px 76px;
+                   grid-template-columns: minmax(0,1.7fr) 96px 76px 68px 108px 88px 84px;
                    align-items: center; gap: 10px; }
-        @media (max-width: 1040px) { .mkGrade { grid-template-columns: minmax(0,1.5fr) 92px 64px 64px 100px 80px; }
-                                     .mkCpl { display: none; } }
-        @media (max-width: 820px)  { .mkGrade { grid-template-columns: minmax(0,1.4fr) 88px 60px 96px 76px; }
-                                     .mkLeads { display: none; } }
-        @media (max-width: 620px)  { .mkGrade { grid-template-columns: minmax(0,1fr) 84px 72px; }
-                                     .mkVendas, .mkReceita { display: none; } }
+        @media (max-width: 1040px) { .mkGrade { grid-template-columns: minmax(0,1.5fr) 92px 72px 64px 100px 80px; }
+                                     .mkUnit { display: none; } }
+        @media (max-width: 820px)  { .mkGrade { grid-template-columns: minmax(0,1.4fr) 88px 68px 96px 80px; }
+                                     .mkVendas { display: none; } }
+        @media (max-width: 620px)  { .mkGrade { grid-template-columns: minmax(0,1fr) 84px 76px; }
+                                     .mkMeio, .mkReceita { display: none; } }
         .mkLinha:hover { background: rgba(255,255,255,.02); }
       `}</style>
 
@@ -4671,8 +4706,8 @@ function HubMarketing() {
           </div>
         )}
 
-        {/* O retorno é o número herói. Investimento e receita ficam ao lado
-            porque é a razão entre eles que se está lendo. */}
+        {/* O retorno é o número herói. Investimento e receita ao lado porque é
+            a razão entre eles que se está lendo. */}
         <div style={{
           display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px 26px",
           minHeight: 48, padding: "9px 15px", borderRadius: 11,
@@ -4681,29 +4716,23 @@ function HubMarketing() {
           <span style={{ color: C.muted, fontSize: 11, fontWeight: 750, textTransform: "uppercase", letterSpacing: ".08em" }}>
             Retorno · {per.rotulo}
           </span>
-          <span style={{ fontFamily: GROTESK, color: retornoGeral == null ? C.faint
-                          : retornoGeral >= 1 ? C.up : C.down, fontSize: 19, fontWeight: 800 }}>
+          <span style={{ fontFamily: GROTESK, fontSize: 19, fontWeight: 800,
+                         color: retornoGeral == null ? C.faint : retornoGeral >= 1 ? C.up : C.down }}>
             {retornoGeral == null ? "—" : `${retornoGeral.toFixed(2)}×`}
           </span>
-          <span style={{ color: C.bright, fontSize: 14 }}>
-            <b>{moeda(totais.gasto)}</b> investidos
-          </span>
-          <span style={{ color: C.bright, fontSize: 14 }}>
-            <b>{moeda(totais.receita)}</b> de receita atribuída
-          </span>
-          <span style={{ color: C.muted, fontSize: 13 }}>
-            {numero(totais.leads)} leads · {numero(totais.vendas)} vendas
-          </span>
-          {totais.semMapa > 0 && (
-            <span style={{ flexBasis: "100%", color: C.warn, fontSize: 10.5 }}>
-              {moeda(totais.semMapa)} em campanhas sem de-para — o retorno acima
-              não as inclui, e o de cada uma aparece em branco na lista.
+          <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(totais.gasto)}</b> investidos</span>
+          <span style={{ color: C.bright, fontSize: 14 }}><b>{moeda(totais.receita)}</b> de curso vendido</span>
+          <span style={{ color: C.muted, fontSize: 13 }}>{numero(totais.vendas)} matrículas</span>
+          {(totais.semMapa > 0 || totais.parcial > 0) && (
+            <span style={{ flexBasis: "100%", color: C.warn, fontSize: 10.5, lineHeight: 1.5 }}>
+              {totais.semMapa > 0 && <>{moeda(totais.semMapa)} em campanhas sem de-para — o retorno acima não as julga. </>}
+              {totais.parcial > 0 && <>{moeda(totais.parcial)} em eventos recentes demais para ter resultado.</>}
             </span>
           )}
         </div>
 
-        <Bloco titulo="Campanhas por retorno" canto="quanto voltou para cada real">
-          {ordenadas.length ? (
+        <Bloco titulo="Campanhas por retorno" canto="quanto de curso voltou para cada real">
+          {linhas.length ? (
             <div className="rolagem" style={{
               maxHeight: 480, overflowY: "auto",
               border: `1px solid ${C.hair}`, borderRadius: 10,
@@ -4713,8 +4742,8 @@ function HubMarketing() {
                 padding: "8px 12px", borderBottom: `1px solid ${C.cardLine}`,
               }}>
                 {[["Campanha", "left", ""], ["Investido", "right", ""],
-                  ["Leads", "right", "mkLeads"], ["Vendas", "right", "mkVendas"],
-                  ["Receita", "right", "mkReceita"], ["CPL", "right", "mkCpl"],
+                  ["Leads / inscritos", "right", "mkMeio"], ["Matrículas", "right", "mkVendas"],
+                  ["Receita", "right", "mkReceita"], ["Unitário", "right", "mkUnit"],
                   ["Retorno", "right", ""]].map(([r, al, cls]) => (
                   <div key={r} className={cls} style={{
                     fontSize: 10, fontWeight: 800, textTransform: "uppercase",
@@ -4723,43 +4752,71 @@ function HubMarketing() {
                 ))}
               </div>
 
-              {ordenadas.map((c, i) => {
-                const ret = c.retorno == null ? null : Number(c.retorno);
-                const corRet = c.sem_de_para ? C.dim
-                  : ret == null ? C.faint : ret >= 1 ? C.up : C.down;
+              {linhas.map((l, i) => {
+                const corRet = l.semMapa ? C.dim : l.parcial ? C.warn
+                  : l.retorno == null ? C.faint : l.retorno >= 1 ? C.up : C.down;
                 return (
-                  <div key={c.campanha_nome} className="mkGrade mkLinha" style={{
-                    minHeight: 48, padding: "0 12px",
-                    borderBottom: i < ordenadas.length - 1 ? `1px solid ${C.hair}` : "none",
+                  <div key={l.chave} className="mkGrade mkLinha" style={{
+                    minHeight: 50, padding: "0 12px",
+                    borderBottom: i < linhas.length - 1 ? `1px solid ${C.hair}` : "none",
                   }}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{
-                        fontSize: 12.5, fontWeight: 700, color: C.text,
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                      }}>{c.campanha_nome}</div>
-                      <div style={{ fontSize: 10.5, color: c.sem_de_para ? C.warn : C.faint }}>
-                        {c.sem_de_para
-                          ? "sem de-para — nenhuma origem aponta para esta campanha"
-                          : `${dataBR(c.comecou)} a ${dataBR(c.terminou)} · ${numero(c.anuncios)} anúncios`}
+                        display: "flex", alignItems: "center", gap: 6, minWidth: 0,
+                      }}>
+                        {/* A espécie da campanha muda o que a coluna do meio
+                            significa; sem a marca, "6" pode ser lead ou inscrito. */}
+                        <span style={{
+                          flexShrink: 0, fontSize: 9, fontWeight: 800, letterSpacing: ".4px",
+                          textTransform: "uppercase", padding: "1px 5px", borderRadius: 3,
+                          color: l.tipo === "evento" ? C.gold : C.faint,
+                          background: l.tipo === "evento" ? `${C.gold}1F` : "rgba(255,255,255,.05)",
+                        }}>{l.tipo === "evento" ? "evento" : "lead"}</span>
+                        <span style={{
+                          fontSize: 12.5, fontWeight: 700, color: C.text,
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                        }}>{l.nome}</span>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: l.semMapa ? C.warn : C.faint,
+                                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {l.detalhe}
+                        {l.jaAlunos > 0 && (
+                          <span style={{ color: C.dim }}> · {numero(l.jaAlunos)} já eram alunos</span>
+                        )}
                       </div>
                     </div>
                     <div style={{ fontFamily: GROTESK, fontSize: 12, color: C.muted, textAlign: "right" }}>
-                      {moeda(c.gasto)}
+                      {moeda(l.gasto)}
                     </div>
-                    <div className="mkLeads" style={{ fontFamily: GROTESK, fontSize: 12, color: C.muted, textAlign: "right" }}>
-                      {c.sem_de_para ? "—" : numero(c.leads)}
+                    <div className="mkMeio" style={{ textAlign: "right" }}>
+                      <div style={{ fontFamily: GROTESK, fontSize: 12, color: C.muted }}>
+                        {l.semMapa ? "—" : numero(l.meio)}
+                      </div>
+                      {!l.semMapa && (
+                        <div style={{ fontSize: 9, color: C.dim }}>{l.meioRotulo}</div>
+                      )}
                     </div>
                     <div className="mkVendas" style={{ fontFamily: GROTESK, fontSize: 12, color: C.muted, textAlign: "right" }}>
-                      {c.sem_de_para ? "—" : numero(c.vendas)}
+                      {l.semMapa ? "—" : numero(l.vendas)}
                     </div>
                     <div className="mkReceita" style={{ fontFamily: GROTESK, fontSize: 12, fontWeight: 700, color: C.text, textAlign: "right" }}>
-                      {c.sem_de_para ? "—" : moeda(c.receita)}
+                      {l.semMapa ? "—" : moeda(l.receita)}
                     </div>
-                    <div className="mkCpl" style={{ fontFamily: GROTESK, fontSize: 11.5, color: C.faint, textAlign: "right" }}>
-                      {c.cpl == null ? "—" : moeda(c.cpl)}
+                    <div className="mkUnit" style={{ fontFamily: GROTESK, fontSize: 11.5, color: C.faint, textAlign: "right" }}>
+                      {l.unitario == null ? "—" : moeda(l.unitario)}
                     </div>
-                    <div style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 800, color: corRet, textAlign: "right" }}>
-                      {c.sem_de_para ? "—" : ret == null ? "0×" : `${ret.toFixed(2)}×`}
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 800, color: corRet }}>
+                        {l.semMapa ? "—" : l.retorno == null ? "0×" : `${l.retorno.toFixed(2)}×`}
+                      </div>
+                      {/* Zero de evento recente não é fracasso: a janela de
+                          conversão tem 60 dias. Sem isto, alguém corta verba
+                          de campanha que ainda não teve chance. */}
+                      {l.parcial && (
+                        <div style={{ fontSize: 9, color: C.warn }}>
+                          parcial · {numero(l.dias)}d
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -4771,7 +4828,7 @@ function HubMarketing() {
           )}
         </Bloco>
 
-        {/* O buraco, e não só o resultado. Uma origem grande sem de-para é
+        {/* O buraco, e não só o resultado. Origem grande sem de-para é
             investimento que a tela acima não consegue julgar. */}
         {semMapaLista.length > 0 && (
           <div style={{ border: `1px solid ${C.cardLine}`, borderRadius: 11, background: C.card, overflow: "hidden" }}>
@@ -4813,10 +4870,10 @@ function HubMarketing() {
         )}
 
         <div style={{ color: C.faint, fontSize: 10.5, lineHeight: 1.5, padding: "0 2px" }}>
-          A venda é ligada ao lead por e-mail ou telefone, e só conta dentro da
-          janela em que a campanha teve veiculação — landing page recebe tráfego
-          depois de a campanha acabar. Campanha de Instagram e WhatsApp não
-          aparece com lead: o contato chega sem e-mail nem telefone.
+          Receita é sempre CURSO vendido, nunca ingresso — a palestra existe para
+          vender curso, e medi-la pelo ingresso de R$ 30 diria que toda palestra dá
+          prejuízo. A venda é ligada por e-mail ou telefone e só conta a partir do
+          evento, ou dentro da janela em que a campanha esteve no ar.
         </div>
       </div>
     </Estado>
