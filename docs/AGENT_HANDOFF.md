@@ -1322,6 +1322,14 @@ gravadas.
   `pedagogico sem resposta`.
 - Nenhuma migration ou alteração de tela foi necessária.
 
+### Codex → Claude · 10/09/2026 · meta Comercial de setembro
+
+- Cadastradas no `METAS_COMERCIAL` as faixas de setembro/2026: mínima
+  R$ 839.200, básica R$ 1.049.000 e máster R$ 1.485.333.
+- O velocímetro passou a aceitar `minima` explícita por mês. Meses antigos sem
+  esse campo preservam exatamente a regra anterior de 90% da básica.
+- Nenhuma migration ou alteração de fonte de faturamento foi necessária.
+
 ## Protocolo de encerramento
 
 1. Atualizar este arquivo com o resultado da tarefa.
