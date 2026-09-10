@@ -6713,36 +6713,97 @@ function HubPedagogico() {
   );
 }
 
+/* ============ EVENTOS (Sympla) ============
+   O recorte é o do topo da tela, como nos demais hubs, e vale pelo DIA EM QUE
+   O EVENTO ACONTECEU -- não pelo dia em que o ingresso foi vendido. A view só
+   expõe a data do evento; receita por data de venda seria outra medida e não
+   existe hoje. Quem escolhe “Setembro” aqui está perguntando “como foram os
+   eventos de setembro”, e não “quanto entrou em setembro”. */
+
+// `data_inicio` vem timestamptz em UTC. Cortar a string em 10 caracteres
+// devolveria o dia UTC: um evento das 21h em Salvador já é o dia seguinte lá e
+// escaparia do mês sem ninguém notar. Hoje o mais tarde é 20h, uma hora de
+// folga — fino demais para confiar. Converte para o dia local da Bahia, que é
+// o dia que a pessoa chama de “o dia do evento”; `sv-SE` é só o atalho para
+// sair no formato ISO.
+const diaDoEvento = (v) => {
+  const d = new Date(v ?? "");
+  return Number.isNaN(d.getTime())
+    ? String(v ?? "").slice(0, 10)
+    : d.toLocaleDateString("sv-SE", { timeZone: "America/Bahia" });
+};
+
 function HubEventos() {
+  const { inicio, fim, rotulo } = usePeriodo();
   const ev = useEventosDesempenho();
-  const t = useMemo(() => {
-    const d = ev.data ?? [];
-    return {
-      ingressos: d.reduce((s, e) => s + Number(e.ingressos ?? 0), 0),
-      check: d.reduce((s, e) => s + Number(e.compareceram ?? 0), 0),
-      bruta: d.reduce((s, e) => s + Number(e.receita_bruta ?? 0), 0),
-      liquida: d.reduce((s, e) => s + Number(e.receita_liquida ?? 0), 0),
-    };
-  }, [ev.data]);
+
+  const lista = useMemo(
+    () => (ev.data ?? []).filter((e) => {
+      const d = diaDoEvento(e.data_inicio);
+      return d && d >= inicio && d <= fim;
+    }),
+    [ev.data, inicio, fim]
+  );
+
+  const t = useMemo(() => ({
+    ingressos: lista.reduce((s, e) => s + Number(e.ingressos ?? 0), 0),
+    bruta: lista.reduce((s, e) => s + Number(e.receita_bruta ?? 0), 0),
+    liquida: lista.reduce((s, e) => s + Number(e.receita_liquida ?? 0), 0),
+  }), [lista]);
+
+  // Comparecimento só sobre os eventos que TÊM check-in registrado. Dos 83
+  // eventos com ingresso, 6 usaram o check-in do Sympla — somando todos, a
+  // taxa dava 2%, e 2% não é o comparecimento, é a taxa de uso do check-in.
+  // Zero check-in entra como NÃO MEDIDO, e não como “ninguém foi”: a fonte não
+  // separa os dois casos, e chamar de ausência inventaria um número. Com o
+  // recorte por período isso passa a importar mais, porque o mês sem check-in
+  // mostraria 0,0%.
+  const presenca = useMemo(() => {
+    const medidos = lista.filter((e) => Number(e.compareceram ?? 0) > 0);
+    const ing = medidos.reduce((s, e) => s + Number(e.ingressos ?? 0), 0);
+    const chk = medidos.reduce((s, e) => s + Number(e.compareceram ?? 0), 0);
+    return { medidos: medidos.length, taxa: ing ? (chk / ing) * 100 : null };
+  }, [lista]);
+
   const top = useMemo(
-    () => [...(ev.data ?? [])]
+    () => [...lista]
       .sort((a, b) => Number(b.receita_liquida ?? 0) - Number(a.receita_liquida ?? 0))
       .slice(0, 10)
       .map((e) => ({ rotulo: e.nome_evento, valor: Number(e.receita_liquida ?? 0) })),
-    [ev.data]
+    [lista]
   );
-  const comp = t.ingressos ? ((t.check / t.ingressos) * 100).toFixed(1) : null;
+
+  const plural = lista.length === 1 ? "" : "s";
+  // Nenhum evento NO RECORTE é diferente de nenhum dado: com o filtro em Hoje
+  // ou 7 dias, o normal é não haver evento nenhum, e a tela precisa dizer isso
+  // em vez de sugerir falta de acesso ou fonte desconectada.
+  const foraDoRecorte = !lista.length && !!ev.data?.length;
 
   return (
     <>
-      <Estado carregando={ev.isLoading} erro={ev.error} vazio={!ev.data?.length}>
+      <Estado
+        carregando={ev.isLoading}
+        erro={ev.error}
+        vazio={!lista.length}
+        vazioTitulo={foraDoRecorte ? `Nenhum evento em ${rotulo}` : undefined}
+        vazioDica={foraDoRecorte
+          ? "Evento é esparso: em recorte curto o normal é não haver nenhum. Troque o período no topo."
+          : undefined}
+      >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 26 }}>
           <Kpi label="Receita líquida" valor={moeda(t.liquida)} nota="já sem a taxa" />
           <Kpi label="Taxa Sympla" valor={moeda(t.bruta - t.liquida)} nota="retido na fonte" destaque={C.warn} />
-          <Kpi label="Ingressos" valor={numero(t.ingressos)} nota="acumulado" />
-          <Kpi label="Comparecimento" valor={comp ?? "—"} unidade="%" nota="check-in / ingresso" />
+          <Kpi label="Ingressos" valor={numero(t.ingressos)} nota={`${numero(lista.length)} evento${plural} no recorte`} />
+          <Kpi
+            label="Comparecimento"
+            valor={presenca.taxa == null ? "—" : presenca.taxa.toFixed(1)}
+            unidade={presenca.taxa == null ? undefined : "%"}
+            nota={presenca.taxa == null
+              ? "nenhum evento com check-in"
+              : `check-in / ingresso · ${presenca.medidos} de ${lista.length} evento${plural}`}
+          />
         </div>
-        <Bloco titulo="Eventos por receita líquida" canto="acumulado" sem>
+        <Bloco titulo="Eventos por receita líquida" canto={rotulo} sem>
           <Lista linhas={top} total={t.liquida} />
         </Bloco>
       </Estado>
