@@ -167,8 +167,14 @@ export const useComercialGeralMensal = () =>
 export const useComercialMatriculasPeriodo = () =>
   useView("vw_comercial_matriculas_periodo", { ordem: ["data", "categoria"] });
 
-/* Sympla: já agregado e sem dimensão de data — só a Jennifer, porque o
-   dado do Sympla não tem vínculo de consultora. */
+/* Sympla: uma linha por EVENTO desde jan/2025, com o dia já no fuso da Bahia,
+   para o Comercial recortar pelo período do topo. Só a Jennifer, porque o dado
+   do Sympla não tem vínculo de consultora — é atribuição, não medição.
+   Ver db/198. */
+export const useComercialSymplaEvento = () =>
+  useView("vw_comercial_sympla_evento", { ordem: ["dia"] });
+/* SUPERADA pela de cima (db/198): agregava a data fora e devolvia uma linha de
+   zeros para quem é do Comercial sem o setor `eventos`. Sem uso no front. */
 export const useComercialSymplaJennifer = () => useView("vw_comercial_sympla_jennifer");
 /* Placar da gamificação: uma linha por VENDA (time GGB, desde jan/2025).
    O front recorta por data_pagamento e conta as cores no período.

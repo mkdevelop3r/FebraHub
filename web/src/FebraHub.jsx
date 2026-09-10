@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
-  useComercialRankingHistorico, useComercialSymplaJennifer, useComercialCarinhas,
+  useComercialRankingHistorico, useComercialSymplaEvento, useComercialCarinhas,
   useComercialVerdesDetalhe,
   useComercialMatriculasFaturamento, useComercialCursosPorConsultora,
   useComercialRankingGeralConsolidado, useComercialGeralMensal, useComercialMatriculasPeriodo, useFaturamentoMensal,
@@ -3036,7 +3036,7 @@ function HubComercial() {
   const { categoria } = useCategoria();
   const [visao, setVisao] = useState("periodo");
   const rankCat = useComercialRankingHistorico();
-  const sympla = useComercialSymplaJennifer();
+  const symEventos = useComercialSymplaEvento();
   const carinhas = useComercialCarinhas();
   const verdesDet = useComercialVerdesDetalhe();
   const matfat = useComercialMatriculasFaturamento();
@@ -3064,9 +3064,26 @@ function HubComercial() {
     () => (rankCat.data ?? []).filter((r) => String(r.categoria) === categoria),
     [rankCat.data, categoria]
   );
-  const linhasFluxo = ehGeral ? (geralMensal.data ?? []) : vendasCat;
-  const carregFluxo = ehGeral ? geralMensal.isLoading : rankCat.isLoading;
-  const erroFluxo = ehGeral ? geralMensal.error : rankCat.error;
+  /* O Sympla entra no MESMO formato do fluxo de vendas — { data, valor_bruto }
+     — em vez de virar exceção dentro de cada cálculo. Assim o recorte do topo,
+     o YoY e a evolução mensal funcionam sem precisar saber que ali embaixo é
+     evento. A receita é a LÍQUIDA: o Sympla retém a taxa na fonte e nunca
+     repassa o bruto, então o bruto aqui seria dinheiro que ninguém recebeu. */
+  const symplaLinhas = useMemo(
+    () => (symEventos.data ?? []).map((e) => ({
+      data: String(e.dia ?? "").slice(0, 10),
+      valor_bruto: Number(e.receita_liquida ?? 0),
+      ingressos: Number(e.ingressos ?? 0),
+      nome_evento: e.nome_evento,
+      consultora: e.consultora,
+      foto_url: e.foto_url,
+    })),
+    [symEventos.data]
+  );
+
+  const linhasFluxo = ehSympla ? symplaLinhas : ehGeral ? (geralMensal.data ?? []) : vendasCat;
+  const carregFluxo = ehSympla ? symEventos.isLoading : ehGeral ? geralMensal.isLoading : rankCat.isLoading;
+  const erroFluxo = ehSympla ? symEventos.error : ehGeral ? geralMensal.error : rankCat.error;
 
   /* FATURAMENTO conta por data de APROVAÇÃO — o que foi VENDIDO no período,
      independente de quando o pagamento cai. Mesma regra da view canônica
@@ -3087,6 +3104,22 @@ function HubComercial() {
      do dia. */
   const recortePag = (linhas, faixa, campoPag = "data") =>
     curto ? recorte(linhas, faixa, campoPag) : noPeriodo(linhas, faixa, campoPag);
+
+  /* Totais do Sympla DENTRO do recorte. Antes vinham da view agregada, que
+     somava tudo desde jan/2025 e não mudava com o filtro do topo — o card
+     dizia "todos os tempos" e era verdade, só que ninguém tinha pedido isso.
+     Sem o "Geral" da visão aqui de propósito: o Sympla não mostra o
+     ToggleVisão, então herdar um "geral" ligado em outra categoria faria a
+     tela ignorar o período sem nenhum controle visível dizendo por quê. */
+  const symplaPeriodo = useMemo(() => {
+    const dentro = recorte(symplaLinhas, { inicio, fim }, "data");
+    return {
+      linhas: dentro,
+      eventos: dentro.length,
+      ingressos: dentro.reduce((s, e) => s + e.ingressos, 0),
+      receita: dentro.reduce((s, e) => s + e.valor_bruto, 0),
+    };
+  }, [symplaLinhas, inicio, fim]);
 
   /* Faturamento canônico por mês (`YYYY-MM` -> bruto), da view única que o Hub
      Executivo também lê. Já vem deduplicado por venda do banco. */
@@ -3244,7 +3277,12 @@ function HubComercial() {
   /* Produto campeão do período: uma linha da view representa uma venda.
      Ordena primeiro por quantidade e usa faturamento bruto como desempate. */
   const maisVendido = useMemo(() => {
-    if (ehSympla) return null;
+    if (ehSympla) {
+      // "Venda" aqui é ingresso: o evento que mais encheu no recorte.
+      const topo = [...symplaPeriodo.linhas]
+        .sort((a, b) => b.ingressos - a.ingressos || b.valor_bruto - a.valor_bruto)[0];
+      return topo ? { nome: topo.nome_evento, vendas: topo.ingressos, receita: topo.valor_bruto } : null;
+    }
     const origem = ehGeral
       ? (cursos.data ?? [])
       : (cursos.data ?? []).filter((r) => String(r.categoria) === categoria);
@@ -3261,19 +3299,22 @@ function HubComercial() {
     }
     return [...agrupado.values()]
       .sort((a, b) => b.vendas - a.vendas || b.receita - a.receita)[0] ?? null;
-  }, [cursos.data, ehSympla, ehGeral, categoria, inicio, fim]);
+  }, [cursos.data, ehSympla, ehGeral, categoria, inicio, fim, symplaPeriodo]);
 
-  /* Pódio. Sympla vem de outra view (agregada, sem data): uma consultora só,
-     medida em receita líquida/eventos/ingressos. */
+  /* Pódio. No Sympla é um pódio de uma pessoa só: a fonte não diz quem vendeu,
+     e atribuir tudo à Jennifer é decisão registrada na db/18c — atribuição, não
+     medição. O que mudou é que os números são os do recorte. */
   const podio = useMemo(() => {
     if (ehSympla) {
-      return (sympla.data ?? []).map((s) => ({
-        consultor_id: s.consultora,
-        consultora: s.consultora,
-        foto_url: s.foto_url,
-        receita: Number(s.receita_liquida ?? 0),
-        sub: `${numero(s.eventos)} eventos · ${numero(s.ingressos)} ingressos`,
-      }));
+      const d = symplaPeriodo;
+      if (!d.eventos) return [];
+      return [{
+        consultor_id: d.linhas[0].consultora,
+        consultora: d.linhas[0].consultora,
+        foto_url: d.linhas[0].foto_url,
+        receita: d.receita,
+        sub: `${numero(d.eventos)} evento${d.eventos === 1 ? "" : "s"} · ${numero(d.ingressos)} ingressos`,
+      }];
     }
     // Geral usa a view consolidada (chave = consultora, sem coluna de
     // exibição); as categorias usam o histórico (chave de exibição).
@@ -3293,9 +3334,9 @@ function HubComercial() {
     return [...m.values()]
       .map((a) => ({ ...a, ticket_medio: a.vendas ? a.receita / a.vendas : 0 }))
       .sort((x, y) => y.receita - x.receita);
-  }, [ehSympla, ehGeral, sympla.data, geralCons.data, vendasCat, geral, inicio, fim]);
+  }, [ehSympla, ehGeral, symplaPeriodo, geralCons.data, vendasCat, geral, inicio, fim]);
 
-  const fonte = ehSympla ? sympla : ehGeral ? geralCons : rankCat;
+  const fonte = ehSympla ? symEventos : ehGeral ? geralCons : rankCat;
 
   /* A view entrega uma linha por venda. A identidade das 3 consultoras vem
      da base inteira (sem recorte) e as contagens, só do período — assim o
@@ -3381,17 +3422,24 @@ function HubComercial() {
       {/* Faixa compacta: cada categoria é uma unidade de negócio, nunca somada. */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(148px, 1fr))", gap: 8, marginBottom: 10 }}>
         {/* Só o bruto vendido: o líquido (após repasses) vive no Financeiro,
-            que é onde a informação faz sentido. */}
+            que é onde a informação faz sentido. O Sympla é a exceção e o rótulo
+            diz: lá a taxa é retida na fonte, e o bruto seria dinheiro que
+            ninguém recebeu. Um valor só para os dois casos — com o Sympla
+            dentro do fluxo, kpi.receita já é o do recorte. */}
         <ChipKpi compacto hero className="kpiTopoComercial" Icone={Wallet}
           label={ehSympla ? "Receita · Sympla" : "Faturamento bruto · valor vendido"}
-          valor={ehSympla ? moeda(podio[0]?.receita ?? 0) : moeda(kpi.receita)}
-          nota={ehSympla ? "líquida · todos os tempos" : `${rotulo} · por aprovação`} />
+          valor={moeda(kpi.receita)}
+          nota={ehSympla ? `${rotulo} · líquida, já sem a taxa` : `${rotulo} · por aprovação`} />
         <ChipKpi compacto className="kpiTopoComercial" Icone={Receipt} label={ehSympla ? "Ingressos" : "Total de matrículas"}
-          valor={ehSympla ? numero(sympla.data?.[0]?.ingressos ?? 0) : numero(kpi.matriculas)}
-          nota={ehSympla ? `${numero(sympla.data?.[0]?.eventos ?? 0)} eventos` : `${rotulo} · alunos aprovados`} />
+          valor={ehSympla ? numero(symplaPeriodo.ingressos) : numero(kpi.matriculas)}
+          nota={ehSympla
+            ? `${numero(symplaPeriodo.eventos)} evento${symplaPeriodo.eventos === 1 ? "" : "s"} · ${rotulo}`
+            : `${rotulo} · alunos aprovados`} />
         <ChipKpi compacto className="kpiTopoComercial" Icone={TrendingUp} label="Ticket médio"
-          valor={ehSympla ? "—" : (kpi.ticket != null ? moeda(kpi.ticket) : "—")}
-          nota={ehSympla ? "não medível no Sympla" : "receita ÷ matrículas"} />
+          valor={ehSympla
+            ? (symplaPeriodo.ingressos ? moeda(symplaPeriodo.receita / symplaPeriodo.ingressos) : "—")
+            : (kpi.ticket != null ? moeda(kpi.ticket) : "—")}
+          nota={ehSympla ? "receita ÷ ingressos" : "receita ÷ matrículas"} />
         <ChipKpi compacto className="kpiTopoComercial" deltaBrilha Icone={TrendingUp} label="vs. ano anterior"
           valor={kpi.yoy != null ? `${kpi.yoy >= 0 ? "+" : ""}${kpi.yoy.toFixed(0)}%` : "—"}
           delta={kpi.yoy != null ? `${Math.abs(kpi.yoy).toFixed(0)}%` : null}
@@ -3415,9 +3463,7 @@ function HubComercial() {
           <Estado
             carregando={carregFluxo}
             erro={erroFluxo}
-            vazio={ehSympla || !linhasFluxo.length}
-            vazioTitulo={ehSympla ? "Sympla não tem série mensal" : undefined}
-            vazioDica={ehSympla ? "A view do Sympla é agregada e não traz data — sem dimensão temporal, não há evolução mensal honesta a mostrar." : undefined}
+            vazio={!linhasFluxo.length}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 4, fontSize: 10.5, color: C.muted, fontWeight: 600 }}>
               <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
@@ -3453,7 +3499,7 @@ function HubComercial() {
             canto={
               <span style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "flex-end" }}>
                 <span style={{ fontSize: 10 }}>
-                  {ehSympla ? "todos os tempos" : geral ? "todos os tempos" : rotulo}
+                  {geral && !ehSympla ? "todos os tempos" : rotulo}
                 </span>
                 {!ehSympla && <ToggleVisao valor={visao} onChange={setVisao} />}
               </span>
@@ -3463,8 +3509,10 @@ function HubComercial() {
               carregando={fonte.isLoading}
               erro={fonte.error}
               vazio={!podio.length}
-              vazioTitulo={ehSympla || geral ? undefined : "Nenhuma venda no período"}
-              vazioDica={ehSympla || geral ? undefined : `Nenhuma venda entre ${inicio} e ${fim}. Troque o período no topo, ou veja em "Geral".`}
+              vazioTitulo={ehSympla ? "Nenhum evento no período" : geral ? undefined : "Nenhuma venda no período"}
+              vazioDica={ehSympla
+                ? `Nenhum evento do Sympla entre ${inicio} e ${fim}. Troque o período no topo.`
+                : geral ? undefined : `Nenhuma venda entre ${inicio} e ${fim}. Troque o período no topo, ou veja em "Geral".`}
             >
               {/* Hover com cursos em todas as categorias, menos Sympla (evento,
                   sem cursos). Sympla usa o card puro, sem wrapper. */}
@@ -6713,36 +6761,97 @@ function HubPedagogico() {
   );
 }
 
+/* ============ EVENTOS (Sympla) ============
+   O recorte é o do topo da tela, como nos demais hubs, e vale pelo DIA EM QUE
+   O EVENTO ACONTECEU -- não pelo dia em que o ingresso foi vendido. A view só
+   expõe a data do evento; receita por data de venda seria outra medida e não
+   existe hoje. Quem escolhe “Setembro” aqui está perguntando “como foram os
+   eventos de setembro”, e não “quanto entrou em setembro”. */
+
+// `data_inicio` vem timestamptz em UTC. Cortar a string em 10 caracteres
+// devolveria o dia UTC: um evento das 21h em Salvador já é o dia seguinte lá e
+// escaparia do mês sem ninguém notar. Hoje o mais tarde é 20h, uma hora de
+// folga — fino demais para confiar. Converte para o dia local da Bahia, que é
+// o dia que a pessoa chama de “o dia do evento”; `sv-SE` é só o atalho para
+// sair no formato ISO.
+const diaDoEvento = (v) => {
+  const d = new Date(v ?? "");
+  return Number.isNaN(d.getTime())
+    ? String(v ?? "").slice(0, 10)
+    : d.toLocaleDateString("sv-SE", { timeZone: "America/Bahia" });
+};
+
 function HubEventos() {
+  const { inicio, fim, rotulo } = usePeriodo();
   const ev = useEventosDesempenho();
-  const t = useMemo(() => {
-    const d = ev.data ?? [];
-    return {
-      ingressos: d.reduce((s, e) => s + Number(e.ingressos ?? 0), 0),
-      check: d.reduce((s, e) => s + Number(e.compareceram ?? 0), 0),
-      bruta: d.reduce((s, e) => s + Number(e.receita_bruta ?? 0), 0),
-      liquida: d.reduce((s, e) => s + Number(e.receita_liquida ?? 0), 0),
-    };
-  }, [ev.data]);
+
+  const lista = useMemo(
+    () => (ev.data ?? []).filter((e) => {
+      const d = diaDoEvento(e.data_inicio);
+      return d && d >= inicio && d <= fim;
+    }),
+    [ev.data, inicio, fim]
+  );
+
+  const t = useMemo(() => ({
+    ingressos: lista.reduce((s, e) => s + Number(e.ingressos ?? 0), 0),
+    bruta: lista.reduce((s, e) => s + Number(e.receita_bruta ?? 0), 0),
+    liquida: lista.reduce((s, e) => s + Number(e.receita_liquida ?? 0), 0),
+  }), [lista]);
+
+  // Comparecimento só sobre os eventos que TÊM check-in registrado. Dos 83
+  // eventos com ingresso, 6 usaram o check-in do Sympla — somando todos, a
+  // taxa dava 2%, e 2% não é o comparecimento, é a taxa de uso do check-in.
+  // Zero check-in entra como NÃO MEDIDO, e não como “ninguém foi”: a fonte não
+  // separa os dois casos, e chamar de ausência inventaria um número. Com o
+  // recorte por período isso passa a importar mais, porque o mês sem check-in
+  // mostraria 0,0%.
+  const presenca = useMemo(() => {
+    const medidos = lista.filter((e) => Number(e.compareceram ?? 0) > 0);
+    const ing = medidos.reduce((s, e) => s + Number(e.ingressos ?? 0), 0);
+    const chk = medidos.reduce((s, e) => s + Number(e.compareceram ?? 0), 0);
+    return { medidos: medidos.length, taxa: ing ? (chk / ing) * 100 : null };
+  }, [lista]);
+
   const top = useMemo(
-    () => [...(ev.data ?? [])]
+    () => [...lista]
       .sort((a, b) => Number(b.receita_liquida ?? 0) - Number(a.receita_liquida ?? 0))
       .slice(0, 10)
       .map((e) => ({ rotulo: e.nome_evento, valor: Number(e.receita_liquida ?? 0) })),
-    [ev.data]
+    [lista]
   );
-  const comp = t.ingressos ? ((t.check / t.ingressos) * 100).toFixed(1) : null;
+
+  const plural = lista.length === 1 ? "" : "s";
+  // Nenhum evento NO RECORTE é diferente de nenhum dado: com o filtro em Hoje
+  // ou 7 dias, o normal é não haver evento nenhum, e a tela precisa dizer isso
+  // em vez de sugerir falta de acesso ou fonte desconectada.
+  const foraDoRecorte = !lista.length && !!ev.data?.length;
 
   return (
     <>
-      <Estado carregando={ev.isLoading} erro={ev.error} vazio={!ev.data?.length}>
+      <Estado
+        carregando={ev.isLoading}
+        erro={ev.error}
+        vazio={!lista.length}
+        vazioTitulo={foraDoRecorte ? `Nenhum evento em ${rotulo}` : undefined}
+        vazioDica={foraDoRecorte
+          ? "Evento é esparso: em recorte curto o normal é não haver nenhum. Troque o período no topo."
+          : undefined}
+      >
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 14, marginBottom: 26 }}>
           <Kpi label="Receita líquida" valor={moeda(t.liquida)} nota="já sem a taxa" />
           <Kpi label="Taxa Sympla" valor={moeda(t.bruta - t.liquida)} nota="retido na fonte" destaque={C.warn} />
-          <Kpi label="Ingressos" valor={numero(t.ingressos)} nota="acumulado" />
-          <Kpi label="Comparecimento" valor={comp ?? "—"} unidade="%" nota="check-in / ingresso" />
+          <Kpi label="Ingressos" valor={numero(t.ingressos)} nota={`${numero(lista.length)} evento${plural} no recorte`} />
+          <Kpi
+            label="Comparecimento"
+            valor={presenca.taxa == null ? "—" : presenca.taxa.toFixed(1)}
+            unidade={presenca.taxa == null ? undefined : "%"}
+            nota={presenca.taxa == null
+              ? "nenhum evento com check-in"
+              : `check-in / ingresso · ${presenca.medidos} de ${lista.length} evento${plural}`}
+          />
         </div>
-        <Bloco titulo="Eventos por receita líquida" canto="acumulado" sem>
+        <Bloco titulo="Eventos por receita líquida" canto={rotulo} sem>
           <Lista linhas={top} total={t.liquida} />
         </Bloco>
       </Estado>
