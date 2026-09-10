@@ -1175,8 +1175,9 @@ function ChipKpi({ Icone, label, valor, unidade, delta, up, nota, hero, compacto
   );
 }
 
-/* Metas mensais totais do Comercial. A mínima é sempre 90% da básica;
-   metas individuais das consultoras não entram neste KPI. */
+/* Metas mensais totais do Comercial. Quando `minima` não vem informada,
+   mantém o histórico em 90% da básica. Metas individuais das consultoras
+   não entram neste KPI. */
 const METAS_COMERCIAL = {
   "2025-01": { basica: 880000, master: 1100000 },
   "2025-03": { basica: 890171.25, master: 1186895 },
@@ -1196,6 +1197,7 @@ const METAS_COMERCIAL = {
   "2026-06": { basica: 708800, master: 886000 },
   "2026-07": { basica: 724500, master: 896000 },
   "2026-08": { basica: 810365.4, master: 1013000 },
+  "2026-09": { minima: 839200, basica: 1049000, master: 1485333 },
 };
 
 class LimiteErroMeta extends Component {
@@ -1227,7 +1229,7 @@ function VelocimetroMeta({ realizado, meta, disponivel = true }) {
     return <ChipKpi compacto className="kpiTopoComercial" Icone={Gauge} label="% da meta" valor="—" nota="dados da meta inválidos" />;
   }
 
-  const minima = basica * 0.9;
+  const minima = Number(meta.minima ?? basica * 0.9);
   const alvo = valorRealizado < minima
     ? { nome: "mínima", valor: minima }
     : valorRealizado < basica
