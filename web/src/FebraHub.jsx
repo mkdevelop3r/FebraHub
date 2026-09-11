@@ -2246,9 +2246,11 @@ function HubExecutivo({ onIr }) {
   const recMensal = useFinanceiroRecebidoMensal();
   const mktInv = useMarketingInvestimento();
   /* O Executivo se apresenta como mes corrente, entao os KPIs pedagogicos
-     precisam respeitar o mesmo recorte. As views agregadas sao historicas e,
-     desde a migration 152, presenca tambem mudou o nome da coluna exposta. */
+     de recompra precisam respeitar o mesmo recorte. Comparecimento usa o
+     consolidado das turmas mensuraveis: no inicio de um mes sem turma concluida,
+     limitar a presenca ao mes faria um indicador valido desaparecer. */
   const pedPeriodo = usePedagogicoKpisPeriodo(inicioMes, fimMes);
+  const pedPresenca = usePedagogicoPresencaKpis();
 
   const inad = useMemo(() => inadimplenciaResumo(inadimp.data, recMensal.data), [inadimp.data, recMensal.data]);
   const lojaRow = useMemo(() => (lojaMeta.data ?? []).find((r) => noMesYM(r.mes_ref, ym)), [lojaMeta.data, ym]);
@@ -2284,7 +2286,7 @@ function HubExecutivo({ onIr }) {
   const recebido = useMemo(() => recebidoMaisRecente(recMensal.data, ym), [recMensal.data, ym]);
   const investMes = useMemo(() => (mktInv.data ?? []).filter((r) => noMesYM(r.mes, ym)).reduce((s, r) => s + Number(r.gasto ?? 0), 0), [mktInv.data, ym]);
   const recompra = pedPeriodo.data?.[0]?.taxa_recompra;
-  const comparec = pedPeriodo.data?.[0]?.taxa_comparecimento;
+  const comparec = pedPresenca.data?.[0]?.taxa_comparecimento;
 
   return (
     <>
@@ -2331,7 +2333,7 @@ function HubExecutivo({ onIr }) {
           linhas={[{ label: "investimento", valor: moeda(investMes), cor: C.gold }]}
           nota="Receita e ROI não são atribuíveis nesta base" />
         <CardSetor Icone={GraduationCap} titulo="Pedagógico" onIr={() => onIr("pedagogico")}
-          estado={{ carregando: pedPeriodo.isLoading, erro: pedPeriodo.error }}
+          estado={{ carregando: pedPeriodo.isLoading || pedPresenca.isLoading, erro: pedPeriodo.error ?? pedPresenca.error }}
           linhas={[{ label: "recompra (grade)", valor: fmtPct(recompra, 1), cor: C.gold }, { label: "comparecimento", valor: fmtPct(comparec), cor: C.up }]} />
         <CardTopConsultoras top3={consultoras.top3} estado={{ carregando: cons30.isLoading, erro: cons30.error }} onIr={() => onIr("comercial")} />
       </div>
