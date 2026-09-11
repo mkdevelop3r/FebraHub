@@ -1,4 +1,4 @@
-import { Component, useState, useMemo, useRef, useEffect, createContext, useContext } from "react";
+import { Component, useState, useMemo, useRef, useEffect, useCallback, createContext, useContext } from "react";
 import { BrowserRouter, Routes, Route, useParams } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import Avaliacao from "./Rotas/Avaliacao.jsx";
@@ -7381,65 +7381,73 @@ function SemFonte({ hub }) {
 
 /* ============ LOGIN ============ */
 
-/* Fundo em vídeo (5,3s, loop): pontos de luz viram rede, a rede vira
-   gráfico, e tudo se desfaz no lugar até voltar ao campo de pontos do
-   primeiro frame — por isso o loop não tem emenda. Três regras que ele
-   obedece:
+/* Abertura em vídeo (~9s): a águia dourada voa, vira o símbolo da Febracis,
+   ganha um brilho e esmaece em preto — revelando o login por baixo. Regras:
 
-   1. NUNCA atrapalha o login. Nasce invisível e só aparece quando o arquivo
-      carrega. Sem arquivo, com erro de rede ou com autoplay barrado pelo
-      navegador, a tela fica exatamente como era — o gradiente continua sendo
-      o fundo de verdade, o vídeo é ganho por cima.
-   2. Contraste antes de estética: o véu escuro segura a legibilidade do
-      formulário em qualquer frame. Tela de entrada não pode piscar de
-      claro-escuro enquanto alguém digita a senha.
-   3. `prefers-reduced-motion` corta o vídeo inteiro. Não é capricho de
-      configuração — é acessibilidade, e movimento em loop atrás de texto é
-      exatamente o caso que a preferência existe para atender.
+   1. TOCA UMA VEZ POR SESSÃO. O sessionStorage guarda que já foi vista, então
+      refresh e navegação interna não repetem; só uma aba/sessão nova vê de
+      novo. É abertura, não anúncio — repetir a cada clique cansaria.
+   2. NUNCA prende ninguém. Pulável por clique, Esc, Enter ou espaço. Se o
+      arquivo falhar ou o autoplay for barrado pelo navegador, sai na hora e
+      mostra o login — o `onError`/`onEnded` levam ao mesmo lugar.
+   3. `prefers-reduced-motion` pula a abertura inteira (decidido em quem a
+      monta, no App) — a mesma acessibilidade que o fundo em loop antigo tinha.
+   4. Termina em preto, e o login também é preto: o fade emenda sem corte. Por
+      isso `objectFit: contain` — numa tela fora de 16:9 as bordas ficam
+      pretas, invisíveis sobre o fundo preto, e o logo nunca é cortado.
 
-   O nome "FebraHub" NÃO está no vídeo, de propósito: modelo de vídeo escreve
-   texto mal, e o nome da empresa deformado na tela de entrada seria o pior
-   lugar possível para esse defeito. No vídeo não há letra nenhuma; o nome é
-   o <div> de sempre, desenhado por cima com a fonte do produto. Trocar o
-   vídeo não mexe no nome, e vice-versa.
+   O vídeo não tem letra nenhuma de propósito; o nome é desenhado no login com
+   a fonte do produto. A fonte da águia e o pipeline de ffmpeg (inverte o
+   fundo branco para preto, adiciona o brilho e o fade) ficam fora do repo. */
+function IntroFebra({ onSair }) {
+  const [saindo, setSaindo] = useState(false);
 
-   Cor: ouro sobre preto, os mesmos tokens do resto do produto. O master, os
-   prompts de geração e o comando de ffmpeg que fecha o loop estão fora do
-   repositório, em FebraHub-assets/login-bg/ — binário não versiona bem. */
-const VIDEO_FUNDO = "/login-bg.mp4";
+  const encerrar = useCallback(() => {
+    setSaindo((jaSaindo) => {
+      if (jaSaindo) return true;                 // clique/tecla repetido não conta
+      try { sessionStorage.setItem("febra_intro_visto", "1"); } catch { /* aba privada */ }
+      setTimeout(onSair, 450);                   // desmonta só depois do fade
+      return true;
+    });
+  }, [onSair]);
 
-function FundoLogin() {
-  const [visivel, setVisivel] = useState(false);
-  const [falhou, setFalhou] = useState(false);
-
-  const menosMovimento =
-    typeof window !== "undefined" &&
-    window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-
-  if (menosMovimento || falhou) return null;
+  useEffect(() => {
+    const aoTeclar = (e) => {
+      if (e.key === "Escape" || e.key === "Enter" || e.key === " ") { e.preventDefault(); encerrar(); }
+    };
+    window.addEventListener("keydown", aoTeclar);
+    return () => window.removeEventListener("keydown", aoTeclar);
+  }, [encerrar]);
 
   return (
-    <>
+    <div
+      onClick={encerrar}
+      role="button"
+      aria-label="Pular abertura"
+      style={{
+        position: "fixed", inset: 0, zIndex: 9999, background: "#000",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        cursor: "pointer", opacity: saindo ? 0 : 1, transition: "opacity .45s ease",
+      }}
+    >
+      {/* WebM primeiro (menor onde há suporte); MP4 é o fallback universal. */}
       <video
-        src={VIDEO_FUNDO}
-        autoPlay muted loop playsInline preload="auto"
-        aria-hidden="true"
-        onCanPlay={() => setVisivel(true)}
-        onError={() => setFalhou(true)}
-        style={{
-          position: "fixed", inset: 0, width: "100%", height: "100%",
-          objectFit: "cover", zIndex: 0, pointerEvents: "none",
-          opacity: visivel ? 1 : 0, transition: "opacity 1.2s ease",
-        }}
-      />
-      {/* Véu: mais dela no centro, onde fica o formulário, e menos nas
-          bordas, onde o vídeo pode aparecer. */}
-      <div aria-hidden="true" style={{
-        position: "fixed", inset: 0, zIndex: 1, pointerEvents: "none",
-        background:
-          `radial-gradient(760px 520px at 50% 50%, ${C.void}E6, ${C.void}A6 55%, ${C.void}66 100%)`,
-      }} />
-    </>
+        autoPlay muted playsInline preload="auto"
+        onEnded={encerrar}
+        onError={encerrar}
+        style={{ width: "100%", height: "100%", objectFit: "contain" }}
+      >
+        <source src="/intro-febra.webm?v=2" type="video/webm" />
+        <source src="/intro-febra.mp4?v=2" type="video/mp4" />
+      </video>
+      <span aria-hidden="true" style={{
+        position: "fixed", bottom: 22, right: 24, fontSize: 12, fontWeight: 700,
+        color: "rgba(255,255,255,.55)", fontFamily: SANS, pointerEvents: "none",
+        letterSpacing: ".3px",
+      }}>
+        Pular ›
+      </span>
+    </div>
   );
 }
 
@@ -7470,8 +7478,8 @@ function Login() {
       background: `radial-gradient(1200px 600px at 78% -10%, ${C.gold}12, transparent 60%), ${C.void}`,
       fontFamily: SANS, color: C.text,
     }}>
-      <FundoLogin />
-      {/* zIndex 2: acima do vídeo (0) e do véu (1). */}
+      {/* Sem fundo em vídeo: a abertura (IntroFebra) toca antes e some, e o
+          login fica no preto limpo, só com o leve brilho dourado do gradiente. */}
       <div style={{ position: "relative", zIndex: 2, width: "100%", maxWidth: 380, animation: "subir .5s ease" }}>
 
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginBottom: 30 }}>
@@ -10348,18 +10356,28 @@ function App() {
   const sessao = useSessao();
   const perfil = usePerfil(sessao);
 
+  // Abertura: uma vez por sessão, e nunca para quem pediu menos movimento. A
+  // decisão de MOSTRAR mora aqui (o IntroFebra só sabe tocar e sair), porque é
+  // aqui que ela fica por cima de qualquer estado — carregando, login ou já
+  // dentro — e some revelando o que houver por baixo, normalmente o login.
+  const [mostrarIntro, setMostrarIntro] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try { if (sessionStorage.getItem("febra_intro_visto")) return false; } catch { /* aba privada */ }
+    return !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  });
+
+  let conteudo;
   if (sessao === undefined || (sessao && perfil.isLoading))
-    return (
+    conteudo = (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: C.void }}>
         <Loader2 size={18} className="girar" style={{ color: C.goldBase }} />
         <style>{`@keyframes girar { to { transform: rotate(360deg); } } .girar { animation: girar 1s linear infinite; }`}</style>
       </div>
     );
-
-  if (!sessao) return <Login />;
-
-  if (perfil.error || !perfil.data)
-    return (
+  else if (!sessao)
+    conteudo = <Login />;
+  else if (perfil.error || !perfil.data)
+    conteudo = (
       <div style={{
         minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center",
         justifyContent: "center", gap: 13, background: C.void, color: C.text,
@@ -10379,8 +10397,15 @@ function App() {
         </button>
       </div>
     );
+  else
+    conteudo = <Shell perfil={perfil.data} />;
 
-  return <Shell perfil={perfil.data} />;
+  return (
+    <>
+      {conteudo}
+      {mostrarIntro && <IntroFebra onSair={() => setMostrarIntro(false)} />}
+    </>
+  );
 }
 
 // A rota pública /e/:token vira QR code impresso, então precisa de URL de
