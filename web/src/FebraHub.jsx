@@ -8201,6 +8201,7 @@ function TabelaCredenciamento({ linhas }) {
 
 function CentralPresenca() {
   const credenciamento = useCredenciamentoPorTurma();
+  const calendario = useTurmasCentral();
   const saudeAntiga = usePresencaSaude();
   const mensuraveisAntigas = useTurmasMensuraveis();
   const coberturaAntiga = usePresencaCobertura();
@@ -8211,6 +8212,8 @@ function CentralPresenca() {
     .replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, " ").trim();
   const novosPorTurma = useMemo(() => new Map((credenciamento.data ?? [])
     .map((r) => [chaveTurma(r.turma), r])), [credenciamento.data]);
+  const datasPorTurma = useMemo(() => new Map((calendario.data ?? [])
+    .map((r) => [chaveTurma(r.turma_id), r])), [calendario.data]);
   const sobrepor = (r) => {
     const novo = novosPorTurma.get(chaveTurma(r.turma));
     if (!novo) return r;
@@ -8236,9 +8239,12 @@ function CentralPresenca() {
       const matriculados = Number(novo.total_alunos ?? 0);
       const compareceram = Number(novo.credenciados ?? 0);
       if (soMensuraveis && (matriculados < 10 || compareceram < 1)) continue;
+      const datas = datasPorTurma.get(chaveTurma(novo.turma));
       base.push({
         turma: novo.turma,
         curso: novo.curso_nome,
+        data_inicio: datas?.data_inicio,
+        data_fim: datas?.data_fim,
         matriculados,
         compareceram,
         cobertura_pct: Number(novo.percentual_credenciamento ?? 0),
@@ -8248,12 +8254,12 @@ function CentralPresenca() {
     }
     return base;
   };
-  const todas = useMemo(() => unirComNovos(coberturaAntiga.data), [coberturaAntiga.data, credenciamento.data]);
-  const mensuraveisLinhas = useMemo(() => unirComNovos(mensuraveisAntigas.data, true), [mensuraveisAntigas.data, credenciamento.data]);
+  const todas = useMemo(() => unirComNovos(coberturaAntiga.data), [coberturaAntiga.data, credenciamento.data, datasPorTurma]);
+  const mensuraveisLinhas = useMemo(() => unirComNovos(mensuraveisAntigas.data, true), [mensuraveisAntigas.data, credenciamento.data, datasPorTurma]);
   const semRegistro = useMemo(() => todas.filter((r) => !Number(r.compareceram ?? 0)), [todas]);
   const comRegistro = useMemo(() => todas.filter((r) => Number(r.compareceram ?? 0) > 0), [todas]);
-  const mensuraveis = { data: mensuraveisLinhas, isLoading: mensuraveisAntigas.isLoading || credenciamento.isLoading, error: mensuraveisAntigas.error || credenciamento.error };
-  const cobertura = { data: todas, isLoading: coberturaAntiga.isLoading || credenciamento.isLoading, error: coberturaAntiga.error || credenciamento.error };
+  const mensuraveis = { data: mensuraveisLinhas, isLoading: mensuraveisAntigas.isLoading || credenciamento.isLoading || calendario.isLoading, error: mensuraveisAntigas.error || credenciamento.error || calendario.error };
+  const cobertura = { data: todas, isLoading: coberturaAntiga.isLoading || credenciamento.isLoading || calendario.isLoading, error: coberturaAntiga.error || credenciamento.error || calendario.error };
   const ultimaCarga = (credenciamento.data ?? []).reduce((max, r) => String(r.sincronizado_em ?? "") > max ? String(r.sincronizado_em) : max, "");
   const saude = {
     data: ultimaCarga ? [{
@@ -8395,6 +8401,9 @@ function LinhaTurmaPresenca({ r, ultima, comCurso }) {
      tela diz isso na própria linha, em vez de deixar o número grande falar
      sozinho. Sem registro nenhum, não existe ausência a mostrar. */
   const semRegistro = presentes === 0 && cob === 0;
+  const hoje = isoDia(new Date());
+  const fim = r.data_fim || r.data_inicio;
+  const credenciamentoFinalizado = Boolean(fim && String(fim) < hoje);
   const corCob = semRegistro ? C.dim : cob >= 70 ? C.up : cob >= 40 ? C.warn : C.down;
 
   return (
@@ -8432,7 +8441,9 @@ function LinhaTurmaPresenca({ r, ultima, comCurso }) {
       <span style={{ textAlign: "right", whiteSpace: "nowrap" }}>
         <b style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: corCob }}>{semRegistro ? "0" : Math.round(cob)}%</b>
         {!semRegistro && cob < 60 && (
-          <div style={{ fontSize: 9.5, color: C.warn, lineHeight: 1.2 }}>credenciamento em andamento</div>
+          <div style={{ fontSize: 9.5, color: C.warn, lineHeight: 1.2 }}>
+            {credenciamentoFinalizado || !fim ? "cobertura abaixo de 60%" : "credenciamento em andamento"}
+          </div>
         )}
       </span>
     </div>
