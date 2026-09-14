@@ -8223,8 +8223,33 @@ function CentralPresenca() {
       sincronizado_em: novo.sincronizado_em,
     };
   };
-  const todas = useMemo(() => (coberturaAntiga.data ?? []).map(sobrepor), [coberturaAntiga.data, novosPorTurma]);
-  const mensuraveisLinhas = useMemo(() => (mensuraveisAntigas.data ?? []).map(sobrepor), [mensuraveisAntigas.data, novosPorTurma]);
+  /* A fonte antiga e uma fotografia fechada: uma turma nova na API nao pode
+     depender de ja existir nela para aparecer. FOP20 revelou esse buraco --
+     estava credenciada no Salesforce, mas o antigo `.map(sobrepor)` apenas
+     atualizava chaves conhecidas. A uniao abaixo preserva o historico antigo
+     e acrescenta toda turma que exista somente na fonte oficial. */
+  const unirComNovos = (antigas, soMensuraveis = false) => {
+    const base = (antigas ?? []).map(sobrepor);
+    const chaves = new Set(base.map((r) => chaveTurma(r.turma)));
+    for (const novo of credenciamento.data ?? []) {
+      if (chaves.has(chaveTurma(novo.turma))) continue;
+      const matriculados = Number(novo.total_alunos ?? 0);
+      const compareceram = Number(novo.credenciados ?? 0);
+      if (soMensuraveis && (matriculados < 10 || compareceram < 1)) continue;
+      base.push({
+        turma: novo.turma,
+        curso: novo.curso_nome,
+        matriculados,
+        compareceram,
+        cobertura_pct: Number(novo.percentual_credenciamento ?? 0),
+        fonte: "salesforce_api",
+        sincronizado_em: novo.sincronizado_em,
+      });
+    }
+    return base;
+  };
+  const todas = useMemo(() => unirComNovos(coberturaAntiga.data), [coberturaAntiga.data, credenciamento.data]);
+  const mensuraveisLinhas = useMemo(() => unirComNovos(mensuraveisAntigas.data, true), [mensuraveisAntigas.data, credenciamento.data]);
   const semRegistro = useMemo(() => todas.filter((r) => !Number(r.compareceram ?? 0)), [todas]);
   const comRegistro = useMemo(() => todas.filter((r) => Number(r.compareceram ?? 0) > 0), [todas]);
   const mensuraveis = { data: mensuraveisLinhas, isLoading: mensuraveisAntigas.isLoading || credenciamento.isLoading, error: mensuraveisAntigas.error || credenciamento.error };

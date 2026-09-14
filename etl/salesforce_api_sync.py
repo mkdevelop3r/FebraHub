@@ -18,6 +18,9 @@ import requests
 
 API_VERSION = os.getenv("SALESFORCE_API_VERSION", "67.0")
 UNIDADE = os.getenv("SALESFORCE_UNIDADE", "FEBRACIS SALVADOR 2")
+PEDAGOGICO_USERNAME = os.getenv(
+    "SALESFORCE_PEDAGOGICO_USERNAME",
+    "pedagogicobahia@febracis.com.br.producao")
 REPORT_ALUNOS = os.getenv("SALESFORCE_REPORT_ALUNOS", "00OV20000091YSHMA2")
 REPORT_PAGAMENTOS = os.getenv("SALESFORCE_REPORT_PAGAMENTOS", "00OV20000091Z1lMAE")
 LOOKBACK_DAYS = int(os.getenv("SALESFORCE_LOOKBACK_DAYS", "120"))
@@ -360,6 +363,7 @@ def credentialing_rows(sf):
         f"SELECT {fields} FROM Credenciamento__c "
         "WHERE CreatedDate >= 2021-01-01T00:00:00Z "
         f"AND (Turma__r.Unidade__r.Name IN ('{UNIDADE}','FEBRACIS SALVADOR') "
+        f"OR Turma__r.Owner.Username = '{PEDAGOGICO_USERNAME}' "
         "OR (Turma__r.Unidade__c = null AND Turma__r.Name LIKE '%SALVADOR%'))")
 
 
