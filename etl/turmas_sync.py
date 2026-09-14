@@ -454,14 +454,23 @@ def main():
         return
 
     agora = datetime.now(timezone.utc).isoformat()
-    linhas = []
-    for c in criar:
-        linhas.append({**c, "sincronizado_em": agora, "atualizado_em": agora})
-    for u in atualizar:
-        linhas.append({**{k: v for k, v in u.items() if k != "_antes"},
-                       "sincronizado_em": agora})
-    if linhas:
-        sb.upsert("dim_turmas", linhas, "turma_id")
+    # PostgREST exige que todos os objetos de um mesmo POST tenham exatamente
+    # as mesmas chaves. Criacoes carregam os campos locais iniciais; updates
+    # nao podem envia-los nem como null, pois isso apagaria decisoes humanas
+    # como o cancelamento da IF37. Por isso os dois formatos vao separados.
+    if criar:
+        linhas_criar = [
+            {**c, "sincronizado_em": agora, "atualizado_em": agora}
+            for c in criar
+        ]
+        sb.upsert("dim_turmas", linhas_criar, "turma_id")
+    if atualizar:
+        linhas_atualizar = [
+            {**{k: v for k, v in u.items() if k != "_antes"},
+             "sincronizado_em": agora}
+            for u in atualizar
+        ]
+        sb.upsert("dim_turmas", linhas_atualizar, "turma_id")
     log("")
     log(f"GRAVADO: {len(criar)} criadas, {len(atualizar)} atualizadas.")
 
