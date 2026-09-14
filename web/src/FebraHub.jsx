@@ -10,7 +10,7 @@ import {
   Database, ShieldAlert, Loader2, ArrowRight, Bell,
   Clock, Receipt, Hourglass, ChevronLeft, ChevronRight, ChevronDown, Calculator,
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
-  Users, Target, Construction, Percent, Filter, ChevronUp,
+  Users, Target, Construction, Percent, Filter, ChevronUp, GripVertical,
   Boxes, PackageX, Repeat, UserCheck, BookOpen, ShieldCheck,
   Check, Pencil, Star, Plus, PhoneCall, Send, Link2, ClipboardList, ClipboardCheck,
   Search, MoreHorizontal, Gauge,
@@ -5979,22 +5979,57 @@ function FormTurma({ dim, sug, aguardando, foco, onSalvo, notificar }) {
 const TIPOS_EVENTO = [
   { k: "palestra", r: "Palestra" }, { k: "workshop", r: "Workshop" },
   { k: "mentoria", r: "Mentoria" }, { k: "curso", r: "Curso" },
+  { k: "feedback", r: "Feedback" },
 ];
 const TIPOS_PERGUNTA = [
   { k: "escala_1_5", r: "Escala 1–5" }, { k: "escala_0_10", r: "Escala 0–10" },
   { k: "sim_nao", r: "Sim / Não" }, { k: "escolha_unica", r: "Escolha única" },
   { k: "texto_livre", r: "Texto livre" },
 ];
-const PERGUNTAS_NUCLEO = [
-  "De 0 a 10, quanto você recomendaria esta palestra a um colega?",
-  "O que você mudaria nesta palestra?",
-  "Qual tema você gostaria de ver numa próxima palestra?",
-];
+// As 3 perguntas de núcleo. Quem as INSERE é o banco (criar_evento); aqui é só
+// o preview no editor, então o texto tem que bater com public.criar_evento
+// (db/199). A redação acompanha o TIPO do evento — não fica "palestra" fixo num
+// curso/workshop/mentoria — com a concordância de gênero certa.
+const NUCLEO_ALVO = {
+  palestra: { este: "esta palestra", neste: "nesta palestra", prox: "numa próxima palestra" },
+  workshop: { este: "este workshop", neste: "neste workshop", prox: "num próximo workshop" },
+  mentoria: { este: "esta mentoria", neste: "nesta mentoria", prox: "numa próxima mentoria" },
+  curso:    { este: "este curso",    neste: "neste curso",    prox: "num próximo curso" },
+  feedback: { este: "este feedback", neste: "neste feedback", prox: "num próximo feedback" },
+};
+const perguntasNucleo = (tipo) => {
+  const a = NUCLEO_ALVO[tipo] ?? { este: "este evento", neste: "neste evento", prox: "num próximo evento" };
+  return [
+    `De 0 a 10, quanto você recomendaria ${a.este} a um colega?`,
+    `O que você mudaria ${a.neste}?`,
+    `Qual tema você gostaria de ver ${a.prox}?`,
+  ];
+};
+// As 3 perguntas padrão pré-carregadas no editor — agora EDITÁVEIS e removíveis.
+// A 1ª é a de recomendação (NPS): `nps:true`, tipo travado em escala_0_10, pra
+// continuar valendo pro NPS mesmo se a Elis mudar o texto. As outras duas são
+// texto livre. `chave` identifica cada padrão pra atualizar o texto quando o
+// tipo do evento muda (só enquanto não for editada à mão).
+const perguntasPadrao = (tipo) => {
+  const [q1, q2, q3] = perguntasNucleo(tipo);
+  return [
+    { texto: q1, tipo: "escala_0_10", obrigatoria: true,  opcoes: [], nps: true,  chave: "nps",     editado: false },
+    { texto: q2, tipo: "texto_livre", obrigatoria: false, opcoes: [], nps: false, chave: "aberta1", editado: false },
+    { texto: q3, tipo: "texto_livre", obrigatoria: false, opcoes: [], nps: false, chave: "aberta2", editado: false },
+  ];
+};
+// Ao trocar o tipo, atualiza o texto das padrão que ainda não foram editadas.
+const atualizarPadraoParaTipo = (ps, novoTipo) => {
+  const [q1, q2, q3] = perguntasNucleo(novoTipo);
+  const mapa = { nps: q1, aberta1: q2, aberta2: q3 };
+  return ps.map((p) => (p.chave && !p.editado && mapa[p.chave] != null ? { ...p, texto: mapa[p.chave] } : p));
+};
 const LIMITE_PERGUNTAS = 7; // acima disso, avisa (não bloqueia)
 
 function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTravado = null, rotulo = "Perguntas" }) {
-  const total = perguntas.length + PERGUNTAS_NUCLEO.length;
-  const setP = (i, campo, val) => setPerguntas((ps) => ps.map((p, j) => (j === i ? { ...p, [campo]: val } : p)));
+  const total = perguntas.length;
+  // Editar o texto marca a pergunta como "mexida" — deixa de acompanhar o tipo.
+  const setP = (i, campo, val) => setPerguntas((ps) => ps.map((p, j) => (j === i ? { ...p, [campo]: val, ...(campo === "texto" ? { editado: true } : {}) } : p)));
   const addPergunta = () => setPerguntas((ps) => [...ps, { texto: "", tipo: "escala_1_5", obrigatoria: true, opcoes: ["", ""] }]);
   const removePergunta = (i) => setPerguntas((ps) => ps.filter((_, j) => j !== i));
   const mover = (i, dir) => setPerguntas((ps) => {
@@ -6005,11 +6040,23 @@ function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTrava
   const addOpcao = (i) => setPerguntas((ps) => ps.map((p, j) => (j === i ? { ...p, opcoes: [...p.opcoes, ""] } : p)));
   const removeOpcao = (i, oi) => setPerguntas((ps) => ps.map((p, j) => (j === i ? { ...p, opcoes: p.opcoes.filter((_, k) => k !== oi) } : p)));
 
+  // Arrastar-e-soltar. A linha só vira `draggable` quando a alça é pressionada
+  // (`arrastavel`), senão arrastar cairia sobre os inputs e atrapalharia digitar
+  // e selecionar texto. `arrastando`/`sobre` guiam o realce e o reordenamento.
+  const [arrastavel, setArrastavel] = useState(null);
+  const [arrastando, setArrastando] = useState(null);
+  const [sobre, setSobre] = useState(null);
+  const moverPara = (de, para) => setPerguntas((ps) => {
+    if (de == null || para == null || de === para) return ps;
+    const c = [...ps]; const [item] = c.splice(de, 1); c.splice(para, 0, item); return c;
+  });
+  const soltar = (para) => { moverPara(arrastando, para); setArrastando(null); setSobre(null); setArrastavel(null); };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 11 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10 }}>
         <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gold }}>{rotulo}</span>
-        <span style={{ fontSize: 10.5, color: !travado && total > LIMITE_PERGUNTAS ? C.warn : C.faint }}>{total} no formulário (com o núcleo)</span>
+        <span style={{ fontSize: 10.5, color: !travado && total > LIMITE_PERGUNTAS ? C.warn : C.faint }}>{total} no formulário</span>
       </div>
       {travado && (
         <div style={{ display: "flex", alignItems: "flex-start", gap: 9, fontSize: 12, color: C.warn, background: `${C.warn}12`, border: `1px solid ${C.warn}55`, borderRadius: 9, padding: "10px 12px", lineHeight: 1.45 }}>
@@ -6019,13 +6066,33 @@ function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTrava
       )}
       {!travado && total > LIMITE_PERGUNTAS && (
         <div style={{ fontSize: 11.5, color: C.warn, background: `${C.warn}12`, border: `1px solid ${C.warn}44`, borderRadius: 9, padding: "8px 11px", lineHeight: 1.45 }}>
-          Formulário longo derruba a taxa de resposta no celular — e o núcleo fica no fim. Considere enxugar.
+          Formulário longo derruba a taxa de resposta no celular. Considere enxugar.
         </div>
       )}
 
       {perguntas.map((p, i) => (
-        <div key={i} style={{ border: `1px solid ${C.hair}`, borderRadius: 10, padding: 11, display: "flex", flexDirection: "column", gap: 9, background: "rgba(255,255,255,.02)" }}>
+        <div key={i}
+          draggable={arrastavel === i}
+          onDragStart={(e) => { setArrastando(i); e.dataTransfer.effectAllowed = "move"; }}
+          onDragOver={(e) => { if (arrastando != null) { e.preventDefault(); if (sobre !== i) setSobre(i); } }}
+          onDrop={(e) => { e.preventDefault(); soltar(i); }}
+          onDragEnd={() => { setArrastando(null); setSobre(null); setArrastavel(null); }}
+          style={{
+            border: `1px solid ${sobre === i && arrastando != null && arrastando !== i ? C.gold : C.hair}`,
+            borderRadius: 10, padding: 11, display: "flex", flexDirection: "column", gap: 9,
+            background: "rgba(255,255,255,.02)", opacity: arrastando === i ? 0.4 : 1,
+            transition: "border-color .12s ease, opacity .12s ease",
+          }}>
           <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+            {!travado && (
+              // Alça de arraste: só ela liga o `draggable` da linha, pra não
+              // atrapalhar digitar/selecionar nos campos.
+              <span onMouseDown={() => setArrastavel(i)} onMouseUp={() => setArrastavel(null)}
+                title="Arraste para reordenar"
+                style={{ display: "flex", alignItems: "center", paddingTop: 8, color: C.faint, cursor: "grab", flexShrink: 0 }}>
+                <GripVertical size={15} />
+              </span>
+            )}
             <span style={{ fontFamily: GROTESK, fontSize: 12, color: C.faint, paddingTop: 9, minWidth: 16 }}>{i + 1}</span>
             <input value={p.texto} disabled={travado} onChange={(e) => setP(i, "texto", e.target.value)} placeholder="Enunciado da pergunta" style={{ ...inputAv, flex: 1, opacity: travado ? 0.7 : 1 }} />
             {!travado && (
@@ -6037,9 +6104,18 @@ function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTrava
             )}
           </div>
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", paddingLeft: 24 }}>
-            <select value={p.tipo} disabled={travado} onChange={(e) => setP(i, "tipo", e.target.value)} style={{ ...inputAv, width: "auto", cursor: travado ? "default" : "pointer", padding: "6px 10px", fontSize: 12, opacity: travado ? 0.7 : 1 }}>
-              {TIPOS_PERGUNTA.map((t) => (<option key={t.k} value={t.k}>{t.r}</option>))}
-            </select>
+            {p.nps ? (
+              // A de recomendação fica em escala 0–10, travada: é ela que
+              // alimenta o NPS. A Elis pode mudar o texto e até removê-la, mas
+              // não trocar o formato — senão pararia de valer pro NPS.
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 11.5, fontWeight: 700, color: C.gold, background: `${C.gold}14`, border: `1px solid ${C.gold}44`, borderRadius: 7, padding: "5px 9px" }}>
+                <Star size={12} /> Escala 0–10 · conta para o NPS
+              </span>
+            ) : (
+              <select value={p.tipo} disabled={travado} onChange={(e) => setP(i, "tipo", e.target.value)} style={{ ...inputAv, width: "auto", cursor: travado ? "default" : "pointer", padding: "6px 10px", fontSize: 12, opacity: travado ? 0.7 : 1 }}>
+                {TIPOS_PERGUNTA.map((t) => (<option key={t.k} value={t.k}>{t.r}</option>))}
+              </select>
+            )}
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: C.muted, cursor: travado ? "default" : "pointer" }}>
               <input type="checkbox" checked={p.obrigatoria} disabled={travado} onChange={(e) => setP(i, "obrigatoria", e.target.checked)} /> obrigatória
             </label>
@@ -6065,16 +6141,16 @@ function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTrava
         </button>
       )}
       {travado && !perguntas.length && (
-        <div style={{ fontSize: 12, color: C.faint }}>Este evento não teve perguntas próprias — só o núcleo.</div>
+        <div style={{ fontSize: 12, color: C.faint }}>Este evento não teve perguntas.</div>
       )}
 
-      {/* Núcleo — leitura */}
-      <div style={{ background: "rgba(255,255,255,.02)", border: `1px dashed ${C.cardLine}`, borderRadius: 10, padding: "11px 13px", marginTop: 2 }}>
-        <div style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, marginBottom: 7 }}>Perguntas de núcleo — fecham todo formulário, iguais em todo evento</div>
-        <ol style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 5 }}>
-          {PERGUNTAS_NUCLEO.map((t, i) => (<li key={i} style={{ fontSize: 12, color: C.faint, lineHeight: 1.4 }}>{t}</li>))}
-        </ol>
-      </div>
+      {!travado && !perguntas.some((p) => p.nps) && (
+        // Aviso honesto: sem a de recomendação, este evento não terá NPS.
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 11.5, color: C.faint, lineHeight: 1.45 }}>
+          <Star size={13} style={{ flexShrink: 0, marginTop: 1, color: C.muted }} />
+          <span>Sem a pergunta de recomendação (escala 0–10), este evento <b style={{ color: C.muted }}>não terá NPS</b> nem entra no NPS acumulado da carteira.</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -6090,7 +6166,8 @@ function FormEvento({ meuId, onFechar, onSalvo, notificar }) {
   const [objetivo, setObjetivo] = useState("");
   const [local, setLocal] = useState("");
   const [responsavelId, setResponsavelId] = useState(meuId ?? "");
-  const [perguntas, setPerguntas] = useState([]);
+  // Já nasce com as 3 padrão (editáveis/removíveis); a 1ª é a de NPS.
+  const [perguntas, setPerguntas] = useState(() => perguntasPadrao("palestra"));
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState(null);
   const [resultado, setResultado] = useState(null);
@@ -6102,7 +6179,7 @@ function FormEvento({ meuId, onFechar, onSalvo, notificar }) {
   const resetar = () => {
     setResultado(null); setTipo("palestra"); setPalestraSel(""); setTituloNovo("");
     setData(""); setObjetivo(""); setLocal(""); setResponsavelId(meuId ?? "");
-    setPerguntas([]); setErro(null);
+    setPerguntas(perguntasPadrao("palestra")); setErro(null);
   };
 
   const salvar = async () => {
@@ -6122,12 +6199,13 @@ function FormEvento({ meuId, onFechar, onSalvo, notificar }) {
         p_objetivo: objetivo.trim() || null, p_local: local.trim() || null,
         p_responsavel_id: responsavelId || null,
       });
-      if (perguntas.length) {
-        await salvarPerguntas(ev.id, perguntas.map((p) => ({
-          texto: p.texto.trim(), tipo: p.tipo, obrigatoria: !!p.obrigatoria,
-          opcoes: p.tipo === "escolha_unica" ? p.opcoes.map((o) => o.trim()).filter(Boolean) : null,
-        })));
-      }
+      // Sempre salva as perguntas — inclusive quando a lista está vazia (a Elis
+      // removeu tudo): a criar_evento não insere mais o núcleo, então é esta
+      // chamada que define o formulário. `nps` marca a de recomendação.
+      await salvarPerguntas(ev.id, perguntas.map((p) => ({
+        texto: p.texto.trim(), tipo: p.tipo, obrigatoria: !!p.obrigatoria, nps: !!p.nps,
+        opcoes: p.tipo === "escolha_unica" ? p.opcoes.map((o) => o.trim()).filter(Boolean) : null,
+      })));
       setResultado(ev);
       notificar("Evento salvo.", "ok");
       onSalvo?.();
@@ -6181,7 +6259,7 @@ function FormEvento({ meuId, onFechar, onSalvo, notificar }) {
         <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.gold }}>1 · O evento</div>
         <div>
           <label style={labelAv}>Tipo</label>
-          <Segmentado valor={tipo} onChange={(v) => { setTipo(v); setPalestraSel(""); }} opcoes={TIPOS_EVENTO.map((t) => ({ key: t.k, label: t.r }))} />
+          <Segmentado valor={tipo} onChange={(v) => { setTipo(v); setPalestraSel(""); setPerguntas((ps) => atualizarPadraoParaTipo(ps, v)); }} opcoes={TIPOS_EVENTO.map((t) => ({ key: t.k, label: t.r }))} />
         </div>
 
         {ehPalestra ? (
@@ -6222,9 +6300,9 @@ function FormEvento({ meuId, onFechar, onSalvo, notificar }) {
         </div>
       </div>
 
-      {/* Parte 2 — as perguntas da Elis */}
+      {/* Parte 2 — as perguntas (as 3 padrão já vêm preenchidas e editáveis) */}
       <div style={{ borderTop: `1px solid ${C.hair}`, paddingTop: 14 }}>
-        <EditorPerguntas perguntas={perguntas} setPerguntas={setPerguntas} rotulo="2 · Suas perguntas" />
+        <EditorPerguntas perguntas={perguntas} setPerguntas={setPerguntas} rotulo="2 · Perguntas do formulário" />
       </div>
 
       {erro && <div style={{ fontSize: 12, color: C.down }}>{erro}</div>}
@@ -6365,7 +6443,12 @@ function ResultadoEvento({ evento, nps, onFechar, onMudou, notificar }) {
   // perguntas da Elis (não-núcleo) para o editor
   const [perguntas, setPerguntas] = useState([]);
   useEffect(() => {
-    setPerguntas((perguntasHook.data ?? []).filter((p) => !p.nucleo).map((p) => ({ texto: p.texto, tipo: p.tipo, obrigatoria: p.obrigatoria, opcoes: p.opcoes ?? [] })));
+    // Carrega TODAS as perguntas (inclusive as padrão, agora editáveis). A de
+    // recomendação (núcleo escala_0_10) volta marcada como nps, com o tipo travado.
+    setPerguntas((perguntasHook.data ?? []).map((p) => ({
+      texto: p.texto, tipo: p.tipo, obrigatoria: p.obrigatoria, opcoes: p.opcoes ?? [],
+      nps: !!(p.nucleo && p.tipo === "escala_0_10"), editado: true,
+    })));
   }, [perguntasHook.data]);
   const [salvandoP, setSalvandoP] = useState(false);
 
@@ -6381,7 +6464,7 @@ function ResultadoEvento({ evento, nps, onFechar, onMudou, notificar }) {
     }
     setSalvandoP(true);
     try {
-      await salvarPerguntas(evento.id, perguntas.map((p) => ({ texto: p.texto.trim(), tipo: p.tipo, obrigatoria: !!p.obrigatoria, opcoes: p.tipo === "escolha_unica" ? p.opcoes.map((o) => o.trim()).filter(Boolean) : null })));
+      await salvarPerguntas(evento.id, perguntas.map((p) => ({ texto: p.texto.trim(), tipo: p.tipo, obrigatoria: !!p.obrigatoria, nps: !!p.nps, opcoes: p.tipo === "escolha_unica" ? p.opcoes.map((o) => o.trim()).filter(Boolean) : null })));
       notificar("Perguntas salvas.", "ok");
       onMudou?.();
     } catch (e) { notificar(e.message || "Não foi possível salvar as perguntas.", "erro"); }
