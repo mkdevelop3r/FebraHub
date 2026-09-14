@@ -77,6 +77,11 @@ MESES_PT = ["JANEIRO", "FEVEREIRO", "MARCO", "ABRIL", "MAIO", "JUNHO", "JULHO",
 # salesforce_api_sync.py.
 AGREGADO_ESPERADO = ("CDF2", "CONVERSAO BC", "CONVERSÃO BC")
 
+# Em setembro/2026 o corporativo recriou a mesma formula de Conversao como
+# CDF1. O numero interno muda com a ordem das formulas do relatorio; a escolha
+# pelo componente que agrupa mais unidades continua sendo a trava principal.
+AGREGADO_ESPERADO = AGREGADO_ESPERADO + ("CDF1",)
+
 
 def log(m):
     print(m, flush=True)
