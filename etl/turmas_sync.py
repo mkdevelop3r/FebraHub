@@ -118,6 +118,7 @@ por uma pessoa antes de escrever.
 """
 
 import argparse
+from collections import defaultdict
 import os
 import sys
 from datetime import datetime, timedelta, timezone
@@ -465,12 +466,17 @@ def main():
         ]
         sb.upsert("dim_turmas", linhas_criar, "turma_id")
     if atualizar:
-        linhas_atualizar = [
-            {**{k: v for k, v in u.items() if k != "_antes"},
-             "sincronizado_em": agora}
-            for u in atualizar
-        ]
-        sb.upsert("dim_turmas", linhas_atualizar, "turma_id")
+        # Updates sao deliberadamente parciais: cada turma leva somente as
+        # colunas que realmente mudaram. Portanto, mesmo entre updates, os
+        # objetos podem ter chaves diferentes. O PostgREST rejeita essa mistura
+        # com PGRST102; agrupar pelo formato mantem o PATCH sem enviar nulls.
+        grupos_atualizar = defaultdict(list)
+        for u in atualizar:
+            linha = {**{k: v for k, v in u.items() if k != "_antes"},
+                     "sincronizado_em": agora}
+            grupos_atualizar[tuple(sorted(linha))].append(linha)
+        for linhas_atualizar in grupos_atualizar.values():
+            sb.upsert("dim_turmas", linhas_atualizar, "turma_id")
     log("")
     log(f"GRAVADO: {len(criar)} criadas, {len(atualizar)} atualizadas.")
 
