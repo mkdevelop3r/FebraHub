@@ -5985,15 +5985,29 @@ const TIPOS_PERGUNTA = [
   { k: "sim_nao", r: "Sim / Não" }, { k: "escolha_unica", r: "Escolha única" },
   { k: "texto_livre", r: "Texto livre" },
 ];
-const PERGUNTAS_NUCLEO = [
-  "De 0 a 10, quanto você recomendaria esta palestra a um colega?",
-  "O que você mudaria nesta palestra?",
-  "Qual tema você gostaria de ver numa próxima palestra?",
-];
+// As 3 perguntas de núcleo. Quem as INSERE é o banco (criar_evento); aqui é só
+// o preview no editor, então o texto tem que bater com public.criar_evento
+// (db/199). A redação acompanha o TIPO do evento — não fica "palestra" fixo num
+// curso/workshop/mentoria — com a concordância de gênero certa.
+const NUCLEO_ALVO = {
+  palestra: { este: "esta palestra", neste: "nesta palestra", prox: "numa próxima palestra" },
+  workshop: { este: "este workshop", neste: "neste workshop", prox: "num próximo workshop" },
+  mentoria: { este: "esta mentoria", neste: "nesta mentoria", prox: "numa próxima mentoria" },
+  curso:    { este: "este curso",    neste: "neste curso",    prox: "num próximo curso" },
+};
+const perguntasNucleo = (tipo) => {
+  const a = NUCLEO_ALVO[tipo] ?? { este: "este evento", neste: "neste evento", prox: "num próximo evento" };
+  return [
+    `De 0 a 10, quanto você recomendaria ${a.este} a um colega?`,
+    `O que você mudaria ${a.neste}?`,
+    `Qual tema você gostaria de ver ${a.prox}?`,
+  ];
+};
 const LIMITE_PERGUNTAS = 7; // acima disso, avisa (não bloqueia)
 
-function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTravado = null, rotulo = "Perguntas" }) {
-  const total = perguntas.length + PERGUNTAS_NUCLEO.length;
+function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTravado = null, rotulo = "Perguntas", tipo = "palestra" }) {
+  const nucleo = perguntasNucleo(tipo);
+  const total = perguntas.length + nucleo.length;
   const setP = (i, campo, val) => setPerguntas((ps) => ps.map((p, j) => (j === i ? { ...p, [campo]: val } : p)));
   const addPergunta = () => setPerguntas((ps) => [...ps, { texto: "", tipo: "escala_1_5", obrigatoria: true, opcoes: ["", ""] }]);
   const removePergunta = (i) => setPerguntas((ps) => ps.filter((_, j) => j !== i));
@@ -6072,7 +6086,7 @@ function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTrava
       <div style={{ background: "rgba(255,255,255,.02)", border: `1px dashed ${C.cardLine}`, borderRadius: 10, padding: "11px 13px", marginTop: 2 }}>
         <div style={{ fontSize: 10.5, fontWeight: 700, color: C.muted, marginBottom: 7 }}>Perguntas de núcleo — fecham todo formulário, iguais em todo evento</div>
         <ol style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 5 }}>
-          {PERGUNTAS_NUCLEO.map((t, i) => (<li key={i} style={{ fontSize: 12, color: C.faint, lineHeight: 1.4 }}>{t}</li>))}
+          {nucleo.map((t, i) => (<li key={i} style={{ fontSize: 12, color: C.faint, lineHeight: 1.4 }}>{t}</li>))}
         </ol>
       </div>
     </div>
@@ -6224,7 +6238,7 @@ function FormEvento({ meuId, onFechar, onSalvo, notificar }) {
 
       {/* Parte 2 — as perguntas da Elis */}
       <div style={{ borderTop: `1px solid ${C.hair}`, paddingTop: 14 }}>
-        <EditorPerguntas perguntas={perguntas} setPerguntas={setPerguntas} rotulo="2 · Suas perguntas" />
+        <EditorPerguntas perguntas={perguntas} setPerguntas={setPerguntas} rotulo="2 · Suas perguntas" tipo={tipo} />
       </div>
 
       {erro && <div style={{ fontSize: 12, color: C.down }}>{erro}</div>}
@@ -6470,7 +6484,7 @@ function ResultadoEvento({ evento, nps, onFechar, onMudou, notificar }) {
 
         {/* Perguntas do formulário — editor (travado quando já houve resposta) */}
         <div style={{ borderTop: `1px solid ${C.hair}`, paddingTop: 14 }}>
-          <EditorPerguntas perguntas={perguntas} setPerguntas={setPerguntas} travado={travado} rotulo="Perguntas do formulário" />
+          <EditorPerguntas perguntas={perguntas} setPerguntas={setPerguntas} travado={travado} rotulo="Perguntas do formulário" tipo={evento.tipo} />
           {!travado && (
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
               <BotaoSalvar onClick={salvarPergs} salvando={salvandoP}>Salvar perguntas</BotaoSalvar>
