@@ -8266,15 +8266,10 @@ function CentralPresenca() {
   };
   const todas = useMemo(() => unirComNovos(coberturaAntiga.data), [coberturaAntiga.data, credenciamento.data, datasPorTurma]);
   const mensuraveisLinhas = useMemo(() => unirComNovos(mensuraveisAntigas.data, true), [mensuraveisAntigas.data, credenciamento.data, datasPorTurma]);
-  const anoAtual = String(new Date().getFullYear());
-  const somenteAnoAtual = (linhas) => linhas.filter((r) =>
-    String(r.data_inicio ?? "").startsWith(`${anoAtual}-`));
-  const todasDoAno = useMemo(() => somenteAnoAtual(todas), [todas, anoAtual]);
-  const mensuraveisDoAno = useMemo(() => somenteAnoAtual(mensuraveisLinhas), [mensuraveisLinhas, anoAtual]);
-  const semRegistro = useMemo(() => todasDoAno.filter((r) => !Number(r.compareceram ?? 0)), [todasDoAno]);
-  const comRegistro = useMemo(() => todasDoAno.filter((r) => Number(r.compareceram ?? 0) > 0), [todasDoAno]);
-  const mensuraveis = { data: mensuraveisDoAno, isLoading: mensuraveisAntigas.isLoading || credenciamento.isLoading || calendario.isLoading, error: mensuraveisAntigas.error || credenciamento.error || calendario.error };
-  const cobertura = { data: todasDoAno, isLoading: coberturaAntiga.isLoading || credenciamento.isLoading || calendario.isLoading, error: coberturaAntiga.error || credenciamento.error || calendario.error };
+  const semRegistro = useMemo(() => todas.filter((r) => !Number(r.compareceram ?? 0)), [todas]);
+  const comRegistro = useMemo(() => todas.filter((r) => Number(r.compareceram ?? 0) > 0), [todas]);
+  const mensuraveis = { data: mensuraveisLinhas, isLoading: mensuraveisAntigas.isLoading || credenciamento.isLoading || calendario.isLoading, error: mensuraveisAntigas.error || credenciamento.error || calendario.error };
+  const cobertura = { data: todas, isLoading: coberturaAntiga.isLoading || credenciamento.isLoading || calendario.isLoading, error: coberturaAntiga.error || credenciamento.error || calendario.error };
   const ultimaCarga = (credenciamento.data ?? []).reduce((max, r) => String(r.sincronizado_em ?? "") > max ? String(r.sincronizado_em) : max, "");
   const saude = {
     data: ultimaCarga ? [{
@@ -8416,9 +8411,6 @@ function LinhaTurmaPresenca({ r, ultima, comCurso }) {
      tela diz isso na própria linha, em vez de deixar o número grande falar
      sozinho. Sem registro nenhum, não existe ausência a mostrar. */
   const semRegistro = presentes === 0 && cob === 0;
-  const hoje = isoDia(new Date());
-  const fim = r.data_fim || r.data_inicio;
-  const credenciamentoFinalizado = Boolean(fim && String(fim) < hoje);
   const corCob = semRegistro ? C.dim : cob >= 70 ? C.up : cob >= 40 ? C.warn : C.down;
 
   return (
@@ -8457,7 +8449,7 @@ function LinhaTurmaPresenca({ r, ultima, comCurso }) {
         <b style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: corCob }}>{semRegistro ? "0" : Math.round(cob)}%</b>
         {!semRegistro && cob < 60 && (
           <div style={{ fontSize: 9.5, color: C.warn, lineHeight: 1.2 }}>
-            {credenciamentoFinalizado || !fim ? "cobertura abaixo de 60%" : "credenciamento em andamento"}
+            cobertura abaixo de 60%
           </div>
         )}
       </span>
