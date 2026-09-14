@@ -8232,7 +8232,17 @@ function CentralPresenca() {
      atualizava chaves conhecidas. A uniao abaixo preserva o historico antigo
      e acrescenta toda turma que exista somente na fonte oficial. */
   const unirComNovos = (antigas, soMensuraveis = false) => {
-    const base = (antigas ?? []).map(sobrepor);
+    // A fonte historica nem sempre traz datas. Complete toda linha pelo
+    // calendario canonico antes de decidir se a turma pertence ao ano atual.
+    const base = (antigas ?? []).map((r) => {
+      const atualizada = sobrepor(r);
+      const datas = datasPorTurma.get(chaveTurma(atualizada.turma));
+      return {
+        ...atualizada,
+        data_inicio: atualizada.data_inicio || datas?.data_inicio,
+        data_fim: atualizada.data_fim || datas?.data_fim,
+      };
+    });
     const chaves = new Set(base.map((r) => chaveTurma(r.turma)));
     for (const novo of credenciamento.data ?? []) {
       if (chaves.has(chaveTurma(novo.turma))) continue;
@@ -8256,10 +8266,15 @@ function CentralPresenca() {
   };
   const todas = useMemo(() => unirComNovos(coberturaAntiga.data), [coberturaAntiga.data, credenciamento.data, datasPorTurma]);
   const mensuraveisLinhas = useMemo(() => unirComNovos(mensuraveisAntigas.data, true), [mensuraveisAntigas.data, credenciamento.data, datasPorTurma]);
-  const semRegistro = useMemo(() => todas.filter((r) => !Number(r.compareceram ?? 0)), [todas]);
-  const comRegistro = useMemo(() => todas.filter((r) => Number(r.compareceram ?? 0) > 0), [todas]);
-  const mensuraveis = { data: mensuraveisLinhas, isLoading: mensuraveisAntigas.isLoading || credenciamento.isLoading || calendario.isLoading, error: mensuraveisAntigas.error || credenciamento.error || calendario.error };
-  const cobertura = { data: todas, isLoading: coberturaAntiga.isLoading || credenciamento.isLoading || calendario.isLoading, error: coberturaAntiga.error || credenciamento.error || calendario.error };
+  const anoAtual = String(new Date().getFullYear());
+  const somenteAnoAtual = (linhas) => linhas.filter((r) =>
+    String(r.data_inicio ?? "").startsWith(`${anoAtual}-`));
+  const todasDoAno = useMemo(() => somenteAnoAtual(todas), [todas, anoAtual]);
+  const mensuraveisDoAno = useMemo(() => somenteAnoAtual(mensuraveisLinhas), [mensuraveisLinhas, anoAtual]);
+  const semRegistro = useMemo(() => todasDoAno.filter((r) => !Number(r.compareceram ?? 0)), [todasDoAno]);
+  const comRegistro = useMemo(() => todasDoAno.filter((r) => Number(r.compareceram ?? 0) > 0), [todasDoAno]);
+  const mensuraveis = { data: mensuraveisDoAno, isLoading: mensuraveisAntigas.isLoading || credenciamento.isLoading || calendario.isLoading, error: mensuraveisAntigas.error || credenciamento.error || calendario.error };
+  const cobertura = { data: todasDoAno, isLoading: coberturaAntiga.isLoading || credenciamento.isLoading || calendario.isLoading, error: coberturaAntiga.error || credenciamento.error || calendario.error };
   const ultimaCarga = (credenciamento.data ?? []).reduce((max, r) => String(r.sincronizado_em ?? "") > max ? String(r.sincronizado_em) : max, "");
   const saude = {
     data: ultimaCarga ? [{
