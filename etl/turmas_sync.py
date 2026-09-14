@@ -472,8 +472,15 @@ def main():
         # com PGRST102; agrupar pelo formato mantem o PATCH sem enviar nulls.
         grupos_atualizar = defaultdict(list)
         for u in atualizar:
+            antes = u["_antes"]
             linha = {**{k: v for k, v in u.items() if k != "_antes"},
                      "sincronizado_em": agora}
+            # Embora haja conflito por turma_id, o PostgreSQL valida NOT NULL
+            # antes de resolver o upsert. Curso e data_inicio precisam viajar
+            # inclusive quando nao mudaram; usamos o valor atual, sem inventar
+            # uma mudanca e sem encostar nas colunas locais.
+            linha.setdefault("curso", antes["curso"])
+            linha.setdefault("data_inicio", antes["data_inicio"])
             grupos_atualizar[tuple(sorted(linha))].append(linha)
         for linhas_atualizar in grupos_atualizar.values():
             sb.upsert("dim_turmas", linhas_atualizar, "turma_id")
