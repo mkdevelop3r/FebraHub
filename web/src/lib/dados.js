@@ -679,6 +679,56 @@ export async function salvarPerguntas(eventoId, perguntas) {
   return data;
 }
 
+/* ============ CARTEIRA DE LEADS — TROCA DE CONSULTOR ============
+   A consultora pede pra transferir um lead que caiu na carteira errada. Tudo
+   passa pelo banco: a busca por RPC (fato_crm_lead tem RLS de marketing, que a
+   consultora não tem), o pedido por RPC (que decide o tipo), e a execução no
+   CRM por Edge Function (o token vive lá, nunca no front). */
+
+// As 5 consultoras ativas — seletor de destino e de-para crm_user_id/perfil_id -> nome.
+export const useConsultores = () =>
+  useView("consultor_comercial", { seletor: "perfil_id,crm_user_id,nome,ativo", ordem: ["nome"] });
+
+// Histórico de solicitações. A RLS entrega o recorte certo: a consultora vê só
+// os dela; quem aprova vê todas. Ordeno desc no front (a view vem asc).
+export const useTrocaSolicitacoes = () =>
+  useView("troca_consultor_solicitacao", { ordem: ["criado_em"], staleTime: 20 * 1000, retry: 1 });
+
+// Busca de lead pelo RPC (nunca a tabela direto). Nome (3+) ou telefone (4+).
+export async function buscarLeadTroca(termo) {
+  const { data, error } = await supabase.rpc("buscar_lead_troca", { p_termo: termo });
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+// Registra o pedido. O banco decide o tipo (passar_adiante x puxar_para_si) e
+// devolve a `mensagem` que a tela mostra pra usuária.
+export async function solicitarTroca(campos) {
+  const { data, error } = await supabase.rpc("solicitar_troca_consultor", campos);
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+// Gestão aprova/recusa: update direto (RLS UPDATE = pode_aprovar_troca). O
+// aprovador é o próprio usuário logado (perfil.id === auth.uid()).
+export async function decidirTroca(id, aprovar, aprovadorId) {
+  const { error } = await supabase
+    .from("troca_consultor_solicitacao")
+    .update({
+      status: aprovar ? "aprovada" : "recusada",
+      aprovado_por: aprovadorId,
+      aprovado_em: new Date().toISOString(),
+    })
+    .eq("id", id);
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+}
+
+// Acelera a execução no CRM (a Edge Function também roda por cron). Best-effort:
+// o pedido já está registrado, então falha aqui NÃO trava a tela.
+export async function dispararExecucaoTroca() {
+  try { await supabase.functions.invoke("troca-consultor"); } catch { /* cron pega depois */ }
+}
+
 /* ============ AUTOMAÇÃO — DRAWER DA TURMA (bloco 2) ============
    O drawer edita dim_turmas por turma_id. Escrita gated pela RLS
    pode_ver('pedagogico'); sem policy o update volta 42501/403 e o form mostra
