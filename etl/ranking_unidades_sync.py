@@ -82,6 +82,13 @@ AGREGADO_ESPERADO = ("CDF2", "CONVERSAO BC", "CONVERSÃO BC")
 # pelo componente que agrupa mais unidades continua sendo a trava principal.
 AGREGADO_ESPERADO = AGREGADO_ESPERADO + ("CDF1",)
 
+# No dashboard de setembro/2026 o corporativo encurtou o rotulo visivel da
+# mesma formula para "Soma de Conversao". O rotulo sozinho nao identifica o
+# ranking (varios cards usam Conversao), portanto ele so habilita candidatos;
+# a trava abaixo ainda exige o agrupamento com pelo menos cinco unidades e
+# escolhe o componente com mais unidades.
+AGREGADO_ESPERADO = AGREGADO_ESPERADO + ("CONVERSAO",)
+
 
 def log(m):
     print(m, flush=True)
@@ -207,7 +214,7 @@ def componente_do_ranking(dashboard):
     # Sem pino: acha pelo CONTEUDO. O id do componente muda junto com o
     # dashboard todo mes, entao procurar por id fixo teria a mesma doenca que
     # procurar o dashboard por id fixo. A assinatura do painel certo e somar
-    # Conversao BC (CDF2) agrupando por unidade.
+    # Conversao/Conversao BC (CDF1 ou CDF2) agrupando por unidade.
     candidatos = []
     for c in componentes:
         resultado = c.get("reportResult") or {}
@@ -228,10 +235,10 @@ def componente_do_ranking(dashboard):
         resumo = [f"{c.get('componentId')}={rotulo_do_agregado(c.get('reportResult') or {})!r}"
                   for c in componentes]
         raise RuntimeError(
-            "Nenhum componente deste dashboard soma Conversao BC agrupado por "
+            "Nenhum componente deste dashboard soma Conversao agrupado por "
             f"unidade. Componentes: {resumo}")
 
-    # O de mais unidades e o ranking; os outros painels com CDF2 sao recortes.
+    # O de mais unidades e o ranking; os outros paineis de Conversao sao recortes.
     candidatos.sort(key=lambda t: t[0], reverse=True)
     n_unidades, escolhido, rotulo = candidatos[0]
     log(f"  componente do ranking: {escolhido.get('componentId')} "
