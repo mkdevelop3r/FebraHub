@@ -127,6 +127,16 @@ def achar_dashboard(sf, mes):
         return achados[0][0]
 
     if len(achados) > 1:
+        # O Salesforce oferece "Salvar como", e uma copia conserva o mesmo
+        # mes e o mesmo padrao do titulo. Quando ha exatamente um original,
+        # ele e a escolha segura; continuar exigindo pin faria o agendamento
+        # quebrar todo mes em que alguem duplicasse o painel para testar.
+        oficiais = [item for item in achados
+                    if not sem_acento(item[1] or "").startswith("COPIA DE ")]
+        if len(oficiais) == 1:
+            log(f"  dashboard oficial de {mes:%m/%Y}: {oficiais[0][1]!r} "
+                f"({oficiais[0][0]}); {len(achados) - 1} copia(s) ignorada(s)")
+            return oficiais[0][0]
         raise RuntimeError(
             f"Mais de um dashboard casa com {mes:%m/%Y}: {achados}. "
             f"Pine o certo com RANKING_DASHBOARD_ID.")
