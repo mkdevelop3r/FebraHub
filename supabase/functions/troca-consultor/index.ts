@@ -1,26 +1,23 @@
 // ============================================================
 // Edge Function: troca-consultor
 //
-// Executa no Black CRM as trocas de dono de lead já aprovadas no
-// FebraHub. O TOKEN DO CRM vive aqui, como secret — nunca no navegador.
-// Se o token ficasse no front, qualquer pessoa abriria o código-fonte e
-// teria acesso de escrita a toda a base de contatos.
+// Executa no Black CRM as trocas de dono de lead já aprovadas no FebraHub.
+// O TOKEN DO CRM vive aqui, como secret — nunca no navegador.
+//
+// verify_jwt = FALSE (deploy com --no-verify-jwt): é um executor de fila. Só
+// processa status='aprovada' e não devolve dado sensível; quem PODE trocar já
+// foi resolvido pelas policies e pela solicitar_troca_consultor(). Precisa ser
+// false para: (a) o gatilho do banco (pg_net) chamar sem segredo — ver db/201;
+// (b) o invoke do front não ser barrado no preflight OPTIONS pelo gateway.
 //
 // COMO FUNCIONA
 //   1. lê as solicitações com status 'aprovada' e ainda não executadas
 //   2. para cada uma, chama PUT /contacts/{id} no CRM trocando assignedTo
 //   3. grava o resultado de volta (executada / erro)
 //
-// A função NÃO decide quem pode trocar o quê — isso já foi resolvido
-// pelas policies e pela solicitar_troca_consultor(). Aqui só executa o
-// que foi aprovado.
-//
 // DEPLOY
-//   supabase functions deploy troca-consultor
-//   supabase secrets set CRM_TOKEN=...  CRM_LOCATION_ID=JedXhdJDbwOl6lvHCCfj
-//
-// Pode ser chamada por cron (a cada 2 min) ou pelo próprio front logo
-// após registrar a solicitação.
+//   supabase functions deploy troca-consultor --no-verify-jwt
+//   supabase secrets set CRM_TOKEN=...   (nome EXATO CRM_TOKEN)
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
