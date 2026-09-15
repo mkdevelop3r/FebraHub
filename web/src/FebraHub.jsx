@@ -48,6 +48,8 @@ import {
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
   useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
+  useConsultores, useTrocaSolicitacoes, buscarLeadTroca, solicitarTroca,
+  decidirTroca, dispararExecucaoTroca,
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
   useEventosDesempenho,
@@ -128,6 +130,13 @@ const HUBS = [
      'geral' só pertence a admin. */
   { key: "metas", setor: "geral", nome: "Metas", Icone: Target,
     desc: "Meta de cada setor, mês a mês" },
+  /* Hub próprio (não é do Comercial nem da Auditoria): gestão de carteira de
+     leads. Visível a `consultor` (as 5 consultoras, que só têm este hub) e à
+     gestão (`comercial`/`geral`/admin). A consultora não passa por aqui na
+     sidebar — cai num layout próprio (ver App/CarteiraLeadsSolo). */
+  { key: "carteira-leads", setores: ["consultor", "comercial", "geral"],
+    nome: "Carteira de Leads", Icone: Repeat,
+    desc: "Troca de dono de lead entre consultoras" },
 ];
 
 const agrupar = (linhas, chave, valor) => {
@@ -10114,6 +10123,345 @@ function TabelaPesos({ linhas, rotuloCanal }) {
   );
 }
 
+/* ============ CARTEIRA DE LEADS — TROCA DE CONSULTOR ============
+   A consultora pede pra transferir um lead que caiu na carteira errada; a
+   gestão aprova os pedidos de "puxar para si". Toda a escrita no CRM é da Edge
+   Function; o front só registra o pedido e (best-effort) chama pra acelerar. */
+
+const setoresDe = (perfil) => (perfil.setores?.length ? perfil.setores : [perfil.setor].filter(Boolean));
+const podeAprovarTrocaFront = (perfil) => perfil.papel === "admin" || setoresDe(perfil).some((s) => s === "comercial" || s === "geral");
+const ehConsultorFront = (perfil) => setoresDe(perfil).includes("consultor");
+// Consultora "pura" (só o setor consultor): tem só este hub e cai direto nele.
+const soConsultorPuro = (perfil) => ehConsultorFront(perfil) && !podeAprovarTrocaFront(perfil);
+
+const rotuloCampo = { display: "block", fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6 };
+const botaoOuro = { display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 800, color: "#1A1305", background: `linear-gradient(90deg, ${C.goldTop}, ${C.goldBase})`, border: "none", borderRadius: 10, padding: "9px 16px", cursor: "pointer", fontFamily: SANS, whiteSpace: "nowrap" };
+
+const STATUS_TROCA = {
+  pendente:  { rotulo: "Pendente",  cor: C.warn },
+  aprovada:  { rotulo: "Aprovada",  cor: C.gold },
+  executada: { rotulo: "Executada", cor: C.up },
+  recusada:  { rotulo: "Recusada",  cor: C.muted },
+  erro:      { rotulo: "Erro",      cor: C.down },
+};
+function ChipStatusTroca({ status }) {
+  const s = STATUS_TROCA[status] ?? { rotulo: status ?? "—", cor: C.faint };
+  return (
+    <span style={{ fontSize: 10.5, fontWeight: 700, color: s.cor, background: `${s.cor}1A`, border: `1px solid ${s.cor}55`, borderRadius: 6, padding: "2px 8px", whiteSpace: "nowrap", flexShrink: 0 }}>
+      {s.rotulo}
+    </span>
+  );
+}
+
+const dataHoraTroca = (v) => (v ? new Date(v).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—");
+
+// Lista de solicitações (usada no "Meus pedidos" e no histórico da gestão).
+function ListaPedidosTroca({ linhas, nomePorCrm, nomePorPerfil = null, mostrarSolicitante = false }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      {linhas.map((s) => (
+        <div key={s.id} style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, padding: "11px 16px", borderBottom: `1px solid ${C.hair}` }}>
+          <div style={{ minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+              {s.lead_nome || "(sem nome)"} <span style={{ fontSize: 11.5, color: C.faint, fontWeight: 500 }}>· {s.lead_telefone || "sem telefone"}</span>
+            </div>
+            <div style={{ fontSize: 11.5, color: C.faint, marginTop: 2 }}>
+              {mostrarSolicitante && nomePorPerfil && <>por <b style={{ color: C.muted }}>{nomePorPerfil.get(s.solicitante_id) ?? "—"}</b> · </>}
+              {(nomePorCrm.get(s.dono_atual_crm_id) ?? "—")} → <b style={{ color: C.muted }}>{nomePorCrm.get(s.dono_novo_crm_id) ?? "—"}</b>
+              {" · "}{dataHoraTroca(s.criado_em)}
+            </div>
+            {s.motivo && <div style={{ fontSize: 11.5, color: C.faint, marginTop: 3, fontStyle: "italic" }}>“{s.motivo}”</div>}
+            {s.status === "erro" && s.erro_msg && <div style={{ fontSize: 11.5, color: C.down, marginTop: 3 }}>{s.erro_msg}</div>}
+          </div>
+          <ChipStatusTroca status={s.status} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// PAINEL — a consultora pede a troca.
+function PainelPedirTroca({ perfil, consultores, solicitacoes, notificar, onMudou }) {
+  const [termo, setTermo] = useState("");
+  const [buscando, setBuscando] = useState(false);
+  const [erroBusca, setErroBusca] = useState(null);
+  const [resultados, setResultados] = useState(null); // null = ainda não buscou
+  const [sel, setSel] = useState(null);
+  const [destino, setDestino] = useState("");
+  const [motivo, setMotivo] = useState("");
+  const [enviando, setEnviando] = useState(false);
+
+  const ativos = (consultores.data ?? []).filter((c) => c.ativo);
+  const nomePorCrm = useMemo(() => {
+    const m = new Map();
+    for (const c of consultores.data ?? []) m.set(c.crm_user_id, c.nome);
+    return m;
+  }, [consultores.data]);
+
+  const buscar = async () => {
+    setErroBusca(null); setSel(null);
+    if (termo.trim().length < 3) { setErroBusca("Digite ao menos 3 caracteres (nome) ou 4 dígitos (telefone)."); return; }
+    setBuscando(true);
+    try { setResultados(await buscarLeadTroca(termo.trim())); }
+    catch (e) { setErroBusca(e.message); setResultados(null); }
+    setBuscando(false);
+  };
+
+  const jaComDestino = !!sel && !!destino && destino === sel.dono_atual_crm_id;
+
+  const enviar = async () => {
+    if (!sel || !destino) return;
+    if (jaComDestino) { notificar("Esse lead já está com a consultora de destino.", "erro"); return; }
+    setEnviando(true);
+    try {
+      const res = await solicitarTroca({
+        p_contato_crm_id: sel.contato_id,
+        p_dono_novo: destino,
+        p_lead_nome: sel.nome,
+        p_lead_telefone: sel.telefone,
+        p_dono_atual: sel.dono_atual_crm_id,
+        p_oportunidade_id: sel.oportunidade_id,
+        p_motivo: motivo.trim() || null,
+      });
+      notificar(res?.mensagem ?? "Pedido registrado.", "ok");
+      dispararExecucaoTroca();               // acelera; o cron pega se falhar
+      setSel(null); setDestino(""); setMotivo(""); setTermo(""); setResultados(null);
+      onMudou?.();
+    } catch (e) { notificar(e.message, "erro"); }
+    setEnviando(false);
+  };
+
+  const meusPedidos = useMemo(() =>
+    [...(solicitacoes.data ?? [])]
+      .filter((s) => s.solicitante_id === perfil.id)
+      .sort((a, b) => String(b.criado_em).localeCompare(String(a.criado_em))),
+    [solicitacoes.data, perfil.id]);
+
+  return (
+    <>
+      <Bloco titulo="Pedir troca de um lead" sem>
+        <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
+          <div>
+            <label style={rotuloCampo}>1 · Encontre o lead — nome ou telefone</label>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <input value={termo} onChange={(e) => setTermo(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") buscar(); }}
+                placeholder="Ex.: Amanda  ·  ou 9 9999-9999" style={{ ...inputAv, flex: 1, minWidth: 180 }} />
+              <button onClick={buscar} disabled={buscando} style={botaoOuro}>
+                {buscando ? <Loader2 size={15} className="girar" /> : <Search size={15} />} Buscar
+              </button>
+            </div>
+            {erroBusca && <div style={{ fontSize: 12, color: C.down, marginTop: 6 }}>{erroBusca}</div>}
+          </div>
+
+          {resultados != null && (
+            resultados.length === 0
+              ? <div style={{ fontSize: 12.5, color: C.faint }}>Nenhum lead encontrado. Confira o nome ou tente pelo telefone.</div>
+              : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                  <div style={{ fontSize: 11, color: C.faint }}>Toque no lead certo — confira <b>telefone</b> e <b>dono atual</b>, há homônimos.</div>
+                  {resultados.map((r) => {
+                    const ativo = sel?.contato_id === r.contato_id;
+                    return (
+                      <button key={r.contato_id} onClick={() => { setSel(r); setDestino(""); }} style={{
+                        textAlign: "left", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+                        border: `1px solid ${ativo ? C.gold : C.hair}`, background: ativo ? `${C.gold}12` : "rgba(255,255,255,.02)",
+                        borderRadius: 10, padding: "9px 12px", cursor: "pointer", fontFamily: SANS,
+                      }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.nome || "(sem nome)"}</div>
+                          <div style={{ fontSize: 11.5, color: C.faint }}>{r.telefone || "sem telefone"} · dono: <b style={{ color: C.muted }}>{r.dono_atual_nome}</b></div>
+                        </div>
+                        {Number(r.oportunidades) > 1 && (
+                          <span style={{ fontSize: 10.5, fontWeight: 700, color: C.warn, background: `${C.warn}1A`, border: `1px solid ${C.warn}44`, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap", flexShrink: 0 }}>{numero(r.oportunidades)} oportunidades</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )
+          )}
+
+          {sel && (
+            <div style={{ borderTop: `1px solid ${C.hair}`, paddingTop: 14, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: 12.5, color: C.muted }}>
+                Transferir <b style={{ color: C.text }}>{sel.nome}</b> ({sel.telefone || "sem telefone"}) — hoje com <b style={{ color: C.text }}>{sel.dono_atual_nome}</b>.
+                {Number(sel.oportunidades) > 1 && <span style={{ color: C.warn }}> Muda o dono do contato — afeta as {numero(sel.oportunidades)} oportunidades dele.</span>}
+              </div>
+              <div>
+                <label style={rotuloCampo}>2 · Nova dona</label>
+                <select value={destino} onChange={(e) => setDestino(e.target.value)} style={{ ...inputAv, cursor: "pointer" }}>
+                  <option value="">— escolher consultora —</option>
+                  {ativos.map((c) => (<option key={c.crm_user_id} value={c.crm_user_id}>{c.nome}</option>))}
+                </select>
+                {jaComDestino && <div style={{ fontSize: 12, color: C.down, marginTop: 6 }}>Esse lead já está com essa consultora.</div>}
+              </div>
+              <div>
+                <label style={rotuloCampo}>Motivo (opcional, ajuda a gestão a aprovar)</label>
+                <textarea value={motivo} onChange={(e) => setMotivo(e.target.value)} rows={2}
+                  placeholder="Ex.: lead de CIS que caiu comigo, mas é da carteira dela." style={{ ...inputAv, resize: "vertical" }} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <button onClick={enviar} disabled={enviando || !destino || jaComDestino} style={{ ...botaoOuro, opacity: (!destino || jaComDestino) ? 0.5 : 1 }}>
+                  {enviando ? <Loader2 size={15} className="girar" /> : <Send size={15} />} Enviar pedido
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </Bloco>
+
+      <div style={{ marginTop: 18 }}>
+        <Bloco titulo="Meus pedidos" sem>
+          <Estado carregando={solicitacoes.isLoading} erro={solicitacoes.error} vazio={!meusPedidos.length}
+            vazioTitulo="Você ainda não pediu nenhuma troca" vazioDica="Busque um lead acima e envie o pedido.">
+            <ListaPedidosTroca linhas={meusPedidos} nomePorCrm={nomePorCrm} />
+          </Estado>
+        </Bloco>
+      </div>
+    </>
+  );
+}
+
+// PAINEL — a gestão aprova/recusa e vê o histórico completo.
+function PainelAprovacoes({ perfil, consultores, solicitacoes, notificar, onMudou }) {
+  const [agindo, setAgindo] = useState(null);
+  const nomePorCrm = useMemo(() => {
+    const m = new Map();
+    for (const c of consultores.data ?? []) m.set(c.crm_user_id, c.nome);
+    return m;
+  }, [consultores.data]);
+  const nomePorPerfil = useMemo(() => {
+    const m = new Map();
+    for (const c of consultores.data ?? []) if (c.perfil_id) m.set(c.perfil_id, c.nome);
+    return m;
+  }, [consultores.data]);
+
+  const pendentes = useMemo(() =>
+    [...(solicitacoes.data ?? [])].filter((s) => s.status === "pendente")
+      .sort((a, b) => String(a.criado_em).localeCompare(String(b.criado_em))),
+    [solicitacoes.data]);
+  const todos = useMemo(() =>
+    [...(solicitacoes.data ?? [])].sort((a, b) => String(b.criado_em).localeCompare(String(a.criado_em))),
+    [solicitacoes.data]);
+
+  const decidir = async (id, aprovar) => {
+    setAgindo(id);
+    try {
+      await decidirTroca(id, aprovar, perfil.id);
+      notificar(aprovar ? "Aprovada. Vai para execução no CRM." : "Pedido recusado.", aprovar ? "ok" : "info");
+      if (aprovar) dispararExecucaoTroca();
+      onMudou?.();
+    } catch (e) { notificar(semPermissao(e) ? "Você não tem permissão para aprovar." : e.message, "erro"); }
+    setAgindo(null);
+  };
+
+  return (
+    <>
+      <Bloco titulo="Fila de aprovação" canto={`${pendentes.length} pendente${pendentes.length === 1 ? "" : "s"}`} sem>
+        <Estado carregando={solicitacoes.isLoading} erro={solicitacoes.error} vazio={!pendentes.length}
+          vazioTitulo="Nada para aprovar" vazioDica="Pedidos de 'puxar para si' caem aqui, esperando você.">
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {pendentes.map((s) => (
+              <div key={s.id} style={{ padding: "12px 16px", borderBottom: `1px solid ${C.hair}`, display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{s.lead_nome || "(sem nome)"} <span style={{ fontSize: 11.5, color: C.faint, fontWeight: 500 }}>· {s.lead_telefone || "sem telefone"}</span></div>
+                  <div style={{ fontSize: 11.5, color: C.faint, marginTop: 2 }}>
+                    <b style={{ color: C.muted }}>{nomePorPerfil.get(s.solicitante_id) ?? "—"}</b> quer puxar de {nomePorCrm.get(s.dono_atual_crm_id) ?? "—"} · {dataHoraTroca(s.criado_em)}
+                  </div>
+                  {s.motivo && <div style={{ fontSize: 11.5, color: C.faint, marginTop: 3, fontStyle: "italic" }}>“{s.motivo}”</div>}
+                </div>
+                <div style={{ display: "flex", gap: 8, flexShrink: 0, alignItems: "flex-start" }}>
+                  <button onClick={() => decidir(s.id, true)} disabled={agindo === s.id} style={botaoOuro}>
+                    {agindo === s.id ? <Loader2 size={14} className="girar" /> : <Check size={14} />} Aprovar
+                  </button>
+                  <button onClick={() => decidir(s.id, false)} disabled={agindo === s.id} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12.5, fontWeight: 700, color: C.muted, background: "transparent", border: `1px solid ${C.cardLine}`, borderRadius: 10, padding: "8px 14px", cursor: "pointer", fontFamily: SANS }}>
+                    <X size={14} /> Recusar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Estado>
+      </Bloco>
+
+      <div style={{ marginTop: 18 }}>
+        <Bloco titulo="Histórico completo" sem>
+          <Estado carregando={solicitacoes.isLoading} erro={solicitacoes.error} vazio={!todos.length}
+            vazioTitulo="Sem pedidos ainda">
+            <ListaPedidosTroca linhas={todos} nomePorCrm={nomePorCrm} nomePorPerfil={nomePorPerfil} mostrarSolicitante />
+          </Estado>
+        </Bloco>
+      </div>
+    </>
+  );
+}
+
+// O hub em si: decide as abas conforme quem entra (consultora / gestão / os dois).
+function HubCarteiraLeads({ perfil }) {
+  const consultores = useConsultores();
+  const solicitacoes = useTrocaSolicitacoes();
+  const [toast, setToast] = useState(null);
+  const notificar = (msg, tipo) => setToast({ msg, tipo });
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(null), toast.tipo === "erro" ? 8000 : 6000);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  const ehConsultor = ehConsultorFront(perfil);
+  const podeAprovar = podeAprovarTrocaFront(perfil);
+  const abas = [
+    ehConsultor && { key: "pedir", label: "Pedir troca" },
+    podeAprovar && { key: "aprovar", label: "Aprovações" },
+  ].filter(Boolean);
+  const [aba, setAba] = useState(abas[0]?.key ?? "pedir");
+  const recarregar = () => solicitacoes.refetch();
+
+  return (
+    <>
+      {abas.length > 1 && (
+        <div style={{ marginBottom: 16 }}>
+          <Segmentado valor={aba} onChange={setAba} opcoes={abas} />
+        </div>
+      )}
+      {aba === "pedir" && ehConsultor && (
+        <PainelPedirTroca perfil={perfil} consultores={consultores} solicitacoes={solicitacoes} notificar={notificar} onMudou={recarregar} />
+      )}
+      {aba === "aprovar" && podeAprovar && (
+        <PainelAprovacoes perfil={perfil} consultores={consultores} solicitacoes={solicitacoes} notificar={notificar} onMudou={recarregar} />
+      )}
+      <Toast toast={toast} onFechar={() => setToast(null)} />
+    </>
+  );
+}
+
+// Layout dedicado da consultora: sem sidebar de outros setores, só o hub.
+function CarteiraLeadsSolo({ perfil }) {
+  const primeiroNome = (perfil.nome ?? "").split(/[\s.]+/)[0];
+  return (
+    <div style={{ minHeight: "100vh", color: C.text, fontFamily: SANS, background: `radial-gradient(1200px 600px at 78% -10%, ${C.gold}12, transparent 60%), ${C.void}` }}>
+      <style>{`* { box-sizing: border-box; } @keyframes girar { to { transform: rotate(360deg); } } .girar { animation: girar 1s linear infinite; }`}</style>
+      <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "14px 20px", borderBottom: `1px solid rgba(255,255,255,.07)`, position: "sticky", top: 0, background: C.panel, backdropFilter: "blur(8px)", zIndex: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 11 }}>
+          <img src="/logo-febracis.webp" alt="" width={30} height={30} />
+          <div style={{ lineHeight: 1.15 }}>
+            <div style={{ fontWeight: 800, fontSize: 14 }}>Carteira de Leads</div>
+            <div style={{ fontSize: 10.5, color: C.faint, fontWeight: 600 }}>Troca de dono de lead</div>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 12.5, color: C.muted }}>{primeiroNome}</span>
+          <button onClick={sair} title="Sair" aria-label="Sair" style={{ background: "none", border: "none", cursor: "pointer", color: C.faint, display: "flex" }}><Power size={16} /></button>
+        </div>
+      </header>
+      <main style={{ padding: "22px 18px 60px", maxWidth: 760, margin: "0 auto" }}>
+        <HubCarteiraLeads perfil={perfil} />
+      </main>
+    </div>
+  );
+}
+
 function Shell({ perfil }) {
   // União de setores: o setor do perfil + os de perfil_setores (já vêm em
   // perfil.setores). Admin/geral seguem vendo tudo, agora também se "geral"
@@ -10210,6 +10558,7 @@ function Shell({ perfil }) {
       case "central-eventos": return <CentralEventosLegado />;
       case "eventos":    return <HubEventos />;
       case "loja":       return <HubLoja />;
+      case "carteira-leads": return <HubCarteiraLeads perfil={perfil} />;
       case "estoque":    return <SemFonte hub={hub} />;
       default:           return null;
     }
@@ -10527,6 +10876,10 @@ function App() {
         </button>
       </div>
     );
+  else if (soConsultorPuro(perfil.data))
+    // A consultora tem só o hub Carteira de Leads: cai direto nele, num layout
+    // próprio, sem a sidebar dos outros setores. Ver o prompt.
+    conteudo = <CarteiraLeadsSolo perfil={perfil.data} />;
   else
     conteudo = <Shell perfil={perfil.data} />;
 
