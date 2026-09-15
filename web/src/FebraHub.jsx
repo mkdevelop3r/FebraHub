@@ -13,7 +13,7 @@ import {
   Users, Target, Construction, Percent, Filter, ChevronUp, GripVertical,
   Boxes, PackageX, Repeat, UserCheck, BookOpen, ShieldCheck,
   Check, Pencil, Star, Plus, PhoneCall, Send, Link2, ClipboardList, ClipboardCheck,
-  Search, MoreHorizontal, Gauge,
+  Search, MoreHorizontal, Gauge, Download,
 } from "lucide-react";
 import {
   useSessao, usePerfil, entrar, sair,
@@ -51,6 +51,7 @@ import {
   useConsultores, useTrocaSolicitacoes, buscarLeadTroca, solicitarTroca,
   decidirTroca, dispararExecucaoTroca,
   useEventos, useEventoNps, useEventoNotas, useEventoTextos, useEventoPerguntas, definirStatusCarteira,
+  useEventoRespostasTotal, useEventoRespostaDetalhe, adicionarPerguntasEvento,
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
   useEventosDesempenho,
   useAuditoriaKpi, useAuditoriaGaps, useAuditoriaConsultora, useConformidadeVenda,
@@ -6035,7 +6036,7 @@ const atualizarPadraoParaTipo = (ps, novoTipo) => {
 };
 const LIMITE_PERGUNTAS = 7; // acima disso, avisa (não bloqueia)
 
-function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTravado = null, rotulo = "Perguntas" }) {
+function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTravado = null, rotulo = "Perguntas", semAvisoNps = false }) {
   const total = perguntas.length;
   // Editar o texto marca a pergunta como "mexida" — deixa de acompanhar o tipo.
   const setP = (i, campo, val) => setPerguntas((ps) => ps.map((p, j) => (j === i ? { ...p, [campo]: val, ...(campo === "texto" ? { editado: true } : {}) } : p)));
@@ -6153,7 +6154,7 @@ function EditorPerguntas({ perguntas, setPerguntas, travado = false, motivoTrava
         <div style={{ fontSize: 12, color: C.faint }}>Este evento não teve perguntas.</div>
       )}
 
-      {!travado && !perguntas.some((p) => p.nps) && (
+      {!travado && !semAvisoNps && !perguntas.some((p) => p.nps) && (
         // Aviso honesto: sem a de recomendação, este evento não terá NPS.
         <div style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 11.5, color: C.faint, lineHeight: 1.45 }}>
           <Star size={13} style={{ flexShrink: 0, marginTop: 1, color: C.muted }} />
@@ -6349,7 +6350,7 @@ const rotuloStatusCarteira = (s) => STATUS_CARTEIRA.find((x) => x.k === s)?.r ??
 const corStatusCarteira = (s) => (s === "aposentada" ? C.down : s === "em_observacao" ? C.warn : C.up);
 
 // Lista dos eventos do setor (RLS filtra). Estado do link + contagem de resposta.
-function ListaEventos({ eventos, npsPorEvento, onAbrir }) {
+function ListaEventos({ eventos, npsPorEvento, respPorEvento, onAbrir }) {
   const th = (txt, alin) => <th style={{ textAlign: alin, padding: "8px 12px", fontSize: 9.5, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, whiteSpace: "nowrap" }}>{txt}</th>;
   return (
     <div style={{ overflowX: "auto" }}>
@@ -6360,7 +6361,8 @@ function ListaEventos({ eventos, npsPorEvento, onAbrir }) {
         <tbody>
           {eventos.map((e) => {
             const est = estadoLink(e);
-            const resp = npsPorEvento.get(e.id)?.respostas;
+            // Contagem real (envios); o NPS vira só fallback pra dados antigos.
+            const resp = respPorEvento?.get(e.id) ?? npsPorEvento.get(e.id)?.respostas;
             return (
               <tr key={e.id} onClick={() => onAbrir(e)} style={{ borderBottom: `1px solid ${C.hair}`, cursor: "pointer" }}>
                 <td style={{ padding: "9px 12px" }}>
@@ -6427,26 +6429,66 @@ function TituloResultado({ children }) {
    com 12 respostas, um detrator move o índice 8 pontos. Sem gráfico: número e
    contagem bastam. Aqui também está o ponto de entrada que abre um evento já
    respondido — o editor de perguntas vem travado. */
-function ResultadoEvento({ evento, nps, onFechar, onMudou, notificar }) {
+function ResultadoEvento({ evento, nps, respTotal = 0, onFechar, onMudou, notificar }) {
   const notas = useEventoNotas();
-  const textos = useEventoTextos();
   const perguntasHook = useEventoPerguntas(evento.id);
+  const detalheHook = useEventoRespostaDetalhe();
   const carteira = useCarteira();
 
   const est = estadoLink(evento);
   const link = `${window.location.origin}/e/${evento.token}`;
   const travado = !!evento.travado_em;
-  const resp = nps ? Number(nps.respostas ?? 0) : 0;
+  // Contagem real de respondentes (envios); NPS é só fallback pra dados antigos.
+  const resp = Number(respTotal) || (nps ? Number(nps.respostas ?? 0) : 0);
+  const temNps = useMemo(() => (perguntasHook.data ?? []).some((p) => p.nucleo && p.tipo === "escala_0_10"), [perguntasHook.data]);
+
+  // Perguntas em ordem para as colunas da planilha (mesma ordem do formulário).
+  const perguntasOrdenadas = useMemo(
+    () => [...(perguntasHook.data ?? [])].sort((a, b) => Number(a.ordem ?? 0) - Number(b.ordem ?? 0)),
+    [perguntasHook.data]);
+  // Uma linha por envio, com o valor de cada pergunta (pivot para a planilha).
+  const respostasPlanilha = useMemo(() => {
+    const porResp = new Map();
+    for (const d of (detalheHook.data ?? []).filter((d) => Number(d.evento_id) === evento.id)) {
+      if (!porResp.has(d.resposta_id)) porResp.set(d.resposta_id, { enviado_em: d.enviado_em, valores: new Map() });
+      porResp.get(d.resposta_id).valores.set(Number(d.pergunta_id), d.valor_texto ?? (d.valor_num != null ? String(d.valor_num) : ""));
+    }
+    return [...porResp.values()].sort((a, b) => String(a.enviado_em).localeCompare(String(b.enviado_em)));
+  }, [detalheHook.data, evento.id]);
+
+  const baixarPlanilha = () => {
+    if (!respostasPlanilha.length) { notificar("Ainda não há respostas para baixar.", "erro"); return; }
+    const cabecalho = ["Nº", "Enviado em", ...perguntasOrdenadas.map((p) => p.texto)];
+    const linhas = respostasPlanilha.map((r, i) => [
+      String(i + 1),
+      new Date(r.enviado_em).toLocaleString("pt-BR"),
+      ...perguntasOrdenadas.map((p) => r.valores.get(Number(p.id)) ?? ""),
+    ]);
+    // CSV com ';' e BOM UTF-8: abre limpo no Excel em pt-BR.
+    const esc = (v) => { const s = String(v ?? ""); return /[";\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const csv = [cabecalho, ...linhas].map((l) => l.map(esc).join(";")).join("\r\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `respostas_${evento.codigo}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
   const minhasNotas = useMemo(() => (notas.data ?? []).filter((n) => Number(n.evento_id) === evento.id), [notas.data, evento.id]);
+  // Respostas por pergunta — TODAS as não-numéricas (texto livre, escolha única,
+  // sim/não), não só o texto livre. As de escala ficam na "Média por pergunta".
   const gruposTexto = useMemo(() => {
-    const m = new Map();
-    for (const t of (textos.data ?? []).filter((t) => Number(t.evento_id) === evento.id)) {
-      if (!m.has(t.pergunta_id)) m.set(t.pergunta_id, { pergunta: t.pergunta, respostas: [] });
-      m.get(t.pergunta_id).respostas.push(t.resposta);
+    const porP = new Map();
+    for (const d of (detalheHook.data ?? []).filter((d) => Number(d.evento_id) === evento.id)) {
+      if (d.tipo === "escala_1_5" || d.tipo === "escala_0_10") continue;
+      const val = d.valor_texto ?? (d.valor_num != null ? String(d.valor_num) : "");
+      if (val === "") continue;
+      if (!porP.has(d.pergunta_id)) porP.set(d.pergunta_id, { pergunta: d.pergunta, ordem: Number(d.ordem ?? 0), respostas: [] });
+      porP.get(d.pergunta_id).respostas.push(val);
     }
-    return [...m.values()];
-  }, [textos.data, evento.id]);
+    return [...porP.values()].sort((a, b) => a.ordem - b.ordem);
+  }, [detalheHook.data, evento.id]);
   const palestraRow = useMemo(() => (carteira.data ?? []).find((p) => p.palestra_id === evento.palestra_id) ?? null, [carteira.data, evento.palestra_id]);
 
   // perguntas da Elis (não-núcleo) para o editor
@@ -6460,6 +6502,9 @@ function ResultadoEvento({ evento, nps, onFechar, onMudou, notificar }) {
     })));
   }, [perguntasHook.data]);
   const [salvandoP, setSalvandoP] = useState(false);
+  // Perguntas NOVAS a acrescentar num evento já respondido (não mexe nas existentes).
+  const [novasPerguntas, setNovasPerguntas] = useState([]);
+  const [adicionando, setAdicionando] = useState(false);
 
   const copiar = async () => {
     try { await navigator.clipboard.writeText(link); notificar("Link copiado.", "ok"); }
@@ -6479,6 +6524,28 @@ function ResultadoEvento({ evento, nps, onFechar, onMudou, notificar }) {
     } catch (e) { notificar(e.message || "Não foi possível salvar as perguntas.", "erro"); }
     setSalvandoP(false);
   };
+  // Acrescenta perguntas novas ao formulário — permitido mesmo com respostas.
+  const adicionar = async () => {
+    const validas = novasPerguntas.filter((p) => p.texto.trim());
+    if (!validas.length) { notificar("Escreva ao menos uma pergunta para adicionar.", "erro"); return; }
+    for (let i = 0; i < validas.length; i++) {
+      const p = validas[i];
+      if (p.tipo === "escolha_unica" && (p.opcoes ?? []).map((o) => o.trim()).filter(Boolean).length < 2) {
+        notificar(`A nova pergunta ${i + 1} (escolha única) precisa de ao menos duas opções.`, "erro"); return;
+      }
+    }
+    setAdicionando(true);
+    try {
+      await adicionarPerguntasEvento(evento.id, validas.map((p) => ({
+        texto: p.texto.trim(), tipo: p.tipo, obrigatoria: !!p.obrigatoria,
+        opcoes: p.tipo === "escolha_unica" ? p.opcoes.map((o) => o.trim()).filter(Boolean) : null,
+      })));
+      notificar(`${validas.length} pergunta${validas.length === 1 ? "" : "s"} adicionada${validas.length === 1 ? "" : "s"}.`, "ok");
+      setNovasPerguntas([]);
+      onMudou?.();
+    } catch (e) { notificar(e.message || "Não foi possível adicionar.", "erro"); }
+    setAdicionando(false);
+  };
 
   return (
     <DrawerLado titulo={evento.titulo} sub={`${evento.codigo} · ${rotuloTipoEvento(evento.tipo)} · ${dataBR(evento.data_evento)}`} onFechar={onFechar} largura={600}>
@@ -6494,6 +6561,17 @@ function ResultadoEvento({ evento, nps, onFechar, onMudou, notificar }) {
             <input readOnly value={link} onFocus={(e) => e.target.select()} style={{ ...inputAv, fontFamily: GROTESK, fontSize: 12 }} />
             <button onClick={copiar} style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "0 14px", borderRadius: 10, border: `1px solid ${C.gold}66`, background: `${C.gold}14`, color: C.gold, fontWeight: 700, fontSize: 12.5, cursor: "pointer", whiteSpace: "nowrap", fontFamily: SANS }}><Link2 size={13} /> Copiar</button>
           </div>
+        </div>
+
+        {/* Total de respostas + exportação */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 12.5, color: C.muted }}>
+            <b style={{ color: C.text }}>{numero(resp)}</b> {resp === 1 ? "pessoa respondeu" : "pessoas responderam"}
+          </div>
+          <button onClick={baixarPlanilha} disabled={!resp}
+            style={{ display: "inline-flex", alignItems: "center", gap: 7, fontSize: 12.5, fontWeight: 700, color: resp ? C.gold : C.faint, background: resp ? `${C.gold}14` : "transparent", border: `1px solid ${resp ? `${C.gold}66` : C.cardLine}`, borderRadius: 10, padding: "8px 14px", cursor: resp ? "pointer" : "default", fontFamily: SANS, whiteSpace: "nowrap" }}>
+            <Download size={14} /> Baixar respostas (Excel)
+          </button>
         </div>
 
         {/* NPS — nunca sozinho: com distribuição e contagem ao lado */}
@@ -6518,7 +6596,9 @@ function ResultadoEvento({ evento, nps, onFechar, onMudou, notificar }) {
               <div style={{ fontSize: 11, color: C.muted, marginTop: 7 }}><b style={{ color: C.text }}>{numero(resp)}</b> {resp === 1 ? "resposta" : "respostas"} no total</div>
             </div>
           </div>
-          {nps?.nps == null && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6 }}>O NPS aparece a partir de 5 respostas — {numero(resp)} até agora. A distribuição já conta.</div>}
+          {!temNps
+            ? <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6 }}>Este evento não tem a pergunta de recomendação (escala 0–10), então não há NPS — só as respostas abaixo.</div>
+            : nps?.nps == null && <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6 }}>O NPS aparece a partir de 5 respostas — {numero(resp)} até agora. A distribuição já conta.</div>}
         </div>
 
         {/* Média por pergunta numérica */}
@@ -6541,11 +6621,11 @@ function ResultadoEvento({ evento, nps, onFechar, onMudou, notificar }) {
               )}
         </div>
 
-        {/* Texto livre */}
+        {/* Respostas por pergunta (texto, escolha única, sim/não) */}
         <div>
-          <TituloResultado>Respostas em texto</TituloResultado>
-          {textos.isLoading ? <div style={{ fontSize: 12, color: C.faint }}>Carregando…</div>
-            : !gruposTexto.length ? <div style={{ fontSize: 12, color: C.faint }}>Ninguém escreveu ainda.</div>
+          <TituloResultado>Respostas por pergunta</TituloResultado>
+          {detalheHook.isLoading ? <div style={{ fontSize: 12, color: C.faint }}>Carregando…</div>
+            : !gruposTexto.length ? <div style={{ fontSize: 12, color: C.faint }}>Ninguém respondeu ainda.</div>
               : (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                   {gruposTexto.map((g, i) => (
@@ -6560,12 +6640,23 @@ function ResultadoEvento({ evento, nps, onFechar, onMudou, notificar }) {
               )}
         </div>
 
-        {/* Perguntas do formulário — editor (travado quando já houve resposta) */}
+        {/* Perguntas do formulário. Sem respostas: edição livre. Com respostas:
+            as existentes ficam travadas (senão as respostas dadas perderiam o
+            sentido), mas dá pra ADICIONAR novas — decisão pedagógica. */}
         <div style={{ borderTop: `1px solid ${C.hair}`, paddingTop: 14 }}>
-          <EditorPerguntas perguntas={perguntas} setPerguntas={setPerguntas} travado={travado} rotulo="Perguntas do formulário" />
+          <EditorPerguntas perguntas={perguntas} setPerguntas={setPerguntas} travado={travado} rotulo="Perguntas do formulário"
+            motivoTravado={travado ? "Já recebeu respostas — as perguntas existentes não mudam. Mas você pode adicionar novas abaixo." : null} />
           {!travado && (
             <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
               <BotaoSalvar onClick={salvarPergs} salvando={salvandoP}>Salvar perguntas</BotaoSalvar>
+            </div>
+          )}
+          {travado && (
+            <div style={{ marginTop: 16, borderTop: `1px dashed ${C.cardLine}`, paddingTop: 14 }}>
+              <EditorPerguntas perguntas={novasPerguntas} setPerguntas={setNovasPerguntas} rotulo="Adicionar novas perguntas" semAvisoNps />
+              <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+                <BotaoSalvar onClick={adicionar} salvando={adicionando} disabled={!novasPerguntas.some((p) => p.texto.trim())}>Adicionar ao formulário</BotaoSalvar>
+              </div>
             </div>
           )}
         </div>
@@ -6590,6 +6681,7 @@ function SecaoAvaliacaoEventos({ notificar }) {
   const qc = useQueryClient();
   const eventos = useEventos();
   const npsHook = useEventoNps();
+  const respTotalHook = useEventoRespostasTotal();
   const [novo, setNovo] = useState(false);
   const [abertoId, setAbertoId] = useState(null);
 
@@ -6598,6 +6690,12 @@ function SecaoAvaliacaoEventos({ notificar }) {
     for (const r of npsHook.data ?? []) m.set(Number(r.evento_id), r);
     return m;
   }, [npsHook.data]);
+  // Contagem real de respondentes por evento (não depende do NPS).
+  const respPorEvento = useMemo(() => {
+    const m = new Map();
+    for (const r of respTotalHook.data ?? []) m.set(Number(r.evento_id), Number(r.respostas ?? 0));
+    return m;
+  }, [respTotalHook.data]);
   const lista = useMemo(() => [...(eventos.data ?? [])].sort((a, b) => String(b.data_evento).localeCompare(String(a.data_evento)) || Number(b.id) - Number(a.id)), [eventos.data]);
   const eventoAberto = useMemo(() => lista.find((e) => e.id === abertoId) ?? null, [lista, abertoId]);
   const recarregar = () => qc.invalidateQueries();
@@ -6620,7 +6718,7 @@ function SecaoAvaliacaoEventos({ notificar }) {
       <Bloco titulo="Eventos" canto="clique para ver o resultado" sem altura={320}>
         <Estado carregando={eventos.isLoading} erro={eventos.error} vazio={!lista.length}
           vazioTitulo="Nenhum evento ainda" vazioDica="Cadastre o primeiro evento para gerar o link de avaliação.">
-          <ListaEventos eventos={lista} npsPorEvento={npsPorEvento} onAbrir={(e) => setAbertoId(e.id)} />
+          <ListaEventos eventos={lista} npsPorEvento={npsPorEvento} respPorEvento={respPorEvento} onAbrir={(e) => setAbertoId(e.id)} />
         </Estado>
       </Bloco>
       {novo && (
@@ -6629,7 +6727,7 @@ function SecaoAvaliacaoEventos({ notificar }) {
         </ModalCentro>
       )}
       {eventoAberto && (
-        <ResultadoEvento evento={eventoAberto} nps={npsPorEvento.get(eventoAberto.id)} onFechar={() => setAbertoId(null)} onMudou={recarregar} notificar={notificar} />
+        <ResultadoEvento evento={eventoAberto} nps={npsPorEvento.get(eventoAberto.id)} respTotal={respPorEvento.get(eventoAberto.id) ?? 0} onFechar={() => setAbertoId(null)} onMudou={recarregar} notificar={notificar} />
       )}
     </>
   );

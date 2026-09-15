@@ -620,6 +620,16 @@ export const useEventoNotas = () =>
 export const useEventoTextos = () =>
   useView("vw_evento_textos", { ordem: ["evento_id", "pergunta_id"], staleTime: 60 * 1000, retry: 2 });
 
+// Contagem REAL de respondentes por evento (vw_evento_respostas_total): conta os
+// ENVIOS, não quem respondeu o NPS — evento sem pergunta de NPS não some com 0.
+export const useEventoRespostasTotal = () =>
+  useView("vw_evento_respostas_total", { ordem: ["evento_id"], staleTime: 60 * 1000, retry: 2 });
+
+// Detalhe de todas as respostas (vw_evento_resposta_detalhe): uma linha por
+// (envio, pergunta). Alimenta a exportação em planilha.
+export const useEventoRespostaDetalhe = () =>
+  useView("vw_evento_resposta_detalhe", { ordem: ["evento_id", "resposta_id", "ordem"], staleTime: 60 * 1000, retry: 2 });
+
 // Perguntas de um evento (tabela evento_perguntas, RLS pode_ver do setor):
 // alimenta o editor ao abrir um evento existente. Núcleo primeiro (false<true),
 // depois ordem — a mesma ordem do formulário.
@@ -675,6 +685,13 @@ export async function criarEvento(campos) {
 }
 export async function salvarPerguntas(eventoId, perguntas) {
   const { data, error } = await supabase.rpc("salvar_perguntas", { p_evento_id: eventoId, p_perguntas: perguntas });
+  if (error) throw new Error(error.message);
+  return data;
+}
+// Só ACRESCENTA perguntas (não toca nas existentes) — liberado mesmo depois de
+// alguém já ter respondido. Ver db/203.
+export async function adicionarPerguntasEvento(eventoId, perguntas) {
+  const { data, error } = await supabase.rpc("adicionar_perguntas_evento", { p_evento_id: eventoId, p_perguntas: perguntas });
   if (error) throw new Error(error.message);
   return data;
 }
