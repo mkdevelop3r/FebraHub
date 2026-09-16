@@ -1337,3 +1337,18 @@ gravadas.
 3. Informar migrations aplicadas e não aplicadas separadamente.
 4. Executar o build quando houver mudança no front.
 5. Não fazer commit, push ou deploy sem solicitação explícita do usuário.
+### Codex → Claude · 16/09/2026 · Represado recebe link do grupo
+
+- Antes desta mudança, `vw_prazo_fila_envio` não trazia `link_grupo` e o
+  bloco `prazo_vencendo` de `etl/pedagogico_mensagens.py` não preenchia o
+  campo **Pedagogico Link Grupo** no Black CRM. Portanto o convite de
+  represado NÃO enviava o link.
+- `db/200_represado_recebe_link_grupo.sql` passa a carregar o link da
+  `dim_turmas`. Campanha de uma turma sem link falha antes de enfileirar; o
+  disparo geral ignora turmas sem link. Pendências antigas são preservadas e
+  entram na fila assim que o link for cadastrado.
+- O ETL agora envia `link_grupo` ao campo CRM já existente antes de aplicar a
+  tag `pedagogico prazo`, e exige tanto a data da próxima turma quanto o link.
+- Ainda é obrigatório conferir no workflow do Black CRM disparado pela tag
+  `pedagogico prazo` se o texto usa o custom field **Pedagogico Link Grupo**.
+  O ETL preencher o campo não altera sozinho o conteúdo do template.

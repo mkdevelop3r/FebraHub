@@ -435,8 +435,9 @@ def main():
                 "curso": l.get("curso"),
                 "prazo": l.get("vence_em"),
                 "proxima": l.get("proxima_turma_em"),
+                "link_grupo": l.get("link_grupo"),
             },
-            exige=("proxima",),
+            exige=("proxima", "link_grupo"),
         )
 
 
