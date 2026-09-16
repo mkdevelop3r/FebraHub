@@ -1366,3 +1366,10 @@ gravadas.
 - `vw_confirmacoes_turma_origem` expõe a abertura por fonte. O futuro monitor
   do WhatsApp Web deve fazer upsert com `origem='grupo_whatsapp'`, usando a
   service role, e nunca escrever em `pedagogico_envios`.
+## Confirmacao pela entrada no grupo do WhatsApp
+
+- `etl/whatsapp_grupo_confirmacoes.mjs` le o grupo aberto em um Chrome local com CDP e cruza telefones com os alunos elegiveis da turma.
+- A gravacao usa `pedagogico_confirmacoes.origem = 'grupo_whatsapp'` e so ocorre com `--write`, titulo exato do grupo e correspondencia unica.
+- Confirmacoes existentes por CRM, manual ou importacao sao preservadas; desconhecidos e ambiguos nunca sao gravados.
+- `etl/whatsapp_if36_sync.ps1` e o executor local inicial do IF36. Ele depende do Chrome de monitoramento em `127.0.0.1:9222`, do grupo permanecer aberto e do `etl/.env` local.
+- Essa automacao e local (WhatsApp Web), nao GitHub Actions. Para outras turmas, deve-se cadastrar o titulo exato e a turma em um executor/configuracao equivalente.
