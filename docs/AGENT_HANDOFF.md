@@ -1352,3 +1352,17 @@ gravadas.
 - Ainda é obrigatório conferir no workflow do Black CRM disparado pela tag
   `pedagogico prazo` se o texto usa o custom field **Pedagogico Link Grupo**.
   O ETL preencher o campo não altera sozinho o conteúdo do template.
+### Codex → Claude · 16/09/2026 · Confirmação separada do envio
+
+- `db/201_confirmacao_fonte_unica.sql` cria `pedagogico_confirmacoes`, uma
+  linha por aluno + turma + origem. Origens previstas: `crm`, `manual`,
+  `grupo_whatsapp` e `importacao`; mais de uma evidência pode coexistir.
+- Um trigger espelha automaticamente `pedagogico_envios.resposta='sim'` para
+  a tabela nova. `resposta_origem='hub'` vira `manual`; CRM continua `crm`.
+  O backfill preserva todas as confirmações existentes.
+- `vw_turma_inscritos` passa a considerar a evidência antes do estado do
+  envio. Assim uma confirmação manual conta mesmo quando a mensagem estava
+  pendente, sem precisar falsificar o envio como aceito.
+- `vw_confirmacoes_turma_origem` expõe a abertura por fonte. O futuro monitor
+  do WhatsApp Web deve fazer upsert com `origem='grupo_whatsapp'`, usando a
+  service role, e nunca escrever em `pedagogico_envios`.
