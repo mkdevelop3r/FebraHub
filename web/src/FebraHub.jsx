@@ -8670,6 +8670,8 @@ function CentralRepresados({ notificar }) {
     // A janela que o disparo cobre (migration 168). Fica como filtro porque
     // é o recorte "quem está pegando fogo" — que era a lista inteira antes.
     prazo90: linhas.filter((r) => Number(r.dias_restantes ?? 999) <= 90).length,
+    // Já entrou no grupo (robô) ou respondeu "sim" ao convite.
+    confirmados: linhas.filter((r) => r.confirmado).length,
   }), [linhas]);
 
   const visiveis = useMemo(() => {
@@ -8683,6 +8685,7 @@ function CentralRepresados({ notificar }) {
               : filtro === "sem_telefone" ? !r.telefone
                 : filtro === "urgente" ? Number(r.dias_restantes ?? 999) <= 30
                 : filtro === "prazo90" ? Number(r.dias_restantes ?? 999) <= 90
+                  : filtro === "confirmados" ? !!r.confirmado
                   : true;
     return linhas.filter((r) => {
       if (!passa(r)) return false;
@@ -8822,6 +8825,7 @@ function CentralRepresados({ notificar }) {
 function FaixaRepresados({ contas, filtro, onFiltrar }) {
   const itens = [
     { key: "todos", rotulo: "represados", valor: contas.todos, cor: C.bright },
+    { key: "confirmados", rotulo: "confirmados", valor: contas.confirmados, cor: C.up },
     { key: "elegivel", rotulo: "elegíveis agora", valor: contas.elegivel, cor: C.up },
     { key: "nunca", rotulo: "nunca convidados", valor: contas.nunca, cor: C.gold },
     { key: "recente", rotulo: "convidados há ≤30 dias", valor: contas.recente, cor: C.muted },
@@ -9003,6 +9007,12 @@ function LinhaRepresado({ r, ultima }) {
         }} title={anonimo ? "sem cadastro" : r.nome}>
           {anonimo ? formataCpf(r.aluno_id) : r.nome}
         </span>
+        {r.confirmado && (
+          <span title={r.confirmado_origem === "grupo" ? "entrou no grupo da turma (robô)" : r.confirmado_origem === "resposta" ? "respondeu sim ao convite" : "confirmado"}
+            style={{ display: "inline-flex", alignItems: "center", gap: 3, fontSize: 9.5, fontWeight: 800, color: C.up, background: `${C.up}1A`, border: `1px solid ${C.up}55`, borderRadius: 6, padding: "1px 6px", flexShrink: 0 }}>
+            <Check size={10} /> {r.confirmado_origem === "grupo" ? "no grupo" : "confirmado"}
+          </span>
+        )}
         {r.ja_transferiu && <span title="já transferiu de turma antes" style={{ fontSize: 9.5, color: C.dim, flexShrink: 0 }}>já transferiu</span>}
       </div>
 
