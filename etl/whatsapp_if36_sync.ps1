@@ -22,8 +22,7 @@ Get-Content -LiteralPath $envFile | ForEach-Object {
 }
 
 & node (Join-Path $PSScriptRoot 'whatsapp_grupo_confirmacoes.mjs') `
-    --turma '2026 - IF36' `
-    --grupo 'INTELIGENCIA FINANCEIRA 36 ( 17 A 19 DE SETEMBRO)' `
+    --turmas '2026 - IF36' `
     --write
 
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

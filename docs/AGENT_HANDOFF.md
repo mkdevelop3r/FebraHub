@@ -1373,3 +1373,49 @@ gravadas.
 - Confirmacoes existentes por CRM, manual ou importacao sao preservadas; desconhecidos e ambiguos nunca sao gravados.
 - `etl/whatsapp_if36_sync.ps1` e o executor local inicial do IF36. Ele depende do Chrome de monitoramento em `127.0.0.1:9222`, do grupo permanecer aberto e do `etl/.env` local.
 - Essa automacao e local (WhatsApp Web), nao GitHub Actions. Para outras turmas, deve-se cadastrar o titulo exato e a turma em um executor/configuracao equivalente.
+
+### Codex - 16/09/2026 - Instalacao local no Windows de nicol
+
+- Retomado o commit `7856be8`, branch real `codex/whatsapp-grupo-confirmacoes`, no worktree `.publish-represado-link`. Reparado o caminho Git antigo de `C:/Users/louis` com `git worktree repair`.
+- Instalado `FebraHub - WhatsApp IF36` no Agendador do Windows: intervalo de cinco minutos, usuario interativo, sem instancias simultaneas, limite de quatro minutos. Node fixado pelo caminho absoluto no instalador.
+- Scripts novos: `whatsapp_monitor_instalar.ps1`, `whatsapp_monitor_rodar.ps1`, `whatsapp_monitor_abrir.ps1`. Perfil separado do Edge em `%LOCALAPPDATA%/FebraHub/whatsapp-browser`, CDP 127.0.0.1:9222. Logs com rotacao em `%LOCALAPPDATA%/FebraHub/whatsapp-monitor/execucoes.log`.
+- Validacao: sintaxe Node e PowerShell e diff check passaram. Agendamento conferido com intervalo PT5M; primeira execucao retornou 1. Diagnostico confirmou: `Aba do WhatsApp Web nao encontrada`. Instalacao concluida, operacao ainda depende de abrir WhatsApp nesse perfil, conectar a conta e deixar o grupo IF36 aberto. Nenhuma confirmacao foi gravada nesta validacao.
+- Leitor agora tem limite de 180 segundos e rejeita leitura sem telefones. Continua lendo apenas telefones visiveis do cabecalho, sem garantir todos os participantes e sem alternar entre grupos. Outras turmas ainda exigem configuracao propria.
+- Nenhuma migration criada ou aplicada; sem mudanca no front. Sem commit ou push nesta passagem.
+
+### Codex - 16/09/2026 - Monitor de multiplos grupos com portao IF36/FCIS
+
+- `whatsapp_grupo_confirmacoes.mjs` deixou de depender do grupo selecionado. Busca `dim_turmas` com `status='aberta'` e `data_fim >= hoje`, abre cada grupo pelo `link_grupo` no Chrome CDP e percorre os telefones expostos na lista de participantes do cabecalho.
+- A selecao padrao e `gated`: processa primeiro `2026 - IF36` e a proxima FCIS ativa; so depois das duas passarem na mesma rodada processa as demais turmas ativas com link. Tambem existem `--pilot`, `--all` e `--turmas` para diagnostico dirigido.
+- Correspondencia continua conservadora: telefone deve apontar para exatamente um aluno aprovado e elegivel. Desconhecidos e ambiguos nunca entram em `pedagogico_confirmacoes`. A consulta de existentes agora filtra `origem='grupo_whatsapp'`, para preservar a evidencia do grupo mesmo quando o aluno ja tinha confirmacao por CRM/manual.
+- Status por turma e gravado em `integracao_status`, uma linha `whatsapp_grupo:<turma_id>`: `ultima_sync`, `registros=identificados`, `status` e JSON em `mensagem` com identificados, novos, desconhecidos, ambiguos e erro. Foi usado o contrato existente; nenhuma migration foi necessaria.
+- IF36 validado em diagnostico e gravacao: 182 telefones no grupo, 205 elegiveis, 136 correspondencias unicas, 45 desconhecidos e 1 ambiguo. A primeira rodada nova criou 119 evidencias `grupo_whatsapp`; repeticao imediata criou zero. O total da origem ficou 137 porque 18 ja existiam antes e uma evidencia antiga nao pertence ao conjunto atual de 136.
+- FCIS piloto resolvida como `2026 - FCIS37`, mas a linha esta sem `link_grupo`. O status foi gravado como erro `Turma ativa sem link_grupo cadastrado.` e o portao manteve as demais bloqueadas. O monitor pesquisou `FCIS` e `COACHING` na sessao conectada e nao encontrou conversa correspondente; os 50 `pedagogico_envios` da turma tambem contem zero convites. Nao inventou nem inferiu link.
+- O agendamento antigo `FebraHub - WhatsApp IF36` foi removido. `FebraHub - WhatsApp Grupos` roda a cada 5 minutos, ignora sobreposicao e tem limite de 20 minutos. O executor abre/restaura sozinho o perfil CDP e cria a aba do WhatsApp quando necessario; o usuario nao precisa selecionar grupos.
+- Validacoes: `node --check`, parser PowerShell e `git diff --check` passaram; abertura automatica pelo convite do IF36, status no Supabase, gravacao e idempotencia foram conferidos. A tarefa instalada tambem foi disparada: IF36 terminou sem novos, FCIS37 registrou o erro esperado e `LastTaskResult=1` por causa do portao ainda fechado. Nenhuma migration e nenhuma mudanca de front. Sem commit ou push nesta passagem.
+
+### Codex - 17/09/2026 - Portao multiplo liberado
+
+- `link_grupo` do `2026 - FCIS37` foi cadastrado e validado sem expor o convite. O monitor abriu sozinho `FCIS 37 ( 29 DE SETEMBRO A 02 DE OUTUBRO) MOD 1`.
+- Rodada de gravacao do agendamento: IF36 com 186 telefones listados, 221 elegiveis, 142 correspondencias unicas, 6 novas, 43 desconhecidos e 1 ambiguo; FCIS37 com 22 telefones listados, 44 elegiveis, 16 correspondencias unicas, 16 novas, 6 desconhecidos e zero ambiguos. Desconhecidos e ambiguos nao foram gravados.
+- Os dois pilotos passaram (`pilotos_aprovados=true`), portanto o modo `gated` agora percorre tambem qualquer outra turma aberta, atual e com `link_grupo`, sem mudanca manual de configuracao.
+- Totais persistidos da origem depois da rodada: IF36 143 e FCIS37 16. IF36 tem uma evidencia historica alem das 142 correspondencias atuais; foi preservada, pois o monitor nunca apaga confirmacao antiga quando alguem sai do grupo.
+- `FebraHub - WhatsApp Grupos`: `LastTaskResult=0`, proxima execucao agendada normalmente em intervalo PT5M. Nenhuma migration, commit ou push nesta passagem.
+
+### Codex - 17/09/2026 - Simulacao automatica das solicitacoes de entrada
+
+- O mesmo ciclo de `whatsapp_grupo_confirmacoes.mjs` agora le, por grupo, o store local do WhatsApp Web `pending-membership-approval-request`. O grupo e resolvido em `group-metadata`; identificadores LID sao ligados ao telefone pelo store `contact`.
+- Cada pedido e cruzado com duas fontes: matricula aprovada/elegivel em `fato_base_alunos` e represado cujo envio `prazo_vencendo` da turma foi aceito em `pedagogico_envios`. Correspondencia unica vira recomendacao automatica; telefone ausente ou ambiguo vai para revisao; sem qualquer correspondencia fica nao elegivel.
+- E somente simulacao: o codigo nao chama nem procura controles de aprovar/rejeitar. Status por turma fica em `integracao_status`, fonte `whatsapp_solicitacoes:<turma_id>`, com total pendente, aprovaria automaticamente, revisao manual, nao elegivel, motivos agregados e erro. Telefones nao entram no log/status.
+- Validacao no FCIS37: approval mode ativo no grupo, store acessivel, zero pendentes, zero nas tres decisoes e sem erro. Rodada completa pelo Agendador validou IF36 e FCIS37 com status `ok`; `LastTaskResult=0`, tarefa habilitada e intervalo PT5M.
+- Nenhuma migration, alteracao de front, commit ou push nesta passagem.
+
+### Codex - 17/09/2026 - Status dedicado e publicacao do monitor multigrupo
+
+- `db/204_whatsapp_monitor_status.sql` cria `pedagogico_whatsapp_status`, com uma linha por turma e tipo de monitor (`participantes` ou `solicitacoes`). A tabela guarda ultima execucao, resultado, identificados, novos, desconhecidos, ambiguos, contagens da simulacao, motivos agregados e erro; nenhum telefone e persistido.
+- A migration 204 foi aplicada no projeto Supabase `bcorkfhfjfurlvggzgco` em 17/09/2026 e a tabela foi conferida pela API REST. RLS permite leitura a usuarios autenticados com `pode_ver('pedagogico')`; escrita fica com `service_role`.
+- `whatsapp_grupo_confirmacoes.mjs` grava o status dedicado e mantem o espelho em `integracao_status` para compatibilidade. O upsert usa a chave composta `turma_id,monitor`.
+- Validacao em gravacao depois da migration: IF36 teve 142 identificados, zero novos, 43 desconhecidos e 1 ambiguo; FCIS37 teve 16 identificados, zero novos, 6 desconhecidos e zero ambiguos. As duas simulacoes de solicitacao tiveram zero pendentes e status `ok`.
+- `FebraHub - WhatsApp Grupos` foi reativado e executado pelo Agendador: tarefa habilitada, estado `Ready`, `LastTaskResult=0` e proxima rodada mantida no intervalo de cinco minutos.
+- Validacoes finais: `node --check`, parser dos quatro scripts PowerShell, `git diff --check`, rodada piloto em gravacao e consulta dos quatro registros de status no Supabase. Sem alteracao de front; build nao se aplica.
+- Trabalho consolidado na branch `codex/whatsapp-grupo-confirmacoes`; commit e push realizados ao termino desta passagem por solicitacao explicita do usuario.

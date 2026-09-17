@@ -1,56 +1,46 @@
 #!/usr/bin/env node
 
 /**
- * Confirma alunos identificados pela entrada em um grupo aberto no WhatsApp Web.
+ * Confirma alunos pela presença nos grupos de WhatsApp das turmas ativas.
  *
- * Requer um Chrome iniciado com remote debugging e o grupo correto aberto.
- * Por seguranca, a escrita exige --write, titulo exato e telefone associado a um
- * unico aluno elegivel. Pessoas ja confirmadas por qualquer origem nao sao
- * regravadas.
+ * O link_grupo de dim_turmas é a fonte de navegação. Em modo gated, IF36 e a
+ * próxima FCIS são processadas antes das demais; o restante só é liberado
+ * quando as duas concluem sem erro. Nunca confirma telefone desconhecido ou
+ * associado a mais de um aluno elegível.
  */
 
+const booleanArgs = new Set(['write', 'all', 'pilot', 'gated']);
 const args = new Map();
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
-  if (arg === '--write') args.set('write', true);
-  else if (arg.startsWith('--') && process.argv[i + 1]) args.set(arg.slice(2), process.argv[++i]);
+  if (!arg.startsWith('--')) continue;
+  const name = arg.slice(2);
+  if (booleanArgs.has(name)) args.set(name, true);
+  else if (process.argv[i + 1]) args.set(name, process.argv[++i]);
 }
 
-const turma = args.get('turma') || process.env.WHATSAPP_TURMA_ID;
-const expectedGroup = args.get('grupo') || process.env.WHATSAPP_GRUPO_TITULO;
 const cdpUrl = args.get('cdp') || process.env.WHATSAPP_CDP_URL || 'http://127.0.0.1:9222';
 const write = args.has('write');
-if (!turma || !expectedGroup) throw new Error('Informe --turma e --grupo.');
-
+const selection = args.has('all') ? 'all' : args.has('pilot') ? 'pilot' : 'gated';
+const requestedIds = String(args.get('turmas') || '').split(',').map(value => value.trim()).filter(Boolean);
 const base = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const key = process.env.SUPABASE_SERVICE_KEY;
 if (!base || !key) throw new Error('SUPABASE_URL/SUPABASE_SERVICE_KEY ausentes.');
 const headers = { apikey: key, Authorization: `Bearer ${key}` };
 
-async function get(resource, params) {
-  const url = new URL(`${base}/rest/v1/${resource}`);
-  for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
-  const response = await fetch(url, { headers });
-  if (!response.ok) throw new Error(`${resource}: ${response.status} ${await response.text()}`);
-  return response.json();
-}
+const watchdog = setTimeout(() => {
+  console.error('Tempo limite de 15 minutos excedido.');
+  process.exit(1);
+}, 15 * 60_000);
+watchdog.unref();
 
-async function upsert(resource, rows) {
-  if (!rows.length) return;
-  const url = new URL(`${base}/rest/v1/${resource}`);
-  url.searchParams.set('on_conflict', 'aluno_id,turma_id,origem');
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      ...headers,
-      'Content-Type': 'application/json',
-      Prefer: 'resolution=merge-duplicates,return=minimal',
-    },
-    body: JSON.stringify(rows),
-  });
-  if (!response.ok) throw new Error(`${resource}: ${response.status} ${await response.text()}`);
-}
-
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const canonicalText = value => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .toUpperCase();
 const normalizePhone = value => {
   let digits = String(value || '').replace(/\D/g, '');
   if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2);
@@ -63,121 +53,542 @@ const variants = value => {
   if (digits.length === 11 && digits[2] === '9') result.add(digits.slice(0, 2) + digits.slice(3));
   return result;
 };
-const canonicalText = value => String(value || '')
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .replace(/\s+/g, ' ')
-  .trim()
-  .toUpperCase();
 
-async function readOpenGroup() {
-  const tabs = await fetch(`${cdpUrl}/json/list`).then(response => response.json());
-  const tab = tabs.find(item => item.type === 'page' && item.url.startsWith('https://web.whatsapp.com/'));
-  if (!tab) throw new Error('Aba do WhatsApp Web nao encontrada.');
-  const socket = new WebSocket(tab.webSocketDebuggerUrl);
-  await new Promise((resolve, reject) => {
-    socket.addEventListener('open', resolve, { once: true });
-    socket.addEventListener('error', reject, { once: true });
+async function request(resource, { method = 'GET', params = {}, body, conflict } = {}) {
+  const url = new URL(`${base}/rest/v1/${resource}`);
+  for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);
+  if (conflict) url.searchParams.set('on_conflict', conflict);
+  const response = await fetch(url, {
+    method,
+    headers: body ? {
+      ...headers,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    } : headers,
+    body: body ? JSON.stringify(body) : undefined,
   });
-  let sequence = 0;
-  const pending = new Map();
-  socket.addEventListener('message', event => {
-    const message = JSON.parse(event.data);
-    if (!message.id || !pending.has(message.id)) return;
-    const callback = pending.get(message.id);
-    pending.delete(message.id);
-    message.error ? callback.reject(new Error(JSON.stringify(message.error))) : callback.resolve(message.result);
+  if (!response.ok) throw new Error(`${resource}: HTTP ${response.status} ${await response.text()}`);
+  if (response.status === 204) return null;
+  const text = await response.text();
+  return text ? JSON.parse(text) : null;
+}
+
+async function get(resource, params) {
+  return request(resource, { params });
+}
+
+async function upsert(resource, rows, conflict) {
+  if (!rows.length) return;
+  await request(resource, { method: 'POST', body: rows, conflict });
+}
+
+class CdpClient {
+  static async connect() {
+    const response = await fetch(`${cdpUrl}/json/list`);
+    if (!response.ok) throw new Error(`Chrome CDP indisponivel: HTTP ${response.status}.`);
+    const tabs = await response.json();
+    const tab = tabs.find(item => item.type === 'page' && item.url.startsWith('https://web.whatsapp.com/'));
+    if (!tab) throw new Error('Aba do WhatsApp Web nao encontrada no perfil de monitoramento.');
+    return new CdpClient(tab.webSocketDebuggerUrl);
+  }
+
+  constructor(socketUrl) {
+    this.socketUrl = socketUrl;
+    this.sequence = 0;
+    this.pending = new Map();
+  }
+
+  async open() {
+    this.socket = new WebSocket(this.socketUrl);
+    await new Promise((resolve, reject) => {
+      this.socket.addEventListener('open', resolve, { once: true });
+      this.socket.addEventListener('error', reject, { once: true });
+    });
+    this.socket.addEventListener('message', event => {
+      const message = JSON.parse(event.data);
+      if (!message.id || !this.pending.has(message.id)) return;
+      const callback = this.pending.get(message.id);
+      this.pending.delete(message.id);
+      message.error ? callback.reject(new Error(JSON.stringify(message.error))) : callback.resolve(message.result);
+    });
+    await this.send('Page.enable');
+    return this;
+  }
+
+  send(method, params = {}) {
+    const id = ++this.sequence;
+    this.socket.send(JSON.stringify({ id, method, params }));
+    return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
+  }
+
+  async evaluate(expression) {
+    const result = await this.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
+    if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || 'Erro ao avaliar WhatsApp Web.');
+    return result.result.value;
+  }
+
+  async openGroup(inviteLink) {
+    let invite;
+    try { invite = new URL(inviteLink); } catch { throw new Error('link_grupo invalido.'); }
+    if (invite.hostname !== 'chat.whatsapp.com') throw new Error('link_grupo nao pertence a chat.whatsapp.com.');
+    const code = invite.pathname.split('/').filter(Boolean)[0];
+    if (!code || !/^[A-Za-z0-9_-]+$/.test(code)) throw new Error('link_grupo sem codigo de convite valido.');
+
+    // Limpa a conversa anterior para que um cabecalho antigo nunca seja aceito.
+    await this.send('Page.navigate', { url: 'about:blank' });
+    await sleep(400);
+    await this.send('Page.navigate', { url: `https://web.whatsapp.com/accept?code=${encodeURIComponent(code)}` });
+
+    const deadline = Date.now() + 50_000;
+    let openedGroupName = '';
+    while (Date.now() < deadline) {
+      await sleep(1_000);
+      const state = await this.evaluate(`(() => {
+        const header = document.querySelector('#main header')?.innerText || '';
+        const body = document.body?.innerText || '';
+        return { header, precisaEntrar: /entrar no grupo|join group/i.test(body) };
+      })()`);
+      if (state.precisaEntrar && !state.header) {
+        throw new Error('A conta de monitoramento ainda nao participa deste grupo.');
+      }
+      if (state.header) {
+        const [groupName = '', ...participantLines] = state.header.split('\n');
+        openedGroupName = groupName.trim();
+        const matches = participantLines.join(' ').match(/\+?55\s*\(?\d{2}\)?\s*\d{4,5}[\s-]?\d{4}/g) || [];
+        const phones = new Set(matches.map(normalizePhone).filter(Boolean));
+        if (phones.size) return { groupName: openedGroupName, phones };
+      }
+    }
+    if (openedGroupName) throw new Error(`Grupo "${openedGroupName}" abriu, mas os participantes nao carregaram.`);
+    throw new Error('Tempo esgotado ao abrir o grupo pelo link_grupo.');
+  }
+
+  async readPendingRequests(groupName) {
+    const groupLiteral = JSON.stringify(groupName);
+    const result = await this.evaluate(`(async () => {
+      const openDb = () => new Promise((resolve, reject) => {
+        const request = indexedDB.open('model-storage');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const idbRequest = request => new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const canonical = value => String(value || '').normalize('NFD')
+        .replace(/[\\u0300-\\u036f]/g, '').replace(/\\s+/g, ' ').trim().toUpperCase();
+      const serializedId = value => {
+        if (typeof value === 'string') return value;
+        if (!value || typeof value !== 'object') return '';
+        return value._serialized || value.id || value.user || '';
+      };
+      const db = await openDb();
+      try {
+        const metadataStore = db.transaction('group-metadata', 'readonly').objectStore('group-metadata');
+        const groups = await idbRequest(metadataStore.getAll());
+        const group = groups.find(row => canonical(row.subject) === canonical(${groupLiteral}));
+        if (!group) throw new Error('Metadados do grupo nao encontrados no WhatsApp.');
+
+        const transaction = db.transaction(['pending-membership-approval-request', 'contact'], 'readonly');
+        const pendingStore = transaction.objectStore('pending-membership-approval-request');
+        const contactsStore = transaction.objectStore('contact');
+        const [pending, contacts] = await Promise.all([
+          idbRequest(pendingStore.index('groupId').getAll(group.id)),
+          idbRequest(contactsStore.getAll()),
+        ]);
+        const contactsById = new Map(contacts.map(contact => [serializedId(contact.id), contact]));
+        const requests = [];
+        for (const row of pending) {
+          const candidates = [row.id, row.requesterId, row.participantId, row.participant, row.wid]
+            .map(serializedId).filter(Boolean);
+          for (const value of Object.values(row)) {
+            const id = serializedId(value);
+            if (id && /@(lid|c\\.us|s\\.whatsapp\\.net)$/i.test(id)) candidates.push(id);
+          }
+          let phone = serializedId(row.phoneNumber);
+          for (const id of [...new Set(candidates)]) {
+            const contact = contactsById.get(id);
+            phone = phone || serializedId(contact?.phoneNumber);
+            if (phone) break;
+            if (/@(c\\.us|s\\.whatsapp\\.net)$/i.test(id)) phone = id;
+          }
+          requests.push({ phone: phone || null });
+        }
+        return { total: pending.length, requests };
+      } finally {
+        db.close();
+      }
+    })()`);
+    return result;
+  }
+
+  close() {
+    if (this.socket?.readyState === WebSocket.OPEN) this.socket.close();
+  }
+}
+
+async function loadTurmas() {
+  const rows = await get('dim_turmas', {
+    select: 'turma_id,curso,data_inicio,data_fim,status,confirma_pedagogico,link_grupo',
+    status: 'eq.aberta',
+    order: 'data_inicio.asc',
+    limit: '1000',
   });
-  const send = (method, params = {}) => {
-    const id = ++sequence;
-    socket.send(JSON.stringify({ id, method, params }));
-    return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+  const today = new Date().toISOString().slice(0, 10);
+  return rows.filter(row => !row.data_fim || row.data_fim >= today);
+}
+
+function selectPilots(activeTurmas) {
+  const if36 = activeTurmas.find(row => row.turma_id === '2026 - IF36');
+  const fcis = activeTurmas.find(row => /\bFCIS\s*\d+/i.test(row.turma_id));
+  return [if36, fcis].filter(Boolean);
+}
+
+async function buildEligibleStudents(turmaId) {
+  const facts = await get('fato_base_alunos', {
+    select: 'aluno_id,telefone_cliente,status_matricula,tipo_matricula',
+    turma: `eq.${turmaId}`,
+    limit: '1000',
+  });
+  const eligible = new Map();
+  for (const row of facts) {
+    if (row.status_matricula !== 'Aprovada' || ['COMPRADOR DE VAGAS', 'BÔNUS - COMPRADOR DE VAGAS'].includes(row.tipo_matricula)) continue;
+    eligible.set(String(row.aluno_id), { alunoId: String(row.aluno_id), phones: variants(row.telefone_cliente) });
+  }
+  const ids = [...eligible.keys()];
+  for (let i = 0; i < ids.length; i += 40) {
+    const contacts = await get('fato_contatos', {
+      select: 'cpf,celular',
+      cpf: `in.(${ids.slice(i, i + 40).join(',')})`,
+    });
+    for (const contact of contacts) {
+      const student = eligible.get(String(contact.cpf));
+      if (student) for (const phone of variants(contact.celular)) student.phones.add(phone);
+    }
+  }
+  return eligible;
+}
+
+async function buildInvitedStudents(turmaId) {
+  const invitations = await get('pedagogico_envios', {
+    select: 'aluno_id',
+    turma_id: `eq.${turmaId}`,
+    tipo: 'eq.prazo_vencendo',
+    status: 'eq.aceito',
+    limit: '1000',
+  });
+  const ids = [...new Set(invitations.map(row => String(row.aluno_id)).filter(Boolean))];
+  const invited = new Map(ids.map(alunoId => [alunoId, { alunoId, phones: new Set() }]));
+  for (let i = 0; i < ids.length; i += 40) {
+    const batch = ids.slice(i, i + 40);
+    const [contacts, facts] = await Promise.all([
+      get('fato_contatos', { select: 'cpf,celular', cpf: `in.(${batch.join(',')})` }),
+      get('fato_base_alunos', { select: 'aluno_id,telefone_cliente', aluno_id: `in.(${batch.join(',')})`, limit: '1000' }),
+    ]);
+    for (const contact of contacts) {
+      const student = invited.get(String(contact.cpf));
+      if (student) for (const phone of variants(contact.celular)) student.phones.add(phone);
+    }
+    for (const fact of facts) {
+      const student = invited.get(String(fact.aluno_id));
+      if (student) for (const phone of variants(fact.telefone_cliente)) student.phones.add(phone);
+    }
+  }
+  return invited;
+}
+
+function buildPhoneIndex(students) {
+  const index = new Map();
+  for (const student of students.values()) for (const phone of student.phones) {
+    if (!index.has(phone)) index.set(phone, new Set());
+    index.get(phone).add(student.alunoId);
+  }
+  return index;
+}
+
+function classifyPendingRequests(pending, approved, invited) {
+  const approvedIndex = buildPhoneIndex(approved);
+  const invitedIndex = buildPhoneIndex(invited);
+  const summary = {
+    total_pendente: pending.total,
+    aprovaria_automaticamente: 0,
+    revisao_manual: 0,
+    nao_elegivel: 0,
+    motivos: {},
+    erro: null,
   };
-  const expression = `(() => document.querySelector('#main header')?.innerText || '')()`;
-  const result = await send('Runtime.evaluate', { expression, returnByValue: true });
-  socket.close();
-  const header = result.result.value || '';
-  const [groupName = '', ...participantLines] = header.split('\n');
-  const matches = participantLines.join(' ').match(/\+55\s*\d{2}\s*\d{4,5}-\d{4}/g) || [];
-  return { groupName: groupName.trim(), phones: new Set(matches.map(normalizePhone).filter(Boolean)) };
+  const addReason = reason => { summary.motivos[reason] = (summary.motivos[reason] || 0) + 1; };
+  for (const request of pending.requests) {
+    const phoneVariants = variants(request.phone);
+    if (!phoneVariants.size) {
+      summary.revisao_manual++;
+      addReason('telefone_nao_disponivel');
+      continue;
+    }
+    const approvedIds = new Set();
+    const invitedIds = new Set();
+    for (const phone of phoneVariants) {
+      for (const id of approvedIndex.get(phone) || []) approvedIds.add(id);
+      for (const id of invitedIndex.get(phone) || []) invitedIds.add(id);
+    }
+    const combined = new Set([...approvedIds, ...invitedIds]);
+    if (combined.size === 1) {
+      summary.aprovaria_automaticamente++;
+      if (approvedIds.size && invitedIds.size) addReason('matricula_aprovada_e_represado_convidado');
+      else if (approvedIds.size) addReason('matricula_aprovada');
+      else addReason('represado_convidado');
+    } else if (combined.size > 1) {
+      summary.revisao_manual++;
+      addReason('telefone_ambiguo');
+    } else {
+      summary.nao_elegivel++;
+      addReason('sem_matricula_aprovada_ou_convite');
+    }
+  }
+  return summary;
 }
 
-const { groupName, phones: groupPhones } = await readOpenGroup();
-if (canonicalText(groupName) !== canonicalText(expectedGroup)) {
-  throw new Error(`Grupo aberto nao confere. Esperado: "${expectedGroup}"; aberto: "${groupName}".`);
-}
-
-const facts = await get('fato_base_alunos', {
-  select: 'aluno_id,telefone_cliente,status_matricula,tipo_matricula',
-  turma: `eq.${turma}`,
-  limit: '1000',
-});
-const eligible = new Map();
-for (const row of facts) {
-  if (row.status_matricula !== 'Aprovada' || row.tipo_matricula === 'COMPRADOR DE VAGAS') continue;
-  eligible.set(String(row.aluno_id), {
-    alunoId: String(row.aluno_id),
-    phones: variants(row.telefone_cliente),
+async function saveStatus(turmaId, result, startedAt) {
+  const error = result.erro || null;
+  const now = new Date().toISOString();
+  const duration = Math.round((Date.now() - startedAt) / 100) / 10;
+  await upsert('pedagogico_whatsapp_status', [{
+    turma_id: turmaId,
+    monitor: 'participantes',
+    ultima_execucao: now,
+    status: error ? 'erro' : 'ok',
+    identificados: result.identificados || 0,
+    novos: result.novos || 0,
+    desconhecidos: result.desconhecidos || 0,
+    ambiguos: result.ambiguos || 0,
+    total_pendente: 0,
+    aprovaria_automaticamente: 0,
+    revisao_manual: 0,
+    nao_elegivel: 0,
+    motivos: {},
+    erro: error,
+    grupo: result.grupo || null,
+    modo: write ? 'gravacao' : 'diagnostico',
+    duracao_segundos: duration,
+    atualizado_em: now,
+  }], 'turma_id,monitor');
+  const message = JSON.stringify({
+    turma_id: turmaId,
+    modo: write ? 'gravacao' : 'diagnostico',
+    grupo: result.grupo || null,
+    identificados: result.identificados || 0,
+    novos: result.novos || 0,
+    desconhecidos: result.desconhecidos || 0,
+    ambiguos: result.ambiguos || 0,
+    erro: error,
   });
+  await upsert('integracao_status', [{
+    fonte: `whatsapp_grupo:${turmaId}`,
+    nome_exibicao: `WhatsApp · ${turmaId}`,
+    ultima_sync: now,
+    registros: result.identificados || 0,
+    status: error ? 'erro' : 'ok',
+    mensagem: message,
+    duracao_segundos: duration,
+    atualizado_em: now,
+  }], 'fonte');
 }
 
-const ids = [...eligible.keys()];
-for (let i = 0; i < ids.length; i += 40) {
-  const contacts = await get('fato_contatos', {
-    select: 'cpf,celular',
-    cpf: `in.(${ids.slice(i, i + 40).join(',')})`,
-  });
-  for (const contact of contacts) {
-    const student = eligible.get(String(contact.cpf));
-    if (student) for (const phone of variants(contact.celular)) student.phones.add(phone);
+async function savePendingStatus(turmaId, summary, startedAt) {
+  const now = new Date().toISOString();
+  const duration = Math.round((Date.now() - startedAt) / 100) / 10;
+  await upsert('pedagogico_whatsapp_status', [{
+    turma_id: turmaId,
+    monitor: 'solicitacoes',
+    ultima_execucao: now,
+    status: summary.erro ? 'erro' : 'ok',
+    identificados: 0,
+    novos: 0,
+    desconhecidos: 0,
+    ambiguos: 0,
+    total_pendente: summary.total_pendente || 0,
+    aprovaria_automaticamente: summary.aprovaria_automaticamente || 0,
+    revisao_manual: summary.revisao_manual || 0,
+    nao_elegivel: summary.nao_elegivel || 0,
+    motivos: summary.motivos || {},
+    erro: summary.erro || null,
+    grupo: null,
+    modo: write ? 'gravacao' : 'diagnostico',
+    duracao_segundos: duration,
+    atualizado_em: now,
+  }], 'turma_id,monitor');
+  await upsert('integracao_status', [{
+    fonte: `whatsapp_solicitacoes:${turmaId}`,
+    nome_exibicao: `WhatsApp solicitações · ${turmaId}`,
+    ultima_sync: now,
+    registros: summary.total_pendente || 0,
+    status: summary.erro ? 'erro' : 'ok',
+    mensagem: JSON.stringify(summary),
+    duracao_segundos: duration,
+    atualizado_em: now,
+  }], 'fonte');
+}
+
+async function processTurma(client, turma) {
+  const startedAt = Date.now();
+  let result;
+  try {
+    if (!turma.link_grupo?.trim()) throw new Error('Turma ativa sem link_grupo cadastrado.');
+    const { groupName, phones: groupPhones } = await client.openGroup(turma.link_grupo.trim());
+    const eligible = await buildEligibleStudents(turma.turma_id);
+    const phoneIndex = buildPhoneIndex(eligible);
+
+    let pendingSummary;
+    const pendingStartedAt = Date.now();
+    try {
+      const [pending, invited] = await Promise.all([
+        client.readPendingRequests(groupName),
+        buildInvitedStudents(turma.turma_id),
+      ]);
+      pendingSummary = classifyPendingRequests(pending, eligible, invited);
+    } catch (pendingError) {
+      pendingSummary = {
+        total_pendente: 0,
+        aprovaria_automaticamente: 0,
+        revisao_manual: 0,
+        nao_elegivel: 0,
+        motivos: {},
+        erro: String(pendingError?.message || pendingError).slice(0, 500),
+      };
+    }
+    await savePendingStatus(turma.turma_id, pendingSummary, pendingStartedAt);
+
+    const matched = new Map();
+    let ambiguous = 0;
+    let unknown = 0;
+    for (const groupPhone of groupPhones) {
+      const candidates = new Set();
+      for (const variant of variants(groupPhone)) {
+        for (const alunoId of phoneIndex.get(variant) || []) candidates.add(alunoId);
+      }
+      if (candidates.size === 1) matched.set([...candidates][0], groupPhone);
+      else if (candidates.size > 1) ambiguous++;
+      else unknown++;
+    }
+
+    const existing = await get('pedagogico_confirmacoes', {
+      select: 'aluno_id',
+      turma_id: `eq.${turma.turma_id}`,
+      origem: 'eq.grupo_whatsapp',
+      limit: '1000',
+    });
+    const alreadyFromGroup = new Set(existing.map(row => String(row.aluno_id)));
+    const newRows = [...matched.entries()]
+      .filter(([alunoId]) => !alreadyFromGroup.has(alunoId))
+      .map(([alunoId, phone]) => ({
+        aluno_id: alunoId,
+        turma_id: turma.turma_id,
+        origem: 'grupo_whatsapp',
+        telefone: phone,
+        detalhes: { grupo: groupName, metodo: 'telefone_unico_whatsapp_web' },
+        atualizado_em: new Date().toISOString(),
+      }));
+    if (write) await upsert('pedagogico_confirmacoes', newRows, 'aluno_id,turma_id,origem');
+
+    result = {
+      turma: turma.turma_id,
+      grupo: groupName,
+      participantes_com_telefone: groupPhones.size,
+      inscritos_elegiveis: eligible.size,
+      identificados: matched.size,
+      novos: newRows.length,
+      desconhecidos: unknown,
+      ambiguos: ambiguous,
+      solicitacoes: pendingSummary,
+      erro: null,
+    };
+  } catch (error) {
+    result = {
+      turma: turma.turma_id,
+      grupo: null,
+      participantes_com_telefone: 0,
+      inscritos_elegiveis: 0,
+      identificados: 0,
+      novos: 0,
+      desconhecidos: 0,
+      ambiguos: 0,
+      erro: String(error?.message || error).slice(0, 500),
+    };
+  }
+  try {
+    await saveStatus(turma.turma_id, result, startedAt);
+  } catch (statusError) {
+    result.erro = result.erro || `Falha ao gravar status: ${String(statusError?.message || statusError).slice(0, 300)}`;
+  }
+  console.log(JSON.stringify(result));
+  return result;
+}
+
+const activeTurmas = await loadTurmas();
+let pilots = selectPilots(activeTurmas);
+if (requestedIds.length) {
+  const requested = new Set(requestedIds.map(canonicalText));
+  pilots = activeTurmas.filter(row => requested.has(canonicalText(row.turma_id)));
+}
+if (!pilots.some(row => row.turma_id === '2026 - IF36') && !requestedIds.length) {
+  throw new Error('Turma piloto 2026 - IF36 nao encontrada entre as turmas ativas.');
+}
+if (!pilots.some(row => /\bFCIS\s*\d+/i.test(row.turma_id)) && !requestedIds.length) {
+  throw new Error('Nenhuma FCIS ativa encontrada para o piloto.');
+}
+
+const results = [];
+const firstBatch = selection === 'all'
+  ? activeTurmas.filter(row => row.link_grupo?.trim())
+  : pilots;
+let client;
+try {
+  client = await CdpClient.connect().then(instance => instance.open());
+} catch (error) {
+  for (const turma of firstBatch) {
+    const startedAt = Date.now();
+    const result = {
+      turma: turma.turma_id,
+      grupo: null,
+      participantes_com_telefone: 0,
+      inscritos_elegiveis: 0,
+      identificados: 0,
+      novos: 0,
+      desconhecidos: 0,
+      ambiguos: 0,
+      erro: String(error?.message || error).slice(0, 500),
+    };
+    try { await saveStatus(turma.turma_id, result, startedAt); } catch {}
+    console.log(JSON.stringify(result));
+    results.push(result);
   }
 }
 
-const phoneIndex = new Map();
-for (const student of eligible.values()) for (const phone of student.phones) {
-  if (!phoneIndex.has(phone)) phoneIndex.set(phone, new Set());
-  phoneIndex.get(phone).add(student.alunoId);
-}
+if (client) {
+  try {
+    for (const turma of firstBatch) results.push(await processTurma(client, turma));
 
-const matched = new Map();
-let ambiguous = 0;
-let unknown = 0;
-for (const groupPhone of groupPhones) {
-  const candidates = new Set();
-  for (const variant of variants(groupPhone)) {
-    for (const alunoId of phoneIndex.get(variant) || []) candidates.add(alunoId);
+    const pilotSucceeded = pilots.length >= 2
+      && pilots.every(pilot => results.some(result => result.turma === pilot.turma_id && !result.erro));
+    if (selection === 'gated' && pilotSucceeded) {
+      const pilotIds = new Set(pilots.map(row => row.turma_id));
+      const remaining = activeTurmas.filter(row => row.link_grupo?.trim() && !pilotIds.has(row.turma_id));
+      for (const turma of remaining) results.push(await processTurma(client, turma));
+    }
+  } finally {
+    client.close();
   }
-  if (candidates.size === 1) matched.set([...candidates][0], groupPhone);
-  else if (candidates.size > 1) ambiguous++;
-  else unknown++;
 }
 
-const confirmations = await get('pedagogico_confirmacoes', {
-  select: 'aluno_id,origem',
-  turma_id: `eq.${turma}`,
-  limit: '1000',
-});
-const confirmed = new Set(confirmations.map(row => String(row.aluno_id)));
-const newRows = [...matched.entries()]
-  .filter(([alunoId]) => !confirmed.has(alunoId))
-  .map(([alunoId, phone]) => ({
-    aluno_id: alunoId,
-    turma_id: turma,
-    origem: 'grupo_whatsapp',
-    telefone: phone,
-    detalhes: { grupo: groupName, metodo: 'telefone_unico_whatsapp_web' },
-  }));
-
-if (write) await upsert('pedagogico_confirmacoes', newRows);
 console.log(JSON.stringify({
   modo: write ? 'gravacao' : 'diagnostico',
-  turma,
-  grupo: groupName,
-  telefones_visiveis: groupPhones.size,
-  inscritos_elegiveis: eligible.size,
-  identificados_com_seguranca: matched.size,
-  ja_confirmados: [...matched.keys()].filter(id => confirmed.has(id)).length,
-  novas_confirmacoes: newRows.length,
-  telefones_desconhecidos: unknown,
-  telefones_ambiguos: ambiguous,
+  selecao: selection,
+  turmas_processadas: results.map(result => result.turma),
+  pilotos_aprovados: pilots.length >= 2 && pilots.every(pilot => results.some(result => result.turma === pilot.turma_id && !result.erro)),
+  total_identificados: results.reduce((sum, result) => sum + result.identificados, 0),
+  total_novos: results.reduce((sum, result) => sum + result.novos, 0),
+  total_desconhecidos: results.reduce((sum, result) => sum + result.desconhecidos, 0),
+  erros: results.filter(result => result.erro).map(result => ({ turma: result.turma, erro: result.erro })),
 }, null, 2));
+
+if (results.some(result => result.erro)) process.exitCode = 1;
