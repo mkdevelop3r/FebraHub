@@ -41,6 +41,9 @@ jobs:
           CRM_LOCATION_ID: ${{ secrets.CRM_LOCATION_ID }}
           MSG_FILA: boas_vindas
           MSG_LIMITE: ${{ github.event_name == 'workflow_dispatch' && inputs.limite || 5 }}
+          # Redundancia operacional; o script tambem bloqueia toda turma cuja
+          # data_inicio seja hoje ou esteja no passado.
+          MSG_TURMAS_BLOQUEADAS: 2026 - IF36
         run: python etl/pedagogico_mensagens.py
 
       - name: Registrar status
@@ -59,4 +62,3 @@ jobs:
             -H "Content-Type: application/json" \
             -H "Prefer: resolution=merge-duplicates" \
             -d "{\"fonte\":\"mensagens_pedagogico\",\"nome_exibicao\":\"Mensagens Pedagogico\",\"ultima_sync\":\"$agora\",\"status\":\"$status\",\"atualizado_em\":\"$agora\"}"
-

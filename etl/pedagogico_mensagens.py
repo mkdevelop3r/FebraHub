@@ -54,6 +54,7 @@ Variáveis de ambiente:
 import os
 import sys
 import time
+from datetime import date
 
 import requests
 
@@ -64,6 +65,10 @@ CRM_LOCATION = os.environ["CRM_LOCATION_ID"]
 LIMITE = int(os.environ.get("MSG_LIMITE") or 10)
 FILA = os.environ.get("MSG_FILA", "todas").strip().lower()
 TURMA_FILTRO = os.environ.get("MSG_TURMA_ID", "").strip()
+TURMAS_BLOQUEADAS = {
+    turma.strip() for turma in os.environ.get("MSG_TURMAS_BLOQUEADAS", "").split(",")
+    if turma.strip()
+}
 
 SB = {"apikey": SERVICE_KEY, "Authorization": f"Bearer {SERVICE_KEY}",
       "Content-Type": "application/json"}
@@ -110,13 +115,31 @@ def erro_com_corpo(r):
 
 def ler_fila(view, limite):
     params = {"select": "*"}
-    if limite:
-        params["limit"] = limite
+    # Boas-vindas sao filtradas antes do limite. Assim, cinco linhas de uma
+    # turma iniciada nao escondem compras elegiveis que estejam logo depois.
+    limite_busca = 1000 if view == "vw_boas_vindas_fila" else limite
+    if limite_busca:
+        params["limit"] = limite_busca
     if view == "vw_prazo_fila_envio" and TURMA_FILTRO:
         params["turma_id"] = f"eq.{TURMA_FILTRO}"
     r = erro_com_corpo(requests.get(f"{SUPABASE_URL}/rest/v1/{view}",
                                     headers=SB, params=params, timeout=60))
-    return r.json()
+    linhas = r.json()
+    if view != "vw_boas_vindas_fila":
+        return linhas
+
+    iniciadas = erro_com_corpo(requests.get(
+        f"{SUPABASE_URL}/rest/v1/dim_turmas",
+        headers=SB,
+        params={"select": "turma_id", "data_inicio": f"lte.{date.today().isoformat()}"},
+        timeout=60,
+    )).json()
+    bloqueadas = TURMAS_BLOQUEADAS | {str(t["turma_id"]) for t in iniciadas}
+    elegiveis = [l for l in linhas if str(l.get("turma_id") or "") not in bloqueadas]
+    removidas = len(linhas) - len(elegiveis)
+    if removidas:
+        log(f"vw_boas_vindas_fila: {removidas} ignoradas por turma iniciada/bloqueada")
+    return elegiveis[:limite] if limite else elegiveis
 
 
 def data_br(iso):

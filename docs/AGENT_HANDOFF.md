@@ -1372,6 +1372,9 @@ gravadas.
 - `.github/workflows/mensagens-pedagogico.yml` roda aos minutos 07/22/37/52,
   depois da carga Salesforce, e processa exclusivamente `MSG_FILA=boas_vindas`.
 - O lote inicial e 5 por rodada para escoar pendencias recentes com seguranca.
+- Boas-vindas nunca sao enviadas para turma que ja iniciou (`data_inicio <= hoje`).
+  `MSG_TURMAS_BLOQUEADAS` oferece uma trava adicional por `turma_id`; IF36
+  permanece listado explicitamente no workflow.
 - A concorrencia `mensagens-pedagogico` e compartilhada com o disparo manual de
   represados, impedindo aplicacao simultanea de tags no CRM.
 - O status volta a ser gravado em `integracao_status` com fonte
