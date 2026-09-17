@@ -1,0 +1,34 @@
+# ============================================================
+# FebraHub · Atualizar fila de prazo (represados)
+#
+# A fila de represados (tabela snapshot `fila_prazo`) precisa ser
+# recalculada periodicamente a partir da view viva `vw_pedagogico_prazo`.
+# Esse refresh MORAVA dentro do sync-salesforce.yml — que está com o
+# cron desligado de propósito. Sem ele, a fila congela: turmas que já
+# começaram continuam aparecendo e quem se resolveu não sai.
+#
+# Este workflow é INDEPENDENTE: só chama a RPC atualizar_fila_prazo,
+# num cron próprio, sem tocar no sync-salesforce.yml.
+# ============================================================
+name: Atualizar fila de prazo
+
+on:
+  schedule:
+    - cron: '30 9 * * *'   # 06:30 Salvador — logo depois do 1o sync do dia
+  workflow_dispatch:
+
+jobs:
+  fila:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Recalcular fila_prazo
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          curl -s --fail-with-body -X POST \
+            "$SUPABASE_URL/rest/v1/rpc/atualizar_fila_prazo" \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}'
