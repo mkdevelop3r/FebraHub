@@ -1366,3 +1366,13 @@ gravadas.
 - `vw_confirmacoes_turma_origem` expõe a abertura por fonte. O futuro monitor
   do WhatsApp Web deve fazer upsert com `origem='grupo_whatsapp'`, usando a
   service role, e nunca escrever em `pedagogico_envios`.
+## Boas-vindas automaticas do Pedagogico
+
+- O envio nao depende mais do fallback `sync-salesforce.yml`, que e manual.
+- `.github/workflows/mensagens-pedagogico.yml` roda aos minutos 07/22/37/52,
+  depois da carga Salesforce, e processa exclusivamente `MSG_FILA=boas_vindas`.
+- O lote inicial e 5 por rodada para escoar pendencias recentes com seguranca.
+- A concorrencia `mensagens-pedagogico` e compartilhada com o disparo manual de
+  represados, impedindo aplicacao simultanea de tags no CRM.
+- O status volta a ser gravado em `integracao_status` com fonte
+  `mensagens_pedagogico`.

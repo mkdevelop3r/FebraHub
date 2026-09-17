@@ -1,0 +1,62 @@
+name: Mensagens Pedagogico
+
+on:
+  schedule:
+    # A carga Salesforce inicia em 00/15/30/45. Este fluxo entra depois,
+    # sem acoplar mensageria ao sucesso de uma integracao especifica.
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+    inputs:
+      limite:
+        description: Maximo de boas-vindas nesta execucao
+        required: true
+        type: number
+        default: 5
+
+concurrency:
+  # Compartilhado com o disparo manual de represados: duas rotinas nunca
+  # aplicam tags pedagogicas ao mesmo tempo.
+  group: mensagens-pedagogico
+  cancel-in-progress: false
+
+jobs:
+  boas-vindas:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Instalar dependencias
+        run: pip install -r etl/requirements.txt
+
+      - name: Enviar boas-vindas pendentes
+        id: mensagens
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
+          CRM_LOCATION_ID: ${{ secrets.CRM_LOCATION_ID }}
+          MSG_FILA: boas_vindas
+          MSG_LIMITE: ${{ github.event_name == 'workflow_dispatch' && inputs.limite || 5 }}
+        run: python etl/pedagogico_mensagens.py
+
+      - name: Registrar status
+        if: always()
+        env:
+          RESULTADO: ${{ steps.mensagens.outcome }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          agora="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          if [ "$RESULTADO" = "success" ]; then status="ok"; else status="erro"; fi
+          curl --silent --show-error --fail-with-body \
+            -X POST "$SUPABASE_URL/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"mensagens_pedagogico\",\"nome_exibicao\":\"Mensagens Pedagogico\",\"ultima_sync\":\"$agora\",\"status\":\"$status\",\"atualizado_em\":\"$agora\"}"
+
