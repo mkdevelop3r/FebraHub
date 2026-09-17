@@ -1379,3 +1379,6 @@ gravadas.
   represados, impedindo aplicacao simultanea de tags no CRM.
 - O status volta a ser gravado em `integracao_status` com fonte
   `mensagens_pedagogico`.
+- O mesmo workflow processa `MSG_FILA=turma` em lote de 10: confirmacao e
+  link do grupo que o Pedagogico ja enfileirou no Hub. O script exige
+  `link_grupo`; sem ele, nenhum dos dois tipos e enviado.

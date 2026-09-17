@@ -446,6 +446,7 @@ def main():
                 "credenciamento": l.get("horario_credenciamento"),
                 "link_grupo": l.get("link_grupo"),
             },
+            exige=("link_grupo",),
         )
 
     if FILA in {"todas", "prazo"}:
