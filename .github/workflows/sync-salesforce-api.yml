@@ -1,6 +1,11 @@
 name: Sync Salesforce API
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sync-salesforce-api.yml'
+      - 'etl/salesforce_api_sync.py'
   schedule:
     # Consulta direta ao Salesforce, com atraso maximo nominal de 15 minutos.
     - cron: '*/15 * * * *'

@@ -1,6 +1,11 @@
 name: Mensagens Pedagogico
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mensagens-pedagogico.yml'
+      - 'etl/pedagogico_mensagens.py'
   schedule:
     # A carga Salesforce inicia em 00/15/30/45. Este fluxo entra depois,
     # sem acoplar mensageria ao sucesso de uma integracao especifica.

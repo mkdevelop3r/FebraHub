@@ -4,6 +4,11 @@
 name: Respostas Pedagógico
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/pedagogico-respostas.yml'
+      - 'etl/pedagogico_mensagens.py'
   schedule:
     - cron: '*/15 * * * *'
   workflow_dispatch:
