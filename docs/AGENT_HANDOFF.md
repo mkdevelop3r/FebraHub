@@ -1419,3 +1419,14 @@ gravadas.
 - `FebraHub - WhatsApp Grupos` foi reativado e executado pelo Agendador: tarefa habilitada, estado `Ready`, `LastTaskResult=0` e proxima rodada mantida no intervalo de cinco minutos.
 - Validacoes finais: `node --check`, parser dos quatro scripts PowerShell, `git diff --check`, rodada piloto em gravacao e consulta dos quatro registros de status no Supabase. Sem alteracao de front; build nao se aplica.
 - Trabalho consolidado na branch `codex/whatsapp-grupo-confirmacoes`; commit e push realizados ao termino desta passagem por solicitacao explicita do usuario.
+
+### Codex - 18/09/2026 - Aprovacao automatica segura de pedidos
+
+- A aprovacao deixou de ser somente simulada no modo de gravacao. O monitor continua classificando cada pedido pelo telefone e so clica em `Aprovar` quando existe exatamente um aluno elegivel: matricula aprovada da turma ou represado com convite aceito. Telefone ausente, desconhecido ou ambiguo permanece sem acao; o codigo nunca clica em `Recusar`.
+- O modo diagnostico continua sem efeitos no grupo. Em gravacao, o pedido e localizado no painel `Pedidos pendentes` pelo mesmo telefone validado no Supabase; nomes iguais nao sao usados para decidir.
+- `db/205_whatsapp_aprovacao_automatica.sql` adiciona `aprovados_automaticamente` ao status por turma. A migration 205 foi aplicada no Supabase em 18/09/2026.
+- A conta conectada precisou ser promovida novamente a administradora do FCIS37. Antes disso o WhatsApp respondia que somente admins podiam analisar os pedidos.
+- Validacao real: Mara apareceu como a unica solicitacao do FCIS37, com matricula aprovada e correspondencia unica. Foi aprovada; a leitura seguinte mostrou zero pendentes, participantes com telefone de 25 para 26 e identificados de 19 para 20. Nenhum telefone foi exibido ou persistido no status.
+- O clique da interface exige a sequencia de eventos de ponteiro/mouse no item real dentro de `#main`; `element.click()` era ignorado pelo WhatsApp. A conexao CDP agora registra a promessa antes de enviar, rejeita chamadas quando o socket fecha e nunca deixa uma rodada presa apos recarregamento da pagina.
+- Depois da aprovacao, uma rodada dirigida do FCIS gravou a nova evidencia `grupo_whatsapp`; a rodada piloto completa seguinte terminou com `Resultado=0`, zero pendentes e zero novos, confirmando idempotencia.
+- `FebraHub - WhatsApp Grupos` foi reativado; a primeira rodada pelo Agendador terminou em `Ready`, habilitada e `LastTaskResult=0`.

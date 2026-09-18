@@ -168,3 +168,4 @@ Ordem de aplicação e o que cada uma faz. Gerado a partir do cabeçalho de cada
 | 200 | `200_represado_recebe_link_grupo.sql` | Represado só entra na fila quando a turma possui `link_grupo`; a fila entrega o link ao CRM e a campanha por turma falha antes de enfileirar se o cadastro estiver incompleto. |
 | 201 | `201_confirmacao_fonte_unica.sql` | Separa confirmação de envio: eventos por aluno/turma/origem (`crm`, `manual`, `grupo_whatsapp`, `importacao`), trigger de compatibilidade com `pedagogico_envios`, backfill e Central contando qualquer evidência antes do status da mensagem. |
 | 204 | `204_whatsapp_monitor_status.sql` | Status por turma do monitor automático de participantes e da simulação de solicitações de entrada, com contagens agregadas e sem telefones. |
+| 205 | `205_whatsapp_aprovacao_automatica.sql` | Registra quantos pedidos foram efetivamente aprovados pelo monitor após correspondência única com matrícula aprovada ou represado convidado. |

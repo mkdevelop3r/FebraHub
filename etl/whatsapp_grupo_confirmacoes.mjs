@@ -111,14 +111,31 @@ class CdpClient {
       this.pending.delete(message.id);
       message.error ? callback.reject(new Error(JSON.stringify(message.error))) : callback.resolve(message.result);
     });
+    const rejectPending = reason => {
+      for (const callback of this.pending.values()) callback.reject(new Error(reason));
+      this.pending.clear();
+    };
+    this.socket.addEventListener('close', () => rejectPending('Conexão com o WhatsApp Web foi encerrada.'));
+    this.socket.addEventListener('error', () => rejectPending('Conexão com o WhatsApp Web falhou.'));
     await this.send('Page.enable');
     return this;
   }
 
   send(method, params = {}) {
     const id = ++this.sequence;
-    this.socket.send(JSON.stringify({ id, method, params }));
-    return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
+    return new Promise((resolve, reject) => {
+      if (this.socket?.readyState !== WebSocket.OPEN) {
+        reject(new Error('Conexão com o WhatsApp Web não está aberta.'));
+        return;
+      }
+      this.pending.set(id, { resolve, reject });
+      try {
+        this.socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        this.pending.delete(id);
+        reject(error);
+      }
+    });
   }
 
   async evaluate(expression) {
@@ -222,6 +239,133 @@ class CdpClient {
     return result;
   }
 
+  async approvePendingRequests(groupName, phones) {
+    const safePhones = [...new Set(phones.map(normalizePhone).filter(Boolean))];
+    if (!safePhones.length) return { approved: 0, failed: 0 };
+
+    let panelReady = false;
+    let headerClicked = false;
+    for (let attempt = 0; attempt < 20 && !panelReady; attempt++) {
+      const openState = await this.evaluate(`(() => {
+        const activate = target => {
+          for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+            target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window }));
+          }
+        };
+        const body = document.body?.innerText || '';
+        if (/Você não é mais um admin|You are no longer an admin/i.test(body)) {
+          return { error: 'A conta de monitoramento não é administradora do grupo.' };
+        }
+        if (/Pedidos pendentes|Pending requests/i.test(body)) return { ready: true };
+        const reviewButton = [...document.querySelectorAll('button,[role="button"]')].find(element =>
+          /Analisar\s+\d+\s+pedido|Review\s+\d+\s+request/i.test((element.innerText || '').trim()));
+        if (reviewButton) {
+          activate(reviewButton);
+          return { clicked: 'review' };
+        }
+        const notification = document.querySelector('#main [data-testid="subtype-membership_approval_request"]');
+        if (notification) {
+          activate(notification);
+          return { clicked: 'notification' };
+        }
+        return {};
+      })()`);
+      if (openState.error) throw new Error(openState.error);
+      panelReady = Boolean(openState.ready);
+      if (!panelReady && !openState.clicked && !headerClicked) {
+        headerClicked = await this.evaluate(`(() => {
+          const header = document.querySelector('#main header');
+          if (!header) return false;
+          header.click();
+          return true;
+        })()`);
+      }
+      if (!panelReady) await sleep(400);
+    }
+    if (!panelReady) throw new Error('Painel de pedidos pendentes não abriu no WhatsApp Web.');
+
+    let approved = 0;
+    let failed = 0;
+    for (const phone of safePhones) {
+      const clicked = await this.evaluate(`(() => {
+        const activate = target => {
+          for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+            target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window }));
+          }
+        };
+        const normalize = value => {
+          let digits = String(value || '').replace(/\D/g, '');
+          if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2);
+          return digits;
+        };
+        const variants = value => {
+          const digits = normalize(value);
+          const result = new Set(digits ? [digits] : []);
+          if (digits.length === 10) result.add(digits.slice(0, 2) + '9' + digits.slice(2));
+          if (digits.length === 11 && digits[2] === '9') result.add(digits.slice(0, 2) + digits.slice(3));
+          return result;
+        };
+        const wanted = variants(${JSON.stringify(phone)});
+        const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(element =>
+          /^(Aprovar|Approve)$/i.test((element.innerText || element.getAttribute('aria-label') || '').trim()));
+        for (const button of buttons) {
+          let row = button;
+          while (row?.parentElement && !row.querySelector('[data-testid="name"]')) row = row.parentElement;
+          const nameBlock = row?.querySelector('[data-testid="name"]');
+          if (!nameBlock) continue;
+          const numbers = (nameBlock.innerText || '').match(/\+?\d[\d\s()-]{8,}\d/g) || [];
+          if (!numbers.some(number => [...variants(number)].some(value => wanted.has(value)))) continue;
+          activate(button);
+          return true;
+        }
+        return false;
+      })()`);
+      if (!clicked) {
+        failed++;
+        continue;
+      }
+
+      let removed = false;
+      for (let attempt = 0; attempt < 12 && !removed; attempt++) {
+        await sleep(500);
+        const state = await this.evaluate(`(() => {
+          const normalize = value => {
+            let digits = String(value || '').replace(/\D/g, '');
+            if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2);
+            return digits;
+          };
+          const variants = value => {
+            const digits = normalize(value);
+            const result = new Set(digits ? [digits] : []);
+            if (digits.length === 10) result.add(digits.slice(0, 2) + '9' + digits.slice(2));
+            if (digits.length === 11 && digits[2] === '9') result.add(digits.slice(0, 2) + digits.slice(3));
+            return result;
+          };
+          const wanted = variants(${JSON.stringify(phone)});
+          const body = document.body?.innerText || '';
+          if (/Você não é mais um admin|You are no longer an admin/i.test(body)) {
+            return { error: 'A conta de monitoramento não é administradora do grupo.' };
+          }
+          const buttons = [...document.querySelectorAll('button,[role="button"]')].filter(element =>
+            /^(Aprovar|Approve)$/i.test((element.innerText || element.getAttribute('aria-label') || '').trim()));
+          const stillPending = buttons.some(button => {
+            let row = button;
+            while (row?.parentElement && !row.querySelector('[data-testid="name"]')) row = row.parentElement;
+            const nameBlock = row?.querySelector('[data-testid="name"]');
+            const numbers = (nameBlock?.innerText || '').match(/\+?\d[\d\s()-]{8,}\d/g) || [];
+            return numbers.some(number => [...variants(number)].some(value => wanted.has(value)));
+          });
+          return { stillPending };
+        })()`);
+        if (state.error) throw new Error(state.error);
+        removed = !state.stillPending;
+      }
+      if (removed) approved++;
+      else failed++;
+    }
+    return { approved, failed };
+  }
+
   close() {
     if (this.socket?.readyState === WebSocket.OPEN) this.socket.close();
   }
@@ -312,11 +456,13 @@ function classifyPendingRequests(pending, approved, invited) {
   const summary = {
     total_pendente: pending.total,
     aprovaria_automaticamente: 0,
+    aprovados_automaticamente: 0,
     revisao_manual: 0,
     nao_elegivel: 0,
     motivos: {},
     erro: null,
   };
+  const approvalPhones = [];
   const addReason = reason => { summary.motivos[reason] = (summary.motivos[reason] || 0) + 1; };
   for (const request of pending.requests) {
     const phoneVariants = variants(request.phone);
@@ -334,6 +480,7 @@ function classifyPendingRequests(pending, approved, invited) {
     const combined = new Set([...approvedIds, ...invitedIds]);
     if (combined.size === 1) {
       summary.aprovaria_automaticamente++;
+      approvalPhones.push(request.phone);
       if (approvedIds.size && invitedIds.size) addReason('matricula_aprovada_e_represado_convidado');
       else if (approvedIds.size) addReason('matricula_aprovada');
       else addReason('represado_convidado');
@@ -345,7 +492,7 @@ function classifyPendingRequests(pending, approved, invited) {
       addReason('sem_matricula_aprovada_ou_convite');
     }
   }
-  return summary;
+  return { summary, approvalPhones };
 }
 
 async function saveStatus(turmaId, result, startedAt) {
@@ -363,6 +510,7 @@ async function saveStatus(turmaId, result, startedAt) {
     ambiguos: result.ambiguos || 0,
     total_pendente: 0,
     aprovaria_automaticamente: 0,
+    aprovados_automaticamente: 0,
     revisao_manual: 0,
     nao_elegivel: 0,
     motivos: {},
@@ -408,6 +556,7 @@ async function savePendingStatus(turmaId, summary, startedAt) {
     ambiguos: 0,
     total_pendente: summary.total_pendente || 0,
     aprovaria_automaticamente: summary.aprovaria_automaticamente || 0,
+    aprovados_automaticamente: summary.aprovados_automaticamente || 0,
     revisao_manual: summary.revisao_manual || 0,
     nao_elegivel: summary.nao_elegivel || 0,
     motivos: summary.motivos || {},
@@ -445,11 +594,22 @@ async function processTurma(client, turma) {
         client.readPendingRequests(groupName),
         buildInvitedStudents(turma.turma_id),
       ]);
-      pendingSummary = classifyPendingRequests(pending, eligible, invited);
+      const classification = classifyPendingRequests(pending, eligible, invited);
+      pendingSummary = classification.summary;
+      if (write && classification.approvalPhones.length) {
+        try {
+          const approval = await client.approvePendingRequests(groupName, classification.approvalPhones);
+          pendingSummary.aprovados_automaticamente = approval.approved;
+          if (approval.failed) pendingSummary.erro = `${approval.failed} pedido(s) elegível(is) não foram aprovados.`;
+        } catch (approvalError) {
+          pendingSummary.erro = String(approvalError?.message || approvalError).slice(0, 500);
+        }
+      }
     } catch (pendingError) {
       pendingSummary = {
         total_pendente: 0,
         aprovaria_automaticamente: 0,
+        aprovados_automaticamente: 0,
         revisao_manual: 0,
         nao_elegivel: 0,
         motivos: {},
