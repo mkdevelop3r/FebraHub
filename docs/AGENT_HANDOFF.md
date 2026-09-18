@@ -1375,6 +1375,8 @@ gravadas.
 - Boas-vindas nunca sao enviadas para turma que ja iniciou (`data_inicio <= hoje`).
   `MSG_TURMAS_BLOQUEADAS` oferece uma trava adicional por `turma_id`; IF36
   permanece listado explicitamente no workflow.
+- Confirmacoes e links de grupo usam a mesma trava: IF36 e qualquer turma que
+  ja iniciou sao removidos da fila antes do limite e nao recebem mensagens.
 - A concorrencia `mensagens-pedagogico` e compartilhada com o disparo manual de
   represados, impedindo aplicacao simultanea de tags no CRM.
 - O status volta a ser gravado em `integracao_status` com fonte

@@ -115,9 +115,10 @@ def erro_com_corpo(r):
 
 def ler_fila(view, limite):
     params = {"select": "*"}
-    # Boas-vindas sao filtradas antes do limite. Assim, cinco linhas de uma
-    # turma iniciada nao escondem compras elegiveis que estejam logo depois.
-    limite_busca = 1000 if view == "vw_boas_vindas_fila" else limite
+    # Mensagens ligadas a uma turma sao filtradas antes do limite. Assim,
+    # linhas de uma turma iniciada nao escondem pessoas elegiveis de outra.
+    views_com_turma = {"vw_boas_vindas_fila", "vw_turma_fila_envio"}
+    limite_busca = 1000 if view in views_com_turma else limite
     if limite_busca:
         params["limit"] = limite_busca
     if view == "vw_prazo_fila_envio" and TURMA_FILTRO:
@@ -125,7 +126,7 @@ def ler_fila(view, limite):
     r = erro_com_corpo(requests.get(f"{SUPABASE_URL}/rest/v1/{view}",
                                     headers=SB, params=params, timeout=60))
     linhas = r.json()
-    if view != "vw_boas_vindas_fila":
+    if view not in views_com_turma:
         return linhas
 
     iniciadas = erro_com_corpo(requests.get(
@@ -138,7 +139,7 @@ def ler_fila(view, limite):
     elegiveis = [l for l in linhas if str(l.get("turma_id") or "") not in bloqueadas]
     removidas = len(linhas) - len(elegiveis)
     if removidas:
-        log(f"vw_boas_vindas_fila: {removidas} ignoradas por turma iniciada/bloqueada")
+        log(f"{view}: {removidas} ignoradas por turma iniciada/bloqueada")
     return elegiveis[:limite] if limite else elegiveis
 
 

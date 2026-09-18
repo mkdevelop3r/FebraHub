@@ -60,6 +60,9 @@ jobs:
           CRM_LOCATION_ID: ${{ secrets.CRM_LOCATION_ID }}
           MSG_FILA: turma
           MSG_LIMITE: ${{ github.event_name == 'workflow_dispatch' && inputs.limite_turma || 10 }}
+          # IF36 e qualquer outra turma ja iniciada nao recebem confirmacao
+          # nem link do grupo atrasados.
+          MSG_TURMAS_BLOQUEADAS: 2026 - IF36
         run: python etl/pedagogico_mensagens.py
 
       - name: Registrar status
