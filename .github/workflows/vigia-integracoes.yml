@@ -1,5 +1,13 @@
 name: Vigia das integracoes
 on:
+  # Garante a primeira leitura imediatamente quando o vigia for criado ou
+  # alterado. Depois disso, o cron mantém a observacao recorrente.
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/vigia-integracoes.yml'
+      - 'etl/integracoes_vigia.py'
+      - 'db/202_vigia_integracoes.sql'
   schedule:
     - cron: '10,25,40,55 * * * *'
   workflow_dispatch:
