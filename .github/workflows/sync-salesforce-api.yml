@@ -88,9 +88,9 @@ jobs:
         run: >-
           python etl/salesforce_api_sync.py
           ${{ inputs.incluir_presenca && '--include-presence' || '' }}
-          ${{ (github.event_name == 'schedule' || inputs.incluir_credenciamento) && '--include-credentialing' || '' }}
-          ${{ (github.event_name == 'schedule' || inputs.comparar_supabase) && '--compare' || '' }}
-          ${{ (github.event_name == 'schedule' || inputs.gravar_alunos) && '--write --target students' || '' }}
-          ${{ (github.event_name == 'schedule' || inputs.gravar_pagamentos) && '--write --target payments' || '' }}
+          ${{ (github.event_name != 'workflow_dispatch' || inputs.incluir_credenciamento) && '--include-credentialing' || '' }}
+          ${{ (github.event_name != 'workflow_dispatch' || inputs.comparar_supabase) && '--compare' || '' }}
+          ${{ (github.event_name != 'workflow_dispatch' || inputs.gravar_alunos) && '--write --target students' || '' }}
+          ${{ (github.event_name != 'workflow_dispatch' || inputs.gravar_pagamentos) && '--write --target payments' || '' }}
           ${{ inputs.gravar_presenca && '--write --target presence' || '' }}
-          ${{ (github.event_name == 'schedule' || inputs.gravar_credenciamento) && '--write --target credentialing' || '' }}
+          ${{ (github.event_name != 'workflow_dispatch' || inputs.gravar_credenciamento) && '--write --target credentialing' || '' }}
