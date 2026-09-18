@@ -1377,6 +1377,10 @@ gravadas.
   permanece listado explicitamente no workflow.
 - Confirmacoes e links de grupo usam a mesma trava: IF36 e qualquer turma que
   ja iniciou sao removidos da fila antes do limite e nao recebem mensagens.
+- O vigia de integracoes vive em `etl/integracoes_vigia.py`, roda a cada 15
+  minutos e compara execucao declarada com relogio/contagem do destino.
+  Migration `db/202_vigia_integracoes.sql`; a Central de APIs e restrita a
+  direcao. Alertas sao deduplicados e encerrados na recuperacao.
 - A concorrencia `mensagens-pedagogico` e compartilhada com o disparo manual de
   represados, impedindo aplicacao simultanea de tags no CRM.
 - O status volta a ser gravado em `integracao_status` com fonte

@@ -1,0 +1,22 @@
+name: Vigia das integracoes
+on:
+  schedule:
+    - cron: '10,25,40,55 * * * *'
+  workflow_dispatch:
+concurrency:
+  group: vigia-integracoes
+  cancel-in-progress: false
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - run: pip install -r etl/requirements.txt
+      - run: python etl/integracoes_vigia.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          VIGIA_ALERT_WEBHOOK_URL: ${{ secrets.VIGIA_ALERT_WEBHOOK_URL }}

@@ -55,7 +55,7 @@ import {
   salvarMaestroAnotacao, salvarRetencao, salvarTurma,
   useEventosDesempenho,
   useAuditoriaKpi, useAuditoriaGaps, useAuditoriaConsultora, useConformidadeVenda,
-  useIntegracaoStatus,
+  useIntegracaoStatus, useVigiaIntegracoes,
   porMes, moeda, numero,
 } from "./lib/dados";
 import { ETAPAS_ROTULO, rotuloEtapa } from "./lib/etapas";
@@ -131,6 +131,8 @@ const HUBS = [
      'geral' só pertence a admin. */
   { key: "metas", setor: "geral", nome: "Metas", Icone: Target,
     desc: "Meta de cada setor, mês a mês" },
+  { key: "integracoes", setor: "geral", nome: "Central de APIs", Icone: Database,
+    desc: "Saúde real das fontes e suas gravações" },
   /* Hub próprio (não é do Comercial nem da Auditoria): gestão de carteira de
      leads. Visível a `consultor` (as 5 consultoras, que só têm este hub) e à
      gestão (`comercial`/`geral`/admin). A consultora não passa por aqui na
@@ -439,6 +441,31 @@ function visualFonte(r) {
 
 // Nome de exibição de fonte que o hub cita mas a view ainda não registra.
 const NOME_FONTE = { clint: "Clint" };
+
+function HubIntegracoes() {
+  const q = useVigiaIntegracoes();
+  const linhas = q.data ?? [];
+  const cor = (s) => s === "saudavel" ? C.up : s === "nao_mensurado" ? C.warn : C.down;
+  const rotulo = (s) => ({ saudavel: "Saudável", atrasado: "Fonte atrasada", erro: "Erro",
+    sem_avanco: "Rodou sem gravar", nao_mensurado: "Gravação não mensurada" }[s] ?? "Aguardando leitura");
+  return <>
+    <div style={{ marginBottom: 18 }}>
+      <h2 style={{ fontSize: 16, fontWeight: 800, color: C.bright }}>Central de APIs</h2>
+      <p style={{ color: C.muted, fontSize: 12, marginTop: 5 }}>Execução da fonte e avanço real da tabela de destino.</p>
+    </div>
+    <Bloco titulo="Saúde das integrações" canto={`${linhas.filter(x => x.situacao === "saudavel").length} saudáveis · ${linhas.length} fontes`} sem>
+      {q.isLoading ? <Estado texto="Verificando fontes..." /> : linhas.map((r) => <div key={r.fonte} style={{
+        display:"grid", gridTemplateColumns:"minmax(150px,1.2fr) minmax(140px,.8fr) minmax(220px,2fr)",
+        gap:16, alignItems:"center", padding:"13px 20px", borderBottom:`1px solid ${C.hair}` }}>
+        <div><div style={{color:C.bright,fontSize:12,fontWeight:750}}>{r.nome}</div><div style={{color:C.faint,fontSize:10,marginTop:3}}>{r.fonte}</div></div>
+        <div style={{display:"flex",alignItems:"center",gap:7,color:cor(r.situacao),fontSize:11,fontWeight:700}}>
+          <span style={{width:7,height:7,borderRadius:"50%",background:cor(r.situacao)}} />{rotulo(r.situacao)}
+        </div>
+        <div style={{color:C.muted,fontSize:11}}>{r.motivo ?? "O vigia ainda não executou"}</div>
+      </div>)}
+    </Bloco>
+  </>;
+}
 
 function RodapeIntegracoes({ fontes }) {
   const st = useIntegracaoStatus();
@@ -10656,6 +10683,7 @@ function Shell({ perfil }) {
     switch (tela) {
       case "executivo":  return <HubExecutivo onIr={setTela} />;
       case "metas":      return <HubMetas admin={admin} />;
+      case "integracoes": return <HubIntegracoes />;
       case "comercial":  return <HubComercial />;
       case "financeiro": return <HubFinanceiro />;
       case "marketing":  return <HubMarketing />;

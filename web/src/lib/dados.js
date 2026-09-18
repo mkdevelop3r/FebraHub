@@ -987,6 +987,8 @@ export const useDiretoriaConsol   = () => useView("vw_diretoria_consolidado");
 /* Status de atualização das integrações — uma linha por fonte. O `rotulo`
    já vem formatado ("Atualizado hoje", "Nunca sincronizado", etc.). */
 export const useIntegracaoStatus  = () => useView("vw_integracao_status");
+export const useVigiaIntegracoes = () =>
+  useView("vw_vigia_integracoes", { ordem: ["nome"], staleTime: 60 * 1000 });
 
 /* ============================================================
    AUDITORIA COMERCIAL — placar fechado
