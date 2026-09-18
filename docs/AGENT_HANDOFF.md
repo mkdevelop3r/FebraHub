@@ -1430,3 +1430,11 @@ gravadas.
 - O clique da interface exige a sequencia de eventos de ponteiro/mouse no item real dentro de `#main`; `element.click()` era ignorado pelo WhatsApp. A conexao CDP agora registra a promessa antes de enviar, rejeita chamadas quando o socket fecha e nunca deixa uma rodada presa apos recarregamento da pagina.
 - Depois da aprovacao, uma rodada dirigida do FCIS gravou a nova evidencia `grupo_whatsapp`; a rodada piloto completa seguinte terminou com `Resultado=0`, zero pendentes e zero novos, confirmando idempotencia.
 - `FebraHub - WhatsApp Grupos` foi reativado; a primeira rodada pelo Agendador terminou em `Ready`, habilitada e `LastTaskResult=0`.
+
+### Codex - 18/09/2026 - Correcao do clique em pedidos elegiveis
+
+- Taise Peixoto apareceu no FCIS37 como pedido com correspondencia unica e matricula aprovada. Quatro ciclos classificaram corretamente o pedido, mas nao o aprovaram porque a expressao regular enviada ao contexto do WhatsApp perdia as barras de escape e falhava apenas quando existia um pedido elegivel.
+- As expressoes regulares usadas para localizar o telefone no painel foram corrigidas. Erros de `Runtime.evaluate` agora preservam a descricao e a pilha devolvidas pelo Chrome, evitando o diagnostico generico `Uncaught`.
+- O clique usa `Input.dispatchMouseEvent` pelo CDP, traz a aba do monitor para frente e movimenta o ponteiro antes de pressionar e soltar. O telefone continua servindo apenas para localizar a linha ja validada; nao entra no log ou status.
+- Validacao real em modo de gravacao: FCIS37 registrou um pedido pendente, uma correspondencia automatica por matricula aprovada, uma aprovacao realizada e nenhum erro. Taise foi aprovada pelo monitor.
+- A rodada automatica seguinte terminou com `Resultado=0`, zero pedidos pendentes no FCIS37, 27 participantes com telefone, 21 identificados e uma nova evidencia `grupo_whatsapp`. O agendador ficou habilitado e em estado `Ready`.

@@ -140,8 +140,38 @@ class CdpClient {
 
   async evaluate(expression) {
     const result = await this.send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
-    if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || 'Erro ao avaliar WhatsApp Web.');
+    if (result.exceptionDetails) {
+      const description = result.exceptionDetails.exception?.description;
+      throw new Error(description || result.exceptionDetails.text || 'Erro ao avaliar WhatsApp Web.');
+    }
     return result.result.value;
+  }
+
+  async clickPoint(point) {
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) return false;
+    await this.send('Page.bringToFront');
+    await this.send('Input.dispatchMouseEvent', {
+      type: 'mouseMoved',
+      x: point.x,
+      y: point.y,
+    });
+    await this.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 1,
+      clickCount: 1,
+    });
+    await this.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      x: point.x,
+      y: point.y,
+      button: 'left',
+      buttons: 0,
+      clickCount: 1,
+    });
+    return true;
   }
 
   async openGroup(inviteLink) {
@@ -247,38 +277,39 @@ class CdpClient {
     let headerClicked = false;
     for (let attempt = 0; attempt < 20 && !panelReady; attempt++) {
       const openState = await this.evaluate(`(() => {
-        const activate = target => {
-          for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
-            target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window }));
-          }
+        const point = target => {
+          target.scrollIntoView({ block: 'center', inline: 'center' });
+          const rect = target.getBoundingClientRect();
+          if (!rect.width || !rect.height) return null;
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
         };
         const body = document.body?.innerText || '';
         if (/Você não é mais um admin|You are no longer an admin/i.test(body)) {
           return { error: 'A conta de monitoramento não é administradora do grupo.' };
         }
-        if (/Pedidos pendentes|Pending requests/i.test(body)) return { ready: true };
+        const approvalButton = [...document.querySelectorAll('button,[role="button"]')].find(element =>
+          /^(Aprovar|Approve)$/i.test((element.innerText || element.getAttribute('aria-label') || '').trim()));
+        if (approvalButton) return { ready: true };
         const reviewButton = [...document.querySelectorAll('button,[role="button"]')].find(element =>
-          /Analisar\s+\d+\s+pedido|Review\s+\d+\s+request/i.test((element.innerText || '').trim()));
-        if (reviewButton) {
-          activate(reviewButton);
-          return { clicked: 'review' };
-        }
+          /Analisar\\s+\\d+\\s+pedido|Review\\s+\\d+\\s+request/i.test((element.innerText || '').trim()));
+        if (reviewButton) return { target: 'review', point: point(reviewButton) };
         const notification = document.querySelector('#main [data-testid="subtype-membership_approval_request"]');
-        if (notification) {
-          activate(notification);
-          return { clicked: 'notification' };
-        }
+        if (notification) return { target: 'notification', point: point(notification) };
         return {};
       })()`);
       if (openState.error) throw new Error(openState.error);
       panelReady = Boolean(openState.ready);
-      if (!panelReady && !openState.clicked && !headerClicked) {
-        headerClicked = await this.evaluate(`(() => {
+      if (!panelReady && openState.point) {
+        await this.clickPoint(openState.point);
+      } else if (!panelReady && !headerClicked) {
+        const headerPoint = await this.evaluate(`(() => {
           const header = document.querySelector('#main header');
-          if (!header) return false;
-          header.click();
-          return true;
+          if (!header) return null;
+          const rect = header.getBoundingClientRect();
+          if (!rect.width || !rect.height) return null;
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
         })()`);
+        headerClicked = await this.clickPoint(headerPoint);
       }
       if (!panelReady) await sleep(400);
     }
@@ -287,14 +318,9 @@ class CdpClient {
     let approved = 0;
     let failed = 0;
     for (const phone of safePhones) {
-      const clicked = await this.evaluate(`(() => {
-        const activate = target => {
-          for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
-            target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window }));
-          }
-        };
+      const approvePoint = await this.evaluate(`(() => {
         const normalize = value => {
-          let digits = String(value || '').replace(/\D/g, '');
+          let digits = String(value || '').replace(/\\D/g, '');
           if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2);
           return digits;
         };
@@ -313,14 +339,16 @@ class CdpClient {
           while (row?.parentElement && !row.querySelector('[data-testid="name"]')) row = row.parentElement;
           const nameBlock = row?.querySelector('[data-testid="name"]');
           if (!nameBlock) continue;
-          const numbers = (nameBlock.innerText || '').match(/\+?\d[\d\s()-]{8,}\d/g) || [];
+          const numbers = (nameBlock.innerText || '').match(/\\+?\\d[\\d\\s()-]{8,}\\d/g) || [];
           if (!numbers.some(number => [...variants(number)].some(value => wanted.has(value)))) continue;
-          activate(button);
-          return true;
+          button.scrollIntoView({ block: 'center', inline: 'center' });
+          const rect = button.getBoundingClientRect();
+          if (!rect.width || !rect.height) return null;
+          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
         }
-        return false;
+        return null;
       })()`);
-      if (!clicked) {
+      if (!await this.clickPoint(approvePoint)) {
         failed++;
         continue;
       }
@@ -330,7 +358,7 @@ class CdpClient {
         await sleep(500);
         const state = await this.evaluate(`(() => {
           const normalize = value => {
-            let digits = String(value || '').replace(/\D/g, '');
+            let digits = String(value || '').replace(/\\D/g, '');
             if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2);
             return digits;
           };
@@ -352,7 +380,7 @@ class CdpClient {
             let row = button;
             while (row?.parentElement && !row.querySelector('[data-testid="name"]')) row = row.parentElement;
             const nameBlock = row?.querySelector('[data-testid="name"]');
-            const numbers = (nameBlock?.innerText || '').match(/\+?\d[\d\s()-]{8,}\d/g) || [];
+            const numbers = (nameBlock?.innerText || '').match(/\\+?\\d[\\d\\s()-]{8,}\\d/g) || [];
             return numbers.some(number => [...variants(number)].some(value => wanted.has(value)));
           });
           return { stillPending };
