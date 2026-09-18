@@ -1698,16 +1698,19 @@ const ordenarMeses = (serie) => [...(serie ?? [])]
 const AZUL_ANTERIOR = "#6BA8E5";
 const COR_VARIACAO_ALTA = "#B7F34A";
 const COR_VARIACAO_QUEDA = "#FF6B5F";
+const COR_META = "#7FE0A3";
 
 /* Evolução do faturamento: barras do período + linha do MESMO PERÍODO do
-   ano anterior. A linha é comparação histórica, não meta — não existe meta
-   no banco, e pintar uma referência como meta seria inventar cobrança. */
+   ano anterior. A linha azul é comparação histórica, NÃO é meta. A meta (opcional,
+   quando cada item da série traz `meta`) entra como traço-alvo verde sobre cada
+   barra — o quanto aquele mês precisava fazer. */
 function BarrasEvolucao({ serie, anoAnterior, onSelecionarMes }) {
   const [detalheIdx, setDetalheIdx] = useState(null);
   if (!serie.length) return null;
   const W = 720, H = 250, padL = 10, padR = 10, padT = 34, padB = 28;
   const plotW = W - padL - padR, plotH = H - padT - padB, base = padT + plotH;
-  const max = Math.max(...serie.flatMap((s) => [s.valor, s.anterior]), 1);
+  const temMeta = serie.some((s) => s.meta != null);
+  const max = Math.max(...serie.flatMap((s) => [s.valor, s.anterior, s.meta ?? 0]), 1);
   const n = serie.length, slot = plotW / n, bw = Math.min(38, slot * 0.58);
   const cx = (i) => padL + slot * i + slot / 2;
   const y = (v) => base - (v / max) * plotH;
@@ -1738,6 +1741,13 @@ function BarrasEvolucao({ serie, anoAnterior, onSelecionarMes }) {
               strokeWidth={s.parcial ? 1 : 0}
             />
           </g>
+        ))}
+
+        {/* Meta do mês: traço-alvo verde sobre a barra (bullet chart) — mostra
+            na hora se a barra alcançou ou não. Só quando a série traz `meta`. */}
+        {temMeta && serie.map((s, i) => s.meta == null ? null : (
+          <line key={`meta-${s.mes}`} x1={cx(i) - bw / 2 - 3} y1={y(s.meta)} x2={cx(i) + bw / 2 + 3} y2={y(s.meta)}
+            stroke={COR_META} strokeWidth="2.4" strokeLinecap="round" />
         ))}
 
         {temAnterior && (
@@ -1834,6 +1844,12 @@ function BarrasEvolucao({ serie, anoAnterior, onSelecionarMes }) {
               <span>Mesmo mês {anoAnterior}</span>
               <b style={{ color: AZUL_ANTERIOR }}>{anterior > 0 ? moeda(anterior) : "sem base"}</b>
             </div>
+            {s.meta != null && (
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 14, marginTop: 4, fontSize: 10.5, color: C.muted }}>
+                <span>Meta mínima {s.parcial ? "· parcial" : atual >= s.meta ? "· batida ✓" : "· faltou"}</span>
+                <b style={{ color: COR_META }}>{moeda(s.meta)}</b>
+              </div>
+            )}
             {variacao != null && (
               <div style={{ display: "flex", justifyContent: "space-between", gap: 14, marginTop: 6, paddingTop: 6,
                 borderTop: `1px solid ${C.hair}`, fontSize: 10.5, fontWeight: 800, color: variacao >= 0 ? COR_VARIACAO_ALTA : COR_VARIACAO_QUEDA }}>
@@ -1849,8 +1865,9 @@ function BarrasEvolucao({ serie, anoAnterior, onSelecionarMes }) {
       <div style={{ fontSize: 10.5, color: C.faint, marginTop: 6, lineHeight: 1.5 }}>
         Último mês tracejado = <b style={{ color: C.muted }}>parcial</b> (em andamento).
         {temAnterior
-          ? <> Linha azul = mesmos meses de {anoAnterior} — <b style={{ color: C.muted }}>não é meta</b>.</>
-          : <> Sem histórico de {anoAnterior} nesta categoria para comparar.</>}
+          ? <> Linha azul = mesmos meses de {anoAnterior}.</>
+          : <> Sem histórico de {anoAnterior} para comparar.</>}
+        {temMeta && <> Traço <b style={{ color: COR_META }}>verde</b> = meta mínima do mês.</>}
       </div>
     </>
   );
@@ -7376,29 +7393,35 @@ function HubLoja() {
   const notaKpi = curto ? `produtos · ${String(rotulo).toLowerCase()}`
     : geral ? "todo o histórico" : porMes ? rotulo : `ano ${ano}`;
 
-  // Série do gráfico (2022-2026): valor + meta + `provisorio` (planilha, <2025,
-  // sai tracejado) + `parcial` (mês em curso). Meses ausentes (abr/2023) não
-  // vêm da view, então o gráfico pula — nunca desenha zero.
-  const evol = useMemo(() => {
+  /* Gráfico do ANO selecionado: um mês por barra (jan–dez), com a meta mínima
+     e o mesmo mês do ano anterior pra comparar. No "Geral" cai no ano atual.
+     Meses futuros do ano corrente ficam de fora (sem dado ainda). */
+  const anoGraf = Number(ano) || new Date().getFullYear();
+  const serieAno = useMemo(() => {
     const d = new Date();
     const cm = chaveMes(d.getFullYear(), d.getMonth());
-    return (serie.data ?? [])
-      .filter((r) => r.mes)
-      .map((r) => ({
-        mes: r.mes,
-        valor: Number(r.receita ?? 0),
-        meta: r.meta_minima != null ? Number(r.meta_minima) : null,
-        provisorio: String(r.mes).slice(0, 7) < "2025-01",
-        parcial: !!r.em_curso || String(r.mes).slice(0, 7) === cm,
-      }))
-      .sort((a, b) => String(a.mes).localeCompare(String(b.mes)));
-  }, [serie.data]);
-  const evolSemFonte = !!serie.error || evol.length < 2;
-  const metaLinha = useMemo(() => {
-    const arr = evol.map((p) => p.meta);
-    return arr.some((v) => v != null) ? arr : null;
-  }, [evol]);
-  const temTransicao = evol.some((p) => p.provisorio) && evol.some((p) => !p.provisorio);
+    const porYm = new Map(
+      (serie.data ?? []).filter((r) => r.mes).map((r) => [String(r.mes).slice(0, 7), r])
+    );
+    const out = [];
+    for (let m = 0; m < 12; m++) {
+      const mm = String(m + 1).padStart(2, "0");
+      const ymAtual = `${anoGraf}-${mm}`;
+      const ymAnt = `${anoGraf - 1}-${mm}`;
+      if (anoGraf === d.getFullYear() && ymAtual > cm) break; // não desenha mês futuro
+      const rAtual = porYm.get(ymAtual);
+      const rAnt = porYm.get(ymAnt);
+      if (!rAtual && !rAnt) continue;
+      out.push({
+        mes: rAtual?.mes ?? `${ymAtual}-01`,
+        valor: Number(rAtual?.receita ?? 0),
+        anterior: Number(rAnt?.receita ?? 0),
+        meta: rAtual?.meta_minima != null ? Number(rAtual.meta_minima) : null,
+        parcial: !!rAtual?.em_curso || ymAtual === cm,
+      });
+    }
+    return out;
+  }, [serie.data, anoGraf]);
 
   /* ---- Meta x realizado ---- */
   // Selo: a linha do mês da série longa (traz meta, nível e em_curso). Em modo
@@ -7506,27 +7529,27 @@ function HubLoja() {
 
       {/* ---- Faixa 2: receita mensal (consolidada, com meta) · estoque ---- */}
       <div className="lojaMid" style={{ marginBottom: 12 }}>
-        <Bloco titulo="Receita mensal da loja" canto="2022–2026 · R$/mês" altura={230}>
-          {serie.isLoading
-            ? <Estado carregando />
-            : evolSemFonte
-              ? <Estado vazio />
-              : <>
-                  <LinhaEvolucao serie={evol} idGrad="fillLoja" mostrarNota={false}
-                    rotularParcial={false} rotularVar={false} soDestaques yRedondo
-                    meta={metaLinha} metaLabel="meta mínima do mês" />
-                  {temTransicao && (
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 14px", alignItems: "center", fontSize: 10, color: C.faint, marginTop: 4 }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                        <span style={{ width: 16, height: 0, borderTop: `2px dashed ${C.gold}`, opacity: 0.85, flexShrink: 0 }} /> planilha (2022–2024)
-                      </span>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                        <span style={{ width: 16, height: 0, borderTop: `2px solid ${C.gold}`, flexShrink: 0 }} /> consolidado (2025+)
-                      </span>
-                      <span style={{ color: C.dim }}>A queda em 2025 é a <b style={{ color: C.muted }}>troca de fonte</b>, não o desempenho.</span>
-                    </div>
-                  )}
-                </>}
+        <Bloco titulo="Receita mensal da loja" canto={`${anoGraf} vs. ${anoGraf - 1} · R$/mês`}>
+          <Estado
+            carregando={serie.isLoading}
+            erro={serie.error}
+            vazio={!serieAno.length}
+            vazioTitulo={`Sem receita registrada em ${anoGraf}`}
+            vazioDica="Troque o ano no seletor do topo."
+          >
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 14px", alignItems: "center", fontSize: 10, color: C.faint, marginBottom: 6 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 14, height: 8, borderRadius: 2, background: `linear-gradient(180deg, ${C.goldTop}, ${C.goldBase})`, flexShrink: 0 }} /> {anoGraf}
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 16, height: 0, borderTop: `2px dashed ${AZUL_ANTERIOR}`, flexShrink: 0 }} /> {anoGraf - 1} · mesmos meses
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 16, height: 0, borderTop: `2.4px solid ${COR_META}`, flexShrink: 0 }} /> meta mínima
+              </span>
+            </div>
+            <BarrasEvolucao serie={serieAno} anoAnterior={anoGraf - 1} />
+          </Estado>
         </Bloco>
         <Bloco titulo="Estoque" canto="Omie · posição atual">
           <Estado carregando={estoque.isLoading} erro={estoque.error} vazio={!est.total}>
