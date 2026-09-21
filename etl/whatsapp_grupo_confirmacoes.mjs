@@ -374,7 +374,12 @@ class CdpClient {
     let approved = 0;
     let failed = 0;
     for (const phone of safePhones) {
-      const approvePoint = await this.evaluate(`(() => {
+      const clicked = await this.evaluate(`(() => {
+        const activate = target => {
+          for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+            target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window }));
+          }
+        };
         const normalize = value => {
           let digits = String(value || '').replace(/\\D/g, '');
           if (digits.startsWith('55') && digits.length >= 12) digits = digits.slice(2);
@@ -397,14 +402,12 @@ class CdpClient {
           if (!nameBlock) continue;
           const numbers = (nameBlock.innerText || '').match(/\\+?\\d[\\d\\s()-]{8,}\\d/g) || [];
           if (!numbers.some(number => [...variants(number)].some(value => wanted.has(value)))) continue;
-          button.scrollIntoView({ block: 'center', inline: 'center' });
-          const rect = button.getBoundingClientRect();
-          if (!rect.width || !rect.height) return null;
-          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+          activate(button);
+          return true;
         }
-        return null;
+        return false;
       })()`);
-      if (!await this.clickPoint(approvePoint)) {
+      if (!clicked) {
         failed++;
         continue;
       }
@@ -501,7 +504,7 @@ async function buildInvitedStudents(turmaId) {
   const invitations = await get('pedagogico_envios', {
     select: 'aluno_id',
     turma_id: `eq.${turmaId}`,
-    tipo: 'eq.prazo_vencendo',
+    tipo: 'in.(convite,prazo_vencendo)',
     status: 'eq.aceito',
     limit: '1000',
   });
@@ -509,9 +512,15 @@ async function buildInvitedStudents(turmaId) {
   const invited = new Map(ids.map(alunoId => [alunoId, { alunoId, phones: new Set() }]));
   for (let i = 0; i < ids.length; i += 40) {
     const batch = ids.slice(i, i + 40);
-    const [contacts, facts] = await Promise.all([
+    const [contacts, facts, queueRows] = await Promise.all([
       get('fato_contatos', { select: 'cpf,celular', cpf: `in.(${batch.join(',')})` }),
       get('fato_base_alunos', { select: 'aluno_id,telefone_cliente', aluno_id: `in.(${batch.join(',')})`, limit: '1000' }),
+      get('fila_prazo', {
+        select: 'cpf,telefone',
+        cpf: `in.(${batch.join(',')})`,
+        proxima_turma: `eq.${turmaId}`,
+        limit: '1000',
+      }),
     ]);
     for (const contact of contacts) {
       const student = invited.get(String(contact.cpf));
@@ -520,6 +529,10 @@ async function buildInvitedStudents(turmaId) {
     for (const fact of facts) {
       const student = invited.get(String(fact.aluno_id));
       if (student) for (const phone of variants(fact.telefone_cliente)) student.phones.add(phone);
+    }
+    for (const queueRow of queueRows) {
+      const student = invited.get(String(queueRow.cpf));
+      if (student) for (const phone of variants(queueRow.telefone)) student.phones.add(phone);
     }
   }
   return invited;

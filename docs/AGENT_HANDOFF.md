@@ -1447,3 +1447,11 @@ gravadas.
 - O aviso de pedido tinha um elemento invisivel duplicado e exigia a sequencia de eventos da interface para abrir o painel. O monitor agora escolhe somente o aviso visivel/clicavel e usa essa sequencia para abrir a analise; a aprovacao continua limitada ao telefone com correspondencia unica validada no Supabase.
 - Validacao real: o CIS 252 iniciou com 3 participantes resolvidos, 18 matriculas elegiveis e um pedido com correspondencia unica. O pedido foi aprovado automaticamente. A leitura seguinte mostrou zero pendentes, 4 participantes, 1 identificado e 1 nova evidencia `grupo_whatsapp`, gravada com `Resultado=0`.
 - `whatsapp_monitor_rodar.ps1` aceita `-Turmas` para validacao dirigida sem alterar o agendamento geral.
+
+### Codex - 21/09/2026 - Represados no monitor de entrada dos grupos
+
+- `buildInvitedStudents` agora considera convites aceitos dos tipos `convite` e `prazo_vencendo` para cada turma. O telefone do represado e resolvido em `fato_contatos`, `fato_base_alunos` e tambem `fila_prazo`, sempre exigindo `proxima_turma` igual ao grupo processado.
+- O telefone continua sendo a decisao: somente uma correspondencia unica entre pedido e matricula aprovada ou represado convidado pode ser aprovada. Nome visivel nao libera entrada. Desconhecidos e ambiguos permanecem sem acao e o monitor nunca clica em `Recusar`.
+- O acionamento do botao `Aprovar` voltou a usar a sequencia de eventos aceita pelo WhatsApp. O erro anterior `pedido elegivel nao foi aprovado` era de interacao com o botao, depois que a classificacao por telefone ja estava correta.
+- Auditoria do CIS 252: 9 convites de represados `prazo_vencendo` estavam aceitos. Havia 4 pedidos pendentes; 3 tinham matricula aprovada e correspondencia unica, foram aprovados, e 1 nao correspondia a matricula nem convite de represado e permaneceu pendente.
+- Leitura posterior: 1 pendente nao elegivel, 9 participantes com telefone, 4 identificados e 3 novas evidencias `grupo_whatsapp`; rodada de gravacao terminou com `Resultado=0`.
