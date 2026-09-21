@@ -3,9 +3,9 @@
 /**
  * Confirma alunos pela presença nos grupos de WhatsApp das turmas ativas.
  *
- * O link_grupo de dim_turmas é a fonte de navegação. Em modo gated, IF36 e a
- * próxima FCIS são processadas antes das demais; o restante só é liberado
- * quando as duas concluem sem erro. Nunca confirma telefone desconhecido ou
+ * O link_grupo de dim_turmas é a fonte de navegação. A execução padrão percorre
+ * todas as turmas ativas que possuem link; --pilot mantém a seleção histórica
+ * apenas para diagnósticos dirigidos. Nunca confirma telefone desconhecido ou
  * associado a mais de um aluno elegível.
  */
 
@@ -21,7 +21,7 @@ for (let i = 2; i < process.argv.length; i++) {
 
 const cdpUrl = args.get('cdp') || process.env.WHATSAPP_CDP_URL || 'http://127.0.0.1:9222';
 const write = args.has('write');
-const selection = args.has('all') ? 'all' : args.has('pilot') ? 'pilot' : 'gated';
+const selection = args.has('pilot') ? 'pilot' : 'all';
 const requestedIds = String(args.get('turmas') || '').split(',').map(value => value.trim()).filter(Boolean);
 const base = process.env.SUPABASE_URL?.replace(/\/$/, '');
 const key = process.env.SUPABASE_SERVICE_KEY;
@@ -203,11 +203,59 @@ class CdpClient {
         openedGroupName = groupName.trim();
         const matches = participantLines.join(' ').match(/\+?55\s*\(?\d{2}\)?\s*\d{4,5}[\s-]?\d{4}/g) || [];
         const phones = new Set(matches.map(normalizePhone).filter(Boolean));
-        if (phones.size) return { groupName: openedGroupName, phones };
+        return { groupName: openedGroupName, phones };
       }
     }
-    if (openedGroupName) throw new Error(`Grupo "${openedGroupName}" abriu, mas os participantes nao carregaram.`);
     throw new Error('Tempo esgotado ao abrir o grupo pelo link_grupo.');
+  }
+
+  async readGroupParticipants(groupName) {
+    const groupLiteral = JSON.stringify(groupName);
+    const result = await this.evaluate(`(async () => {
+      const openDb = () => new Promise((resolve, reject) => {
+        const request = indexedDB.open('model-storage');
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const idbRequest = request => new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const canonical = value => String(value || '').normalize('NFD')
+        .replace(/[\\u0300-\\u036f]/g, '').replace(/\\s+/g, ' ').trim().toUpperCase();
+      const serializedId = value => {
+        if (typeof value === 'string') return value;
+        if (!value || typeof value !== 'object') return '';
+        return value._serialized || value.id || value.user || '';
+      };
+      const db = await openDb();
+      try {
+        const metadataStore = db.transaction('group-metadata', 'readonly').objectStore('group-metadata');
+        const groups = await idbRequest(metadataStore.getAll());
+        const group = groups.find(row => canonical(row.subject) === canonical(${groupLiteral}));
+        if (!group) throw new Error('Metadados do grupo nao encontrados no WhatsApp.');
+
+        const participantStore = db.transaction('participant', 'readonly').objectStore('participant');
+        const participantRow = await idbRequest(participantStore.get(group.id));
+        if (!participantRow) throw new Error('Lista de participantes nao encontrada no WhatsApp.');
+
+        const contactStore = db.transaction('contact', 'readonly').objectStore('contact');
+        const contacts = await idbRequest(contactStore.getAll());
+        const contactsById = new Map(contacts.map(contact => [serializedId(contact.id), contact]));
+        const phones = [];
+        for (const participant of participantRow.participants || []) {
+          const id = serializedId(participant);
+          const contact = contactsById.get(id);
+          const phone = serializedId(contact?.phoneNumber)
+            || (/@(c\\.us|s\\.whatsapp\\.net)$/i.test(id) ? id : '');
+          if (phone) phones.push(phone);
+        }
+        return { phones };
+      } finally {
+        db.close();
+      }
+    })()`);
+    return new Set((result.phones || []).map(normalizePhone).filter(Boolean));
   }
 
   async readPendingRequests(groupName) {
@@ -277,11 +325,10 @@ class CdpClient {
     let headerClicked = false;
     for (let attempt = 0; attempt < 20 && !panelReady; attempt++) {
       const openState = await this.evaluate(`(() => {
-        const point = target => {
-          target.scrollIntoView({ block: 'center', inline: 'center' });
-          const rect = target.getBoundingClientRect();
-          if (!rect.width || !rect.height) return null;
-          return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+        const activate = target => {
+          for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+            target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window }));
+          }
         };
         const body = document.body?.innerText || '';
         if (/Você não é mais um admin|You are no longer an admin/i.test(body)) {
@@ -292,16 +339,25 @@ class CdpClient {
         if (approvalButton) return { ready: true };
         const reviewButton = [...document.querySelectorAll('button,[role="button"]')].find(element =>
           /Analisar\\s+\\d+\\s+pedido|Review\\s+\\d+\\s+request/i.test((element.innerText || '').trim()));
-        if (reviewButton) return { target: 'review', point: point(reviewButton) };
-        const notification = document.querySelector('#main [data-testid="subtype-membership_approval_request"]');
-        if (notification) return { target: 'notification', point: point(notification) };
+        if (reviewButton) {
+          activate(reviewButton);
+          return { clicked: 'review' };
+        }
+        const notification = [...document.querySelectorAll('#main [data-testid="subtype-membership_approval_request"]')]
+          .find(element => {
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0
+              && (/pedido|request/i.test(element.innerText || '') || element.getAttribute('role') === 'button');
+          });
+        if (notification) {
+          activate(notification);
+          return { clicked: 'notification' };
+        }
         return {};
       })()`);
       if (openState.error) throw new Error(openState.error);
       panelReady = Boolean(openState.ready);
-      if (!panelReady && openState.point) {
-        await this.clickPoint(openState.point);
-      } else if (!panelReady && !headerClicked) {
+      if (!panelReady && !openState.clicked && !headerClicked) {
         const headerPoint = await this.evaluate(`(() => {
           const header = document.querySelector('#main header');
           if (!header) return null;
@@ -611,7 +667,10 @@ async function processTurma(client, turma) {
   let result;
   try {
     if (!turma.link_grupo?.trim()) throw new Error('Turma ativa sem link_grupo cadastrado.');
-    const { groupName, phones: groupPhones } = await client.openGroup(turma.link_grupo.trim());
+    const { groupName, phones: headerPhones } = await client.openGroup(turma.link_grupo.trim());
+    const storedPhones = await client.readGroupParticipants(groupName);
+    const groupPhones = new Set([...headerPhones, ...storedPhones]);
+    if (!groupPhones.size) throw new Error('Nenhum telefone de participante disponivel no WhatsApp.');
     const eligible = await buildEligibleStudents(turma.turma_id);
     const phoneIndex = buildPhoneIndex(eligible);
 
@@ -718,17 +777,16 @@ if (requestedIds.length) {
   const requested = new Set(requestedIds.map(canonicalText));
   pilots = activeTurmas.filter(row => requested.has(canonicalText(row.turma_id)));
 }
-if (!pilots.some(row => row.turma_id === '2026 - IF36') && !requestedIds.length) {
-  throw new Error('Turma piloto 2026 - IF36 nao encontrada entre as turmas ativas.');
-}
-if (!pilots.some(row => /\bFCIS\s*\d+/i.test(row.turma_id)) && !requestedIds.length) {
-  throw new Error('Nenhuma FCIS ativa encontrada para o piloto.');
+if (selection === 'pilot' && !pilots.length && !requestedIds.length) {
+  throw new Error('Nenhuma turma piloto ativa encontrada.');
 }
 
 const results = [];
-const firstBatch = selection === 'all'
-  ? activeTurmas.filter(row => row.link_grupo?.trim())
-  : pilots;
+const firstBatch = requestedIds.length
+  ? pilots
+  : selection === 'pilot'
+    ? pilots
+    : activeTurmas.filter(row => row.link_grupo?.trim());
 let client;
 try {
   client = await CdpClient.connect().then(instance => instance.open());
@@ -756,13 +814,6 @@ if (client) {
   try {
     for (const turma of firstBatch) results.push(await processTurma(client, turma));
 
-    const pilotSucceeded = pilots.length >= 2
-      && pilots.every(pilot => results.some(result => result.turma === pilot.turma_id && !result.erro));
-    if (selection === 'gated' && pilotSucceeded) {
-      const pilotIds = new Set(pilots.map(row => row.turma_id));
-      const remaining = activeTurmas.filter(row => row.link_grupo?.trim() && !pilotIds.has(row.turma_id));
-      for (const turma of remaining) results.push(await processTurma(client, turma));
-    }
   } finally {
     client.close();
   }
@@ -772,7 +823,7 @@ console.log(JSON.stringify({
   modo: write ? 'gravacao' : 'diagnostico',
   selecao: selection,
   turmas_processadas: results.map(result => result.turma),
-  pilotos_aprovados: pilots.length >= 2 && pilots.every(pilot => results.some(result => result.turma === pilot.turma_id && !result.erro)),
+  pilotos_aprovados: pilots.length > 0 && pilots.every(pilot => results.some(result => result.turma === pilot.turma_id && !result.erro)),
   total_identificados: results.reduce((sum, result) => sum + result.identificados, 0),
   total_novos: results.reduce((sum, result) => sum + result.novos, 0),
   total_desconhecidos: results.reduce((sum, result) => sum + result.desconhecidos, 0),

@@ -1,7 +1,8 @@
 param(
     [string]$NodePath = 'node',
     [switch]$Diagnostico,
-    [ValidateSet('gated', 'pilot', 'all')][string]$Modo = 'gated'
+    [ValidateSet('gated', 'pilot', 'all')][string]$Modo = 'all',
+    [string]$Turmas = ''
 )
 $ErrorActionPreference = 'Stop'
 $logDir = Join-Path $env:LOCALAPPDATA 'FebraHub/whatsapp-monitor'
@@ -22,6 +23,7 @@ try {
         }
     }
     $params = @((Join-Path $PSScriptRoot 'whatsapp_grupo_confirmacoes.mjs'), "--$Modo")
+    if ($Turmas.Trim()) { $params += @('--turmas', $Turmas.Trim()) }
     if (-not $Diagnostico) { $params += '--write' }
     Add-Content -LiteralPath $log -Value "$(Get-Date -Format o) Iniciando leitura"
     # Windows PowerShell trata stderr nativo como ErrorRecord; preserve o erro completo.

@@ -1438,3 +1438,12 @@ gravadas.
 - O clique usa `Input.dispatchMouseEvent` pelo CDP, traz a aba do monitor para frente e movimenta o ponteiro antes de pressionar e soltar. O telefone continua servindo apenas para localizar a linha ja validada; nao entra no log ou status.
 - Validacao real em modo de gravacao: FCIS37 registrou um pedido pendente, uma correspondencia automatica por matricula aprovada, uma aprovacao realizada e nenhum erro. Taise foi aprovada pelo monitor.
 - A rodada automatica seguinte terminou com `Resultado=0`, zero pedidos pendentes no FCIS37, 27 participantes com telefone, 21 identificados e uma nova evidencia `grupo_whatsapp`. O agendador ficou habilitado e em estado `Ready`.
+
+### Codex - 21/09/2026 - Monitor geral e Metodo CIS Global 252
+
+- O monitor parou de processar todas as turmas quando o IF36 terminou em 19/09: o modo `gated` ainda exigia `2026 - IF36` entre as turmas ativas e abortava antes de abrir qualquer grupo. O agendamento agora usa `all` por padrao e percorre diretamente toda turma aberta, atual/futura, que possui `link_grupo`; `--pilot` ficou somente para diagnosticos dirigidos.
+- `2026 - CIS-GL252` foi conferida no Supabase: turma aberta, de 15 a 17/10/2026, com `link_grupo`. O link abriu automaticamente `MÉTODO CIS 252 (15 A 17 DE OUTUBRO)` na conta que ja participa e e administradora.
+- A leitura de participantes deixou de depender dos telefones exibidos no cabecalho. O monitor resolve o grupo em `group-metadata`, le a lista completa em `participant` e liga os LIDs aos telefones em `contact`. Isso permitiu processar o CIS 252, cujo cabecalho mostrava apenas nomes.
+- O aviso de pedido tinha um elemento invisivel duplicado e exigia a sequencia de eventos da interface para abrir o painel. O monitor agora escolhe somente o aviso visivel/clicavel e usa essa sequencia para abrir a analise; a aprovacao continua limitada ao telefone com correspondencia unica validada no Supabase.
+- Validacao real: o CIS 252 iniciou com 3 participantes resolvidos, 18 matriculas elegiveis e um pedido com correspondencia unica. O pedido foi aprovado automaticamente. A leitura seguinte mostrou zero pendentes, 4 participantes, 1 identificado e 1 nova evidencia `grupo_whatsapp`, gravada com `Resultado=0`.
+- `whatsapp_monitor_rodar.ps1` aceita `-Turmas` para validacao dirigida sem alterar o agendamento geral.
