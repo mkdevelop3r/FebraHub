@@ -30,7 +30,7 @@ import {
   useMetaSetor, salvarMeta, sugerirMetaLoja,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroReceitaCategoriaDetalhe, useFinanceiroDespesaCategoriaPeriodo,
   useLojaReceitaPeriodo, useLojaReceitaTotalMes, useLojaReceitaConsolidada,
-  useLojaSerie, useLojaKpisAno, useLojaKpisPeriodo,
+  useLojaSerie, useLojaRecifeSerie, useLojaKpisAno, useLojaKpisPeriodo,
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingSaudeCaptacao,
@@ -7321,6 +7321,34 @@ function PerformanceCurso({ linhas, modo, formatarValor }) {
   );
 }
 
+/* Monta a série anual (formato do BarrasEvolucao) a partir das linhas de uma
+   vw_loja*_serie: um mês por barra do ANO escolhido, com a meta e o mesmo mês
+   do ano anterior pra comparar. Serve Salvador e Recife (mesmo formato de view).
+   Meses futuros do ano corrente ficam de fora (sem dado ainda). */
+function montarSerieLojaAno(linhas, anoGraf) {
+  const d = new Date();
+  const cm = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  const porYm = new Map((linhas ?? []).filter((r) => r.mes).map((r) => [String(r.mes).slice(0, 7), r]));
+  const out = [];
+  for (let m = 0; m < 12; m++) {
+    const mm = String(m + 1).padStart(2, "0");
+    const ymAtual = `${anoGraf}-${mm}`;
+    const ymAnt = `${anoGraf - 1}-${mm}`;
+    if (anoGraf === d.getFullYear() && ymAtual > cm) break; // não desenha mês futuro
+    const rAtual = porYm.get(ymAtual);
+    const rAnt = porYm.get(ymAnt);
+    if (!rAtual && !rAnt) continue;
+    out.push({
+      mes: rAtual?.mes ?? `${ymAtual}-01`,
+      valor: Number(rAtual?.receita ?? 0),
+      anterior: Number(rAnt?.receita ?? 0),
+      meta: rAtual?.meta_minima != null ? Number(rAtual.meta_minima) : null,
+      parcial: !!rAtual?.em_curso || ymAtual === cm,
+    });
+  }
+  return out;
+}
+
 /* Hub Loja. Receita da loja é da LOJA — nunca entra num total junto com
    curso (unidades diferentes). A série de receita é LONGA (2022-2026) e a
    fonte muda no meio: 2022-2024 = planilha de fechamento da gestora,
@@ -7331,6 +7359,7 @@ function PerformanceCurso({ linhas, modo, formatarValor }) {
 function HubLoja() {
   const { inicio, fim, modo, ano, mesIdx, rotulo, geral } = usePeriodo();
   const serie = useLojaSerie();
+  const serieRecife = useLojaRecifeSerie();
   const kpisAno = useLojaKpisAno();
   const kpisPeriodo = useLojaKpisPeriodo();
   const totalMes = useLojaReceitaTotalMes();
@@ -7397,31 +7426,8 @@ function HubLoja() {
      e o mesmo mês do ano anterior pra comparar. No "Geral" cai no ano atual.
      Meses futuros do ano corrente ficam de fora (sem dado ainda). */
   const anoGraf = Number(ano) || new Date().getFullYear();
-  const serieAno = useMemo(() => {
-    const d = new Date();
-    const cm = chaveMes(d.getFullYear(), d.getMonth());
-    const porYm = new Map(
-      (serie.data ?? []).filter((r) => r.mes).map((r) => [String(r.mes).slice(0, 7), r])
-    );
-    const out = [];
-    for (let m = 0; m < 12; m++) {
-      const mm = String(m + 1).padStart(2, "0");
-      const ymAtual = `${anoGraf}-${mm}`;
-      const ymAnt = `${anoGraf - 1}-${mm}`;
-      if (anoGraf === d.getFullYear() && ymAtual > cm) break; // não desenha mês futuro
-      const rAtual = porYm.get(ymAtual);
-      const rAnt = porYm.get(ymAnt);
-      if (!rAtual && !rAnt) continue;
-      out.push({
-        mes: rAtual?.mes ?? `${ymAtual}-01`,
-        valor: Number(rAtual?.receita ?? 0),
-        anterior: Number(rAnt?.receita ?? 0),
-        meta: rAtual?.meta_minima != null ? Number(rAtual.meta_minima) : null,
-        parcial: !!rAtual?.em_curso || ymAtual === cm,
-      });
-    }
-    return out;
-  }, [serie.data, anoGraf]);
+  const serieAno = useMemo(() => montarSerieLojaAno(serie.data, anoGraf), [serie.data, anoGraf]);
+  const serieAnoRecife = useMemo(() => montarSerieLojaAno(serieRecife.data, anoGraf), [serieRecife.data, anoGraf]);
 
   /* ---- Meta x realizado ---- */
   // Selo: a linha do mês da série longa (traz meta, nível e em_curso). Em modo
@@ -7600,7 +7606,31 @@ function HubLoja() {
         </Bloco>
       </div>
 
-      <RodapeIntegracoes fontes={["omie"]} />
+      {/* ---- Loja Recife (unidade separada, tabelas próprias): receita + meta ---- */}
+      <div style={{ marginBottom: 12 }}>
+        <Bloco titulo="Receita mensal da loja — Recife" canto={`${anoGraf} vs. ${anoGraf - 1} · R$/mês`}>
+          <Estado
+            carregando={serieRecife.isLoading}
+            erro={serieRecife.error}
+            vazio={!serieAnoRecife.length}
+            vazioTitulo={`Sem receita de Recife em ${anoGraf}`}
+            vazioDica="Troque o ano no seletor do topo."
+          >
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "3px 14px", alignItems: "center", fontSize: 10, color: C.faint, marginBottom: 6 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 14, height: 8, borderRadius: 2, background: `linear-gradient(180deg, ${C.goldTop}, ${C.goldBase})`, flexShrink: 0 }} /> {anoGraf}
+              </span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 16, height: 0, borderTop: `2px dashed ${AZUL_ANTERIOR}`, flexShrink: 0 }} /> {anoGraf - 1} · mesmos meses
+              </span>
+              <span style={{ color: C.dim }}>Meta de Recife: <b style={{ color: C.muted }}>em breve</b> (cálculo pelo calendário).</span>
+            </div>
+            <BarrasEvolucao serie={serieAnoRecife} anoAnterior={anoGraf - 1} />
+          </Estado>
+        </Bloco>
+      </div>
+
+      <RodapeIntegracoes fontes={["omie", "omie_recife"]} />
     </>
   );
 }

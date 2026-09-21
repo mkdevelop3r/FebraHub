@@ -328,6 +328,12 @@ export const useLojaReceitaConsolidada = () =>
 export const useLojaSerie = () =>
   useView("vw_loja_serie", { ordem: ["mes"] });
 
+/* Receita mensal da loja de RECIFE (unidade separada, tabelas próprias). Mesma
+   forma da vw_loja_serie (mes/ano/receita/meta_minima/em_curso) pro front reusar
+   o mesmo gráfico. meta_minima vem NULL até a Fase 2 (meta pelo calendário). */
+export const useLojaRecifeSerie = () =>
+  useView("vw_loja_recife_serie", { ordem: ["mes"] });
+
 /* Receita por ANO (uma linha por ano + uma com ano = null = acumulado geral).
    Alimenta a lista de anos do seletor (2022-2026) e o número de receita nos
    modos Ano e "Geral". Só receita — vendas/ticket não existem pra 2022-2024. */

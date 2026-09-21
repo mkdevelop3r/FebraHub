@@ -3,14 +3,15 @@ FebraHub · omie_sync.py
 Puxa vendas da loja (cupons fiscais) e posição de estoque do Omie.
 
 Variáveis de ambiente:
-  OMIE_APP_KEY
-  OMIE_APP_SECRET
+  OMIE_APP_KEY / OMIE_APP_SECRET                (unidade salvador)
+  OMIE_APP_KEY_RECIFE / OMIE_APP_SECRET_RECIFE  (unidade recife)
   SUPABASE_URL
   SUPABASE_SERVICE_KEY
 
 Uso:
-  python omie_sync.py                      # vendas do último ano + estoque hoje
-  python omie_sync.py --desde 01/01/2024   # histórico de vendas
+  python omie_sync.py                          # Salvador: vendas do último ano + estoque
+  python omie_sync.py --desde 01/01/2024       # Salvador: histórico
+  python omie_sync.py --unidade recife         # Recife (usa as credenciais _RECIFE)
 """
 import os, json, time, argparse, urllib.request
 from datetime import date, datetime, timedelta, timezone
@@ -26,10 +27,23 @@ for _p in ('.env', 'etl/.env', os.path.join(os.path.dirname(__file__), '.env')):
         break
 
 
-APP_KEY    = os.environ['OMIE_APP_KEY']
-APP_SECRET = os.environ['OMIE_APP_SECRET']
+# Cada unidade é uma CONTA Omie separada (par app_key/app_secret próprio). A
+# unidade escolhida no --unidade define de quais env vars ler e em QUAIS tabelas
+# gravar: Salvador usa as tabelas fato_loja_* originais; as outras usam o mesmo
+# nome com sufixo (fato_loja_cupom_recife, ...), pra nunca se misturarem.
+CREDENCIAIS = {
+    'salvador': ('OMIE_APP_KEY', 'OMIE_APP_SECRET'),
+    'recife':   ('OMIE_APP_KEY_RECIFE', 'OMIE_APP_SECRET_RECIFE'),
+}
+UNIDADE    = 'salvador'   # reatribuído em main() conforme --unidade
+APP_KEY    = None         # idem (resolvido a partir de CREDENCIAIS[UNIDADE])
+APP_SECRET = None
 SB_URL     = os.environ['SUPABASE_URL']
 SB_KEY     = os.environ['SUPABASE_SERVICE_KEY']
+
+def tab(nome):
+    """Nome da tabela para a unidade atual (Salvador = original; senão sufixada)."""
+    return nome if UNIDADE == 'salvador' else f'{nome}_{UNIDADE}'
 
 # URLs dos serviços Omie (RPC: POST com app_key/app_secret/call/param)
 URL_CUPOM   = 'https://app.omie.com.br/api/v1/produtos/cupomfiscalconsultar/'
@@ -148,8 +162,8 @@ def sync_vendas(desde, ate):
                     'quantidade_dev': num(i.get('nQuantDev')),
                     'cancelado': sn(i.get('cItemCancelado')),
                 })
-        upsert('fato_loja_cupom', cab, 'cupom_id')
-        upsert('fato_loja_item', [i for i in itens if i['seq_item'] is not None], 'cupom_id,seq_item')
+        upsert(tab('fato_loja_cupom'), cab, 'cupom_id')
+        upsert(tab('fato_loja_item'), [i for i in itens if i['seq_item'] is not None], 'cupom_id,seq_item')
         total_cupom += len(cab); total_item += len(itens)
         tot_pag = resp.get('nTotPaginas', 1)
         print(f"  cupons página {pagina}/{tot_pag}: {len(cab)} cupons, {len(itens)} itens")
@@ -191,7 +205,7 @@ def sync_pagamentos(desde, ate):
                 'nsu': p.get('NSU'),
             })
         linhas = [l for l in linhas if l['cupom_id'] is not None]
-        upsert('fato_loja_pagamento', linhas, 'cupom_id,seq_item')
+        upsert(tab('fato_loja_pagamento'), linhas, 'cupom_id,seq_item')
         total += len(linhas)
         tot_pag = resp.get('nTotPaginas', 1)
         print(f"  pagamentos página {pagina}/{tot_pag}: {len(linhas)} registros")
@@ -224,7 +238,7 @@ def sync_estoque():
             'estoque_minimo': num(p.get('estoque_minimo')),
             'data_posicao': dt_iso(hoje),
         } for p in prods if p.get('nCodProd')]
-        upsert('fato_loja_estoque', linhas, 'produto_id')
+        upsert(tab('fato_loja_estoque'), linhas, 'produto_id')
         total += len(linhas)
         tot_pag = resp.get('nTotPaginas', 1)
         print(f"  estoque página {pagina}/{tot_pag}: {len(linhas)} produtos")
@@ -235,7 +249,9 @@ def sync_estoque():
 
 def registrar_status(ok, total):
     try:
-        st = {'fonte':'omie','nome_exibicao':'Loja (Omie)',
+        fonte = 'omie' if UNIDADE == 'salvador' else f'omie_{UNIDADE}'
+        nome  = 'Loja (Omie)' if UNIDADE == 'salvador' else f'Loja {UNIDADE.capitalize()} (Omie)'
+        st = {'fonte':fonte,'nome_exibicao':nome,
               'ultima_sync':datetime.now(timezone.utc).isoformat(),
               'status':'ok' if ok else 'erro','registros':total,
               'atualizado_em':datetime.now(timezone.utc).isoformat()}
@@ -253,7 +269,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--desde', default=(date.today()-timedelta(days=365)).strftime('%d/%m/%Y'))
     ap.add_argument('--ate', default=date.today().strftime('%d/%m/%Y'))
+    ap.add_argument('--unidade', default='salvador', choices=list(CREDENCIAIS))
     a = ap.parse_args()
+
+    global UNIDADE, APP_KEY, APP_SECRET
+    UNIDADE = a.unidade
+    k_key, k_sec = CREDENCIAIS[UNIDADE]
+    try:
+        APP_KEY, APP_SECRET = os.environ[k_key], os.environ[k_sec]
+    except KeyError as e:
+        raise SystemExit(f"Faltando credencial Omie de {UNIDADE}: variavel {e} nao definida")
+    print(f"== Omie · unidade={UNIDADE} · {a.desde} a {a.ate} ==")
+
     ok = True
     try:
         sync_vendas(a.desde, a.ate)
