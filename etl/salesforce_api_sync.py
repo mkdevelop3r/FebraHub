@@ -356,7 +356,8 @@ def credentialing_rows(sf):
         "Turma__r.Status__c,Turma__r.StatusEntregaTurma__c,"
         "Turma__r.TurmaValidada__c,Turma__r.QuantidadeAlunosCadastrados__c,"
         "Turma__r.LinkCredenciamento__c,Venda__c,Nome_do_Cliente__c,"
-        "Nome_do_Cliente__r.Name,CPF_do_Cliente__c,"
+        "Nome_do_Cliente__r.Name,Nome_do_Cliente__r.PersonMobilePhone,"
+        "Nome_do_Cliente__r.Phone,Nome_do_Cliente__r.PersonEmail,CPF_do_Cliente__c,"
         "Tipo_de_Matricula_Atual__c,Tipo_de_Matricula__c"
     )
     return sf.query(
@@ -424,6 +425,11 @@ def transform_credentialing(credentials, linked_presence, labels):
                 row.get("Nome_do_Cliente__c")) or None,
             "cpf": digits(row.get("CPF_do_Cliente__c")) or None,
             "nome_cliente": nested(row, "Nome_do_Cliente__r.Name"),
+            "telefone_cliente": (
+                nested(row, "Nome_do_Cliente__r.PersonMobilePhone")
+                or nested(row, "Nome_do_Cliente__r.Phone")
+            ),
+            "email_cliente": nested(row, "Nome_do_Cliente__r.PersonEmail"),
             "tipo_matricula_codigo": code or None,
             "tipo_matricula": labels.get(code, code or None),
             "elegivel": code not in excluded,
