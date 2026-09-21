@@ -684,16 +684,24 @@ async function processTurma(client, turma) {
     const storedPhones = await client.readGroupParticipants(groupName);
     const groupPhones = new Set([...headerPhones, ...storedPhones]);
     if (!groupPhones.size) throw new Error('Nenhum telefone de participante disponivel no WhatsApp.');
-    const eligible = await buildEligibleStudents(turma.turma_id);
-    const phoneIndex = buildPhoneIndex(eligible);
+    const [eligible, invited] = await Promise.all([
+      buildEligibleStudents(turma.turma_id),
+      buildInvitedStudents(turma.turma_id),
+    ]);
+    const confirmationCandidates = new Map();
+    for (const source of [eligible, invited]) for (const [alunoId, student] of source) {
+      if (!confirmationCandidates.has(alunoId)) {
+        confirmationCandidates.set(alunoId, { alunoId, phones: new Set() });
+      }
+      const candidate = confirmationCandidates.get(alunoId);
+      for (const phone of student.phones) candidate.phones.add(phone);
+    }
+    const phoneIndex = buildPhoneIndex(confirmationCandidates);
 
     let pendingSummary;
     const pendingStartedAt = Date.now();
     try {
-      const [pending, invited] = await Promise.all([
-        client.readPendingRequests(groupName),
-        buildInvitedStudents(turma.turma_id),
-      ]);
+      const pending = await client.readPendingRequests(groupName);
       const classification = classifyPendingRequests(pending, eligible, invited);
       pendingSummary = classification.summary;
       if (write && classification.approvalPhones.length) {
@@ -754,7 +762,7 @@ async function processTurma(client, turma) {
       turma: turma.turma_id,
       grupo: groupName,
       participantes_com_telefone: groupPhones.size,
-      inscritos_elegiveis: eligible.size,
+      inscritos_elegiveis: confirmationCandidates.size,
       identificados: matched.size,
       novos: newRows.length,
       desconhecidos: unknown,

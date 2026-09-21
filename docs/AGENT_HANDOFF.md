@@ -1455,3 +1455,11 @@ gravadas.
 - O acionamento do botao `Aprovar` voltou a usar a sequencia de eventos aceita pelo WhatsApp. O erro anterior `pedido elegivel nao foi aprovado` era de interacao com o botao, depois que a classificacao por telefone ja estava correta.
 - Auditoria do CIS 252: 9 convites de represados `prazo_vencendo` estavam aceitos. Havia 4 pedidos pendentes; 3 tinham matricula aprovada e correspondencia unica, foram aprovados, e 1 nao correspondia a matricula nem convite de represado e permaneceu pendente.
 - Leitura posterior: 1 pendente nao elegivel, 9 participantes com telefone, 4 identificados e 3 novas evidencias `grupo_whatsapp`; rodada de gravacao terminou com `Resultado=0`.
+
+### Codex - 21/09/2026 - Auditoria dos participantes do CIS 252
+
+- A confirmacao de quem ja esta dentro do grupo agora considera, alem das matriculas aprovadas, os represados com convite aceito para a turma. As duas fontes sao unificadas por aluno e telefone antes do cruzamento, preservando a exigencia de correspondencia unica.
+- A auditoria do CIS 252 encontrou 14 telefones unicos no grupo: 5 correspondencias unicas ja gravadas em `pedagogico_confirmacoes` com origem `grupo_whatsapp` e 9 sem correspondencia. A leitura bruta continha 15 registros porque uma identidade aparecia duplicada.
+- Nenhum dos participantes sem correspondencia coincidiu por telefone com os 9 represados convidados, com os 158 represados validos associados a turma ou com telefones historicos encontrados para esses alunos. A tentativa de cruzamento por nome tambem nao produziu correspondencia exata e unica.
+- Entre os perfis sem correspondencia ha aliases de equipe e administracao. Nenhum desconhecido foi confirmado. Para localizar cinco alunos adicionais alegados como ausentes no Hub, e necessario obter seus nomes e corrigir ou completar o telefone cadastrado antes de qualquer confirmacao automatica.
+- Na validacao final surgiram 4 pedidos no CIS 252. O monitor aprovou 2 com matricula aprovada e correspondencia unica e manteve 2 sem vinculo elegivel pendentes. A rodada seguinte leu 16 telefones unicos, identificou 7 alunos e gravou 2 novas confirmacoes; terminou com `Resultado=0`. A tarefa ficou habilitada, em estado `Ready` e com proxima rodada preservada.
