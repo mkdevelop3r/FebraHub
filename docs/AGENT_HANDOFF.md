@@ -1381,6 +1381,18 @@ gravadas.
   minutos e compara execucao declarada com relogio/contagem do destino.
   Migration `db/202_vigia_integracoes.sql`; a Central de APIs e restrita a
   direcao. Alertas sao deduplicados e encerrados na recuperacao.
+- A Central Pedagogica passa a usar o roster de `Credenciamento__c` quando a
+  turma ja existe em `fato_credenciamento_turma` (migration 203). Isso inclui
+  transferidos e participantes vendidos por outras unidades. `fato_base_alunos`
+  permanece apenas como fallback para turmas sem roster. Contagem, drawer,
+  enfileiramento e fila de envio compartilham a mesma fonte.
+- A migration 205 recupera telefone/e-mail ja existentes em
+  `fato_base_alunos` para esse roster por uma busca indexavel em `aluno_id`,
+  sem reintroduzir o carregamento infinito corrigido na migration 203.
+- A migration 206 e o `salesforce_api_sync.py` passam a persistir
+  `PersonMobilePhone`/`Phone` e `PersonEmail` do Account ligado ao
+  `Credenciamento__c`; isso cobre participantes de outras unidades que nao
+  existem em `fato_base_alunos` local.
 - A concorrencia `mensagens-pedagogico` e compartilhada com o disparo manual de
   represados, impedindo aplicacao simultanea de tags no CRM.
 - O status volta a ser gravado em `integracao_status` com fonte
