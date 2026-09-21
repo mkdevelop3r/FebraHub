@@ -7623,7 +7623,10 @@ function HubLoja() {
               <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                 <span style={{ width: 16, height: 0, borderTop: `2px dashed ${AZUL_ANTERIOR}`, flexShrink: 0 }} /> {anoGraf - 1} · mesmos meses
               </span>
-              <span style={{ color: C.dim }}>Meta de Recife: <b style={{ color: C.muted }}>em breve</b> (cálculo pelo calendário).</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 16, height: 0, borderTop: `2.4px solid ${COR_META}`, flexShrink: 0 }} /> meta mínima
+              </span>
+              <span style={{ color: C.dim }}>Meta: run-rate sazonal do histórico de Recife.</span>
             </div>
             <BarrasEvolucao serie={serieAnoRecife} anoAnterior={anoGraf - 1} />
           </Estado>
