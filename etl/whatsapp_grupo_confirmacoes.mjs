@@ -188,6 +188,7 @@ class CdpClient {
 
     const deadline = Date.now() + 50_000;
     let openedGroupName = '';
+    let joinPromptSince = 0;
     while (Date.now() < deadline) {
       await sleep(1_000);
       const state = await this.evaluate(`(() => {
@@ -196,8 +197,13 @@ class CdpClient {
         return { header, precisaEntrar: /entrar no grupo|join group/i.test(body) };
       })()`);
       if (state.precisaEntrar && !state.header) {
-        throw new Error('A conta de monitoramento ainda nao participa deste grupo.');
+        if (!joinPromptSince) joinPromptSince = Date.now();
+        if (Date.now() - joinPromptSince >= 8_000) {
+          throw new Error('A conta de monitoramento ainda nao participa deste grupo.');
+        }
+        continue;
       }
+      joinPromptSince = 0;
       if (state.header) {
         const [groupName = '', ...participantLines] = state.header.split('\n');
         openedGroupName = groupName.trim();

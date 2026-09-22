@@ -1463,3 +1463,9 @@ gravadas.
 - Nenhum dos participantes sem correspondencia coincidiu por telefone com os 9 represados convidados, com os 158 represados validos associados a turma ou com telefones historicos encontrados para esses alunos. A tentativa de cruzamento por nome tambem nao produziu correspondencia exata e unica.
 - Entre os perfis sem correspondencia ha aliases de equipe e administracao. Nenhum desconhecido foi confirmado. Para localizar cinco alunos adicionais alegados como ausentes no Hub, e necessario obter seus nomes e corrigir ou completar o telefone cadastrado antes de qualquer confirmacao automatica.
 - Na validacao final surgiram 4 pedidos no CIS 252. O monitor aprovou 2 com matricula aprovada e correspondencia unica e manteve 2 sem vinculo elegivel pendentes. A rodada seguinte leu 16 telefones unicos, identificou 7 alunos e gravou 2 novas confirmacoes; terminou com `Resultado=0`. A tarefa ficou habilitada, em estado `Ready` e com proxima rodada preservada.
+
+### Codex - 22/09/2026 - Tolerancia ao carregamento dos links de grupo
+
+- O monitor estava habilitado, mas algumas rodadas falharam durante a abertura automatica dos grupos. O WhatsApp exibia temporariamente o texto `Entrar no grupo` antes de terminar de carregar o cabecalho de uma conversa da qual a conta ja participava, e o codigo interpretava esse estado intermediario como falta de acesso.
+- `openGroup` agora aguarda o aviso permanecer por oito segundos antes de concluir que a conta nao participa do grupo. Se o cabecalho aparecer nesse intervalo, o processamento segue normalmente.
+- Duas rodadas consecutivas em gravacao terminaram com `Resultado=0`, processando `2026 - FCIS37` e `2026 - CIS-GL252`. O Agendador ficou habilitado, em estado `Ready`, sem execucoes perdidas e com o proximo ciclo preservado.
