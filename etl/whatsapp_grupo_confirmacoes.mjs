@@ -530,15 +530,20 @@ function selectPilots(activeTurmas) {
 }
 
 async function buildEligibleStudents(turmaId) {
-  const facts = await get('fato_base_alunos', {
-    select: 'aluno_id,telefone_cliente,status_matricula,tipo_matricula',
-    turma: `eq.${turmaId}`,
-    limit: '1000',
+  // A Central Pedagogica usa o roster oficial de Credenciamento__c. Consultar
+  // a mesma fonte inclui transferidos e vendas de outras unidades, cujos
+  // contatos globais nao necessariamente existem em fato_base_alunos.
+  const facts = await get('vw_turma_inscritos_base', {
+    select: 'aluno_id,telefone',
+    turma_id: `eq.${turmaId}`,
+    tipo: 'eq.confirmacao',
+    limit: '5000',
   });
   const eligible = new Map();
   for (const row of facts) {
-    if (row.status_matricula !== 'Aprovada' || ['COMPRADOR DE VAGAS', 'BÔNUS - COMPRADOR DE VAGAS'].includes(row.tipo_matricula)) continue;
-    eligible.set(String(row.aluno_id), { alunoId: String(row.aluno_id), phones: variants(row.telefone_cliente) });
+    const alunoId = String(row.aluno_id);
+    if (!eligible.has(alunoId)) eligible.set(alunoId, { alunoId, phones: new Set() });
+    for (const phone of variants(row.telefone)) eligible.get(alunoId).phones.add(phone);
   }
   const ids = [...eligible.keys()];
   for (let i = 0; i < ids.length; i += 40) {

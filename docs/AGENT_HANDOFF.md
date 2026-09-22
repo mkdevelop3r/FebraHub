@@ -1482,3 +1482,8 @@ gravadas.
 - Telefones de `dim_alunos` passaram a complementar `fato_base_alunos`, `fato_contatos` e `fila_prazo`, acompanhando a precedencia usada pela tela da Central Pedagogica.
 - Havia quatro pedidos no CIS 252. O usuario forneceu imagens externas comprovando nome e telefone de dois deles; Gabriel e Rita foram aprovados individualmente. A leitura seguinte encontrou 18 participantes e somente dois pedidos pendentes, ambos ainda sem correspondencia elegivel.
 - Os contatos mostrados nas imagens nao foram encontrados pelo telefone nem pelo e-mail no Supabase atual, portanto entraram no grupo mas permaneceram desconhecidos para `pedagogico_confirmacoes`. Nenhuma confirmacao foi inventada sem `aluno_id`.
+- Depois que o roster oficial passou a receber `PersonMobilePhone`/`PersonEmail`
+  do Salesforce, `buildEligibleStudents` deixou de consultar apenas
+  `fato_base_alunos` e passou a usar `vw_turma_inscritos_base`. Assim o monitor
+  resolve automaticamente participantes vendidos por outras unidades, como
+  Gabriel e Rita no CIS252, mantendo a mesma lista elegivel exibida no Hub.
