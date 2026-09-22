@@ -192,6 +192,28 @@ jobs:
             -H "Prefer: resolution=merge-duplicates" \
             -d "{\"fonte\":\"omie\",\"nome_exibicao\":\"Loja (Omie)\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.omie.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
 
+      # ---------------- Loja Recife (Omie, conta separada) ----------------
+      # Unidade separada: credenciais _RECIFE, grava nas tabelas fato_loja_*_recife.
+      - name: Loja Recife (Omie)
+        id: omie_recife
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          OMIE_APP_KEY_RECIFE: ${{ secrets.OMIE_APP_KEY_RECIFE }}
+          OMIE_APP_SECRET_RECIFE: ${{ secrets.OMIE_APP_SECRET_RECIFE }}
+        run: python etl/omie_sync.py --unidade recife --desde 01/01/2026
+        continue-on-error: true
+
+      - name: Status — Loja Recife (Omie)
+        if: always()
+        run: |
+          curl -s -X POST "${{ secrets.SUPABASE_URL }}/rest/v1/integracao_status?on_conflict=fonte" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates" \
+            -d "{\"fonte\":\"omie_recife\",\"nome_exibicao\":\"Loja Recife (Omie)\",\"ultima_sync\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"status\":\"${{ steps.omie_recife.outcome == 'success' && 'ok' || 'erro' }}\",\"atualizado_em\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}"
+
       # ---------------- Planilha da Loja (Google Sheets) ----------------
       # Faturamento por curso + metas mensais. A gestora preenche à mão,
       # então vale sincronizar todo dia para pegar o que ela lançou.
