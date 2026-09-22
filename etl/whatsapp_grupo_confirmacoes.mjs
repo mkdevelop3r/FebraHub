@@ -542,13 +542,27 @@ async function buildEligibleStudents(turmaId) {
   }
   const ids = [...eligible.keys()];
   for (let i = 0; i < ids.length; i += 40) {
-    const contacts = await get('fato_contatos', {
-      select: 'cpf,celular',
-      cpf: `in.(${ids.slice(i, i + 40).join(',')})`,
-    });
+    const batch = ids.slice(i, i + 40);
+    const documents = new Map(batch.map(id => [id.padStart(11, '0'), id]));
+    const [contacts, students] = await Promise.all([
+      get('fato_contatos', {
+        select: 'cpf,celular',
+        cpf: `in.(${batch.join(',')})`,
+      }),
+      get('dim_alunos', {
+        select: 'doc_norm,telefone',
+        doc_norm: `in.(${[...documents.keys()].join(',')})`,
+        limit: '1000',
+      }),
+    ]);
     for (const contact of contacts) {
       const student = eligible.get(String(contact.cpf));
       if (student) for (const phone of variants(contact.celular)) student.phones.add(phone);
+    }
+    for (const row of students) {
+      const alunoId = documents.get(String(row.doc_norm).padStart(11, '0'));
+      const student = eligible.get(alunoId);
+      if (student) for (const phone of variants(row.telefone)) student.phones.add(phone);
     }
   }
   return eligible;
@@ -558,21 +572,27 @@ async function buildInvitedStudents(turmaId) {
   const invitations = await get('pedagogico_envios', {
     select: 'aluno_id',
     turma_id: `eq.${turmaId}`,
-    tipo: 'in.(convite,prazo_vencendo)',
-    status: 'eq.aceito',
+    tipo: 'in.(grupo,convite,prazo_vencendo)',
+    status: 'in.(pendente,aceito)',
     limit: '1000',
   });
   const ids = [...new Set(invitations.map(row => String(row.aluno_id)).filter(Boolean))];
   const invited = new Map(ids.map(alunoId => [alunoId, { alunoId, phones: new Set() }]));
   for (let i = 0; i < ids.length; i += 40) {
     const batch = ids.slice(i, i + 40);
-    const [contacts, facts, queueRows] = await Promise.all([
+    const documents = new Map(batch.map(id => [id.padStart(11, '0'), id]));
+    const [contacts, facts, queueRows, students] = await Promise.all([
       get('fato_contatos', { select: 'cpf,celular', cpf: `in.(${batch.join(',')})` }),
       get('fato_base_alunos', { select: 'aluno_id,telefone_cliente', aluno_id: `in.(${batch.join(',')})`, limit: '1000' }),
       get('fila_prazo', {
         select: 'cpf,telefone',
         cpf: `in.(${batch.join(',')})`,
         proxima_turma: `eq.${turmaId}`,
+        limit: '1000',
+      }),
+      get('dim_alunos', {
+        select: 'doc_norm,telefone',
+        doc_norm: `in.(${[...documents.keys()].join(',')})`,
         limit: '1000',
       }),
     ]);
@@ -587,6 +607,11 @@ async function buildInvitedStudents(turmaId) {
     for (const queueRow of queueRows) {
       const student = invited.get(String(queueRow.cpf));
       if (student) for (const phone of variants(queueRow.telefone)) student.phones.add(phone);
+    }
+    for (const row of students) {
+      const alunoId = documents.get(String(row.doc_norm).padStart(11, '0'));
+      const student = invited.get(alunoId);
+      if (student) for (const phone of variants(row.telefone)) student.phones.add(phone);
     }
   }
   return invited;

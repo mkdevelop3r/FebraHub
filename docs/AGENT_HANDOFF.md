@@ -1475,3 +1475,10 @@ gravadas.
 - O recarregamento visivel acontecia porque cada turma era aberta novamente pelo link de convite, passando por uma navegacao completa do WhatsApp Web. O monitor agora recupera do status o ultimo nome validado de cada grupo e clica diretamente na conversa correspondente da barra lateral.
 - O link de convite continua como fallback para turma nova, grupo renomeado ou conversa fora da lista carregada. Depois da primeira abertura bem-sucedida, o nome atualizado volta ao status e as rodadas seguintes usam a troca interna.
 - Rodada dirigida nos dois grupos terminou em cerca de oito segundos, com `Resultado=0` e sem recarregar a pagina. FCIS37 tinha zero pedidos; CIS 252 tinha quatro pedidos, todos sem correspondencia por telefone com matricula aprovada, represado vinculado, contato ou ficha principal. Nenhum foi aprovado por seguranca.
+
+### Codex - 22/09/2026 - Fila de grupo e fontes de telefone
+
+- O conjunto de candidatos do monitor passou a considerar filas `grupo`, `convite` e `prazo_vencendo`, tanto pendentes quanto aceitas. Um pedido no proprio grupo funciona como manifestacao de interesse, mas a aprovacao continua exigindo telefone com correspondencia unica.
+- Telefones de `dim_alunos` passaram a complementar `fato_base_alunos`, `fato_contatos` e `fila_prazo`, acompanhando a precedencia usada pela tela da Central Pedagogica.
+- Havia quatro pedidos no CIS 252. O usuario forneceu imagens externas comprovando nome e telefone de dois deles; Gabriel e Rita foram aprovados individualmente. A leitura seguinte encontrou 18 participantes e somente dois pedidos pendentes, ambos ainda sem correspondencia elegivel.
+- Os contatos mostrados nas imagens nao foram encontrados pelo telefone nem pelo e-mail no Supabase atual, portanto entraram no grupo mas permaneceram desconhecidos para `pedagogico_confirmacoes`. Nenhuma confirmacao foi inventada sem `aluno_id`.
