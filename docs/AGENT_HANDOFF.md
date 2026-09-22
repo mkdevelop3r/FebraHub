@@ -1469,3 +1469,9 @@ gravadas.
 - O monitor estava habilitado, mas algumas rodadas falharam durante a abertura automatica dos grupos. O WhatsApp exibia temporariamente o texto `Entrar no grupo` antes de terminar de carregar o cabecalho de uma conversa da qual a conta ja participava, e o codigo interpretava esse estado intermediario como falta de acesso.
 - `openGroup` agora aguarda o aviso permanecer por oito segundos antes de concluir que a conta nao participa do grupo. Se o cabecalho aparecer nesse intervalo, o processamento segue normalmente.
 - Duas rodadas consecutivas em gravacao terminaram com `Resultado=0`, processando `2026 - FCIS37` e `2026 - CIS-GL252`. O Agendador ficou habilitado, em estado `Ready`, sem execucoes perdidas e com o proximo ciclo preservado.
+
+### Codex - 22/09/2026 - Troca de grupos sem recarregar o WhatsApp
+
+- O recarregamento visivel acontecia porque cada turma era aberta novamente pelo link de convite, passando por uma navegacao completa do WhatsApp Web. O monitor agora recupera do status o ultimo nome validado de cada grupo e clica diretamente na conversa correspondente da barra lateral.
+- O link de convite continua como fallback para turma nova, grupo renomeado ou conversa fora da lista carregada. Depois da primeira abertura bem-sucedida, o nome atualizado volta ao status e as rodadas seguintes usam a troca interna.
+- Rodada dirigida nos dois grupos terminou em cerca de oito segundos, com `Resultado=0` e sem recarregar a pagina. FCIS37 tinha zero pedidos; CIS 252 tinha quatro pedidos, todos sem correspondencia por telefone com matricula aprovada, represado vinculado, contato ou ficha principal. Nenhum foi aprovado por seguranca.

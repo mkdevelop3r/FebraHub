@@ -174,7 +174,45 @@ class CdpClient {
     return true;
   }
 
-  async openGroup(inviteLink) {
+  async openKnownGroup(groupName) {
+    const expected = canonicalText(groupName);
+    if (!expected) return null;
+    const expectedLiteral = JSON.stringify(expected);
+    const clickState = await this.evaluate(`(() => {
+      const canonical = value => String(value || '').normalize('NFD')
+        .replace(/[\\u0300-\\u036f]/g, '').replace(/\\s+/g, ' ').trim().toUpperCase();
+      const activate = target => {
+        for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+          target.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, composed: true, view: window }));
+        }
+      };
+      const current = document.querySelector('#main header')?.innerText || '';
+      if (canonical(current.split('\\n')[0]) === ${expectedLiteral}) return { current: true };
+      const title = [...document.querySelectorAll('#pane-side [title]')]
+        .find(element => canonical(element.getAttribute('title')) === ${expectedLiteral});
+      if (!title) return {};
+      const target = title.closest('[role="row"],[data-testid="cell-frame-container"]') || title;
+      activate(target);
+      return { clicked: true };
+    })()`);
+    if (!clickState.current && !clickState.clicked) return null;
+
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
+      const header = await this.evaluate(`document.querySelector('#main header')?.innerText || ''`);
+      const [openedName = '', ...participantLines] = header.split('\n');
+      if (canonicalText(openedName) === expected) {
+        const matches = participantLines.join(' ').match(/\+?55\s*\(?\d{2}\)?\s*\d{4,5}[\s-]?\d{4}/g) || [];
+        return { groupName: openedName.trim(), phones: new Set(matches.map(normalizePhone).filter(Boolean)) };
+      }
+      await sleep(250);
+    }
+    return null;
+  }
+
+  async openGroup(inviteLink, knownGroupName = '') {
+    const knownGroup = await this.openKnownGroup(knownGroupName);
+    if (knownGroup) return knownGroup;
     let invite;
     try { invite = new URL(inviteLink); } catch { throw new Error('link_grupo invalido.'); }
     if (invite.hostname !== 'chat.whatsapp.com') throw new Error('link_grupo nao pertence a chat.whatsapp.com.');
@@ -465,14 +503,24 @@ class CdpClient {
 }
 
 async function loadTurmas() {
-  const rows = await get('dim_turmas', {
-    select: 'turma_id,curso,data_inicio,data_fim,status,confirma_pedagogico,link_grupo',
-    status: 'eq.aberta',
-    order: 'data_inicio.asc',
-    limit: '1000',
-  });
+  const [rows, statusRows] = await Promise.all([
+    get('dim_turmas', {
+      select: 'turma_id,curso,data_inicio,data_fim,status,confirma_pedagogico,link_grupo',
+      status: 'eq.aberta',
+      order: 'data_inicio.asc',
+      limit: '1000',
+    }),
+    get('pedagogico_whatsapp_status', {
+      select: 'turma_id,grupo',
+      monitor: 'eq.participantes',
+      limit: '1000',
+    }),
+  ]);
+  const groupNames = new Map(statusRows.filter(row => row.grupo).map(row => [row.turma_id, row.grupo]));
   const today = new Date().toISOString().slice(0, 10);
-  return rows.filter(row => !row.data_fim || row.data_fim >= today);
+  return rows
+    .filter(row => !row.data_fim || row.data_fim >= today)
+    .map(row => ({ ...row, grupo_whatsapp: groupNames.get(row.turma_id) || '' }));
 }
 
 function selectPilots(activeTurmas) {
@@ -686,7 +734,10 @@ async function processTurma(client, turma) {
   let result;
   try {
     if (!turma.link_grupo?.trim()) throw new Error('Turma ativa sem link_grupo cadastrado.');
-    const { groupName, phones: headerPhones } = await client.openGroup(turma.link_grupo.trim());
+    const { groupName, phones: headerPhones } = await client.openGroup(
+      turma.link_grupo.trim(),
+      turma.grupo_whatsapp,
+    );
     const storedPhones = await client.readGroupParticipants(groupName);
     const groupPhones = new Set([...headerPhones, ...storedPhones]);
     if (!groupPhones.size) throw new Error('Nenhum telefone de participante disponivel no WhatsApp.');
