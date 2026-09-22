@@ -2636,6 +2636,7 @@ function ComoVende({ detalhe }) {
 const SETORES_META = [
   { setor: "comercial",  indicador: "faturamento",    rotulo: "Comercial",  sub: "faturamento",    unidade: "reais",  niveis: 3 },
   { setor: "loja",       indicador: "faturamento",    rotulo: "Loja",       sub: "faturamento",    unidade: "reais",  niveis: 3 },
+  { setor: "loja_recife", indicador: "faturamento",   rotulo: "Loja Recife", sub: "faturamento",   unidade: "reais",  niveis: 3 },
   { setor: "marketing",  indicador: "leads",          rotulo: "Marketing",  sub: "leads",          unidade: "numero", niveis: 1 },
   { setor: "pedagogico", indicador: "comparecimento", rotulo: "Pedagógico", sub: "comparecimento", unidade: "pct",    niveis: 1 },
   { setor: "financeiro", indicador: "inadimplencia",  rotulo: "Financeiro", sub: "inadimplência",  unidade: "reais",  niveis: 1, menor: true },
