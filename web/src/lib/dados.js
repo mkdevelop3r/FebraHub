@@ -955,6 +955,14 @@ export async function sugerirMetaLoja(mesRef) {
   return data;
 }
 
+/* Recife não tem calendário: a meta é run-rate sazonal (mesmo mês do ano anterior
+   × fator de tendência) × (1 + crescimento). Devolve os níveis + a memória. */
+export async function sugerirMetaLojaRecife(mesRef) {
+  const { data, error } = await supabase.rpc("sugerir_meta_loja_recife", { p_mes: mesRef });
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data;
+}
+
 /* Grava a meta. A RLS exige `papel = 'admin'` — não há RPC porque a policy já
    é o portão; quem não for admin recebe erro do próprio banco, e a tela mostra
    a mensagem como veio. */

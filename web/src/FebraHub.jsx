@@ -27,7 +27,7 @@ import {
   useFinanceiroInadimp, useFinanceiroInadimpOrigem, useFinanceiroAReceberHorizonte,
   useFinanceiroAPagarHorizonte, useFinanceiroPagoMensal,
   usePeriodoLimites, useRankingUnidades, useUnidadeComposicao,
-  useMetaSetor, salvarMeta, sugerirMetaLoja,
+  useMetaSetor, salvarMeta, sugerirMetaLoja, sugerirMetaLojaRecife,
   useFinanceiroReceitaCategoriaPeriodo, useFinanceiroReceitaCategoriaDetalhe, useFinanceiroDespesaCategoriaPeriodo,
   useLojaReceitaPeriodo, useLojaReceitaTotalMes, useLojaReceitaConsolidada,
   useLojaSerie, useLojaRecifeSerie, useLojaKpisAno, useLojaKpisPeriodo,
@@ -2704,6 +2704,31 @@ function MemoriaCalculo({ m }) {
   );
 }
 
+/* Memória de cálculo de Recife (sem calendário): mostra de onde a meta veio —
+   ano anterior, fator de tendência, base run-rate e o crescimento por cima. */
+function MemoriaRecife({ m }) {
+  const mem = m?.memoria ?? {};
+  const linhas = [
+    ["Faturamento no mesmo mês do ano anterior", moeda(mem.ref_ano_anterior)],
+    ["Fator de tendência (Recife vs. ano anterior)", `× ${Number(mem.fator_tendencia ?? 1).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}`],
+    ["Base run-rate (o que a loja faz hoje)", moeda(mem.base_runrate)],
+    ["Crescimento aplicado (inflação + esticada)", `+ ${Math.round((mem.crescimento ?? 0) * 100)}%`],
+  ];
+  return (
+    <div>
+      {linhas.map(([rot, val]) => (
+        <div key={rot} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "2px 0", fontSize: 11.5 }}>
+          <span style={{ color: C.muted }}>{rot}</span>
+          <span style={{ fontFamily: GROTESK, fontWeight: 700, color: C.text }}>{val}</span>
+        </div>
+      ))}
+      <div style={{ marginTop: 4, fontSize: 10.5, color: C.dim, lineHeight: 1.5 }}>
+        Recife não usa calendário (a venda é picada); a meta parte do que a loja fatura hoje, sazonalizado, com o crescimento por cima.
+      </div>
+    </div>
+  );
+}
+
 function AvisosMeta({ avisos }) {
   if (!avisos?.length) return null;
   return (
@@ -2718,14 +2743,15 @@ function AvisosMeta({ avisos }) {
   );
 }
 
-function SugestaoMeta({ mesRef, onAplicar }) {
+function SugestaoMeta({ mesRef, onAplicar, setor = "loja" }) {
   const [s, setS] = useState(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState(null);
+  const recife = setor === "loja_recife";
 
   const calcular = async () => {
     setCarregando(true); setErro(null);
-    try { setS(await sugerirMetaLoja(mesRef)); }
+    try { setS(await (recife ? sugerirMetaLojaRecife : sugerirMetaLoja)(mesRef)); }
     catch (e) { setErro(e.message || "Não foi possível calcular."); }
     finally { setCarregando(false); }
   };
@@ -2740,7 +2766,7 @@ function SugestaoMeta({ mesRef, onAplicar }) {
           color: C.gold, background: `${C.gold}14`, border: `1px solid ${C.gold}3A`,
         }}>
           {carregando ? <Loader2 size={12} className="girar" /> : <Calculator size={12} />}
-          {carregando ? "calculando…" : "calcular pelo método"}
+          {carregando ? "calculando…" : recife ? "calcular pelo histórico" : "calcular pelo método"}
         </button>
       )}
       {erro && <div style={{ fontSize: 11, color: C.down, marginTop: 6 }}>{erro}</div>}
@@ -2763,7 +2789,7 @@ function SugestaoMeta({ mesRef, onAplicar }) {
             }}>descartar</button>
           </div>
 
-          <MemoriaCalculo m={s} />
+          {recife ? <MemoriaRecife m={s} /> : <MemoriaCalculo m={s} />}
 
           <div style={{ display: "flex", gap: 16, marginTop: 9, paddingTop: 8, borderTop: `1px solid ${C.hair}`, flexWrap: "wrap" }}>
             {[["mínima", s.minima], ["básica", s.basica], ["máster", s.master]].map(([r, v]) => (
@@ -2938,15 +2964,18 @@ function LinhaMeta({ cfg, mesRef, linha, admin, editando, onEditar, onFechar, on
 
       {editando && (
         <div style={{ marginTop: 10 }}>
-          {cfg.setor === "loja" && (
+          {(cfg.setor === "loja" || cfg.setor === "loja_recife") && (
             /* A sugestão preenche os números e guarda a MEMÓRIA; não escreve
                nada na observação. Aquele campo é para o que só uma pessoa
-               sabe, e antes a memória o ocupava inteiro. */
-            <SugestaoMeta mesRef={mesRef} onAplicar={(s) => setF((v) => ({
+               sabe, e antes a memória o ocupava inteiro. Loja = método do
+               calendário; Loja Recife = run-rate sazonal + crescimento. */
+            <SugestaoMeta mesRef={mesRef} setor={cfg.setor} onAplicar={(s) => setF((v) => ({
               ...v,
               minima: s.minima, basica: s.basica, master: s.master,
-              memoria: { ...s, calculado_em: new Date().toISOString().slice(0, 10),
-                         metodo: "dias × tipo (docs/METODO_META_LOJA.md)" },
+              memoria: cfg.setor === "loja_recife"
+                ? { ...s.memoria, calculado_em: new Date().toISOString().slice(0, 10) }
+                : { ...s, calculado_em: new Date().toISOString().slice(0, 10),
+                    metodo: "dias × tipo (docs/METODO_META_LOJA.md)" },
             }))} />
           )}
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>

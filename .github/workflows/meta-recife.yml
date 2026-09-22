@@ -1,0 +1,30 @@
+# ============================================================
+# FebraHub · Meta da Loja Recife — sugestão automática mensal
+#
+# Roda no dia 25 (a meta é escrita no dia 25 para o mês seguinte) e chama
+# aplicar_meta_loja_recife, que calcula a sugestão (run-rate sazonal + 5%) e
+# grava em meta_setor SÓ se o mês ainda não tiver meta — nunca sobrescreve o
+# que alguém ajustou à mão. Editar/re-sugerir continua possível no Hub de Metas.
+# ============================================================
+name: Meta Loja Recife (mensal)
+
+on:
+  schedule:
+    - cron: '0 9 25 * *'   # dia 25, 06:00 Salvador
+  workflow_dispatch:
+
+jobs:
+  meta:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Aplicar meta sugerida (mês seguinte)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          curl -s --fail-with-body -X POST \
+            "$SUPABASE_URL/rest/v1/rpc/aplicar_meta_loja_recife" \
+            -H "apikey: $SUPABASE_SERVICE_KEY" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{}'
