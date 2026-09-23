@@ -769,7 +769,7 @@ async function processTurma(client, turma) {
       turma.grupo_whatsapp,
     );
     const storedPhones = await client.readGroupParticipants(groupName);
-    const groupPhones = new Set([...headerPhones, ...storedPhones]);
+    let groupPhones = new Set([...headerPhones, ...storedPhones]);
     if (!groupPhones.size) throw new Error('Nenhum telefone de participante disponivel no WhatsApp.');
     const [eligible, invited] = await Promise.all([
       buildEligibleStudents(turma.turma_id),
@@ -789,13 +789,28 @@ async function processTurma(client, turma) {
     const pendingStartedAt = Date.now();
     try {
       const pending = await client.readPendingRequests(groupName);
-      const classification = classifyPendingRequests(pending, eligible, invited);
+      const pendingRequests = pending.requests.filter(request => {
+        const requestPhones = variants(request.phone);
+        return ![...requestPhones].some(phone => groupPhones.has(phone));
+      });
+      const classification = classifyPendingRequests({
+        total: pendingRequests.length,
+        requests: pendingRequests,
+      }, eligible, invited);
       pendingSummary = classification.summary;
       if (write && classification.approvalPhones.length) {
         try {
           const approval = await client.approvePendingRequests(groupName, classification.approvalPhones);
           pendingSummary.aprovados_automaticamente = approval.approved;
           if (approval.failed) pendingSummary.erro = `${approval.failed} pedido(s) elegível(is) não foram aprovados.`;
+          if (approval.approved) {
+            const expectedCount = groupPhones.size + approval.approved;
+            for (let attempt = 0; attempt < 10 && groupPhones.size < expectedCount; attempt++) {
+              await sleep(500);
+              const refreshedPhones = await client.readGroupParticipants(groupName);
+              groupPhones = new Set([...groupPhones, ...refreshedPhones]);
+            }
+          }
         } catch (approvalError) {
           pendingSummary.erro = String(approvalError?.message || approvalError).slice(0, 500);
         }

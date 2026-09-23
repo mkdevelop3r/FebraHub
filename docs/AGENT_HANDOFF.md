@@ -1487,3 +1487,9 @@ gravadas.
   `fato_base_alunos` e passou a usar `vw_turma_inscritos_base`. Assim o monitor
   resolve automaticamente participantes vendidos por outras unidades, como
   Gabriel e Rita no CIS252, mantendo a mesma lista elegivel exibida no Hub.
+
+### Codex - 23/09/2026 - Confirmacao na mesma rodada da aprovacao
+
+- Julia Bezerra de Lemos foi aprovada automaticamente no CIS 252 as 16:24, mas a rodada tinha lido os participantes antes de clicar em `Aprovar`. Por isso a evidencia `grupo_whatsapp` so entrou no ciclo antecipado seguinte, as 16:29. A gravacao foi conferida nominalmente no Supabase.
+- Depois de aprovar pedidos, o monitor agora relê por ate cinco segundos a lista de participantes e incorpora os novos telefones antes de calcular e gravar as confirmacoes. Assim a entrada pode ser confirmada na mesma rodada quando o WhatsApp atualiza o roster a tempo.
+- Pedidos ainda presentes no IndexedDB, mas cujo telefone ja consta entre os participantes, sao descartados da fila ativa. Isso evita repetir uma aprovacao que o WhatsApp ja efetivou, mas ainda nao removeu do armazenamento local.
