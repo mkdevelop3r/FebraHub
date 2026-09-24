@@ -8064,11 +8064,18 @@ function CertificadosTurma({ turma, onVoltar, notificar }) {
   return (
     <Bloco titulo="Certificados da turma" canto={turma.turma_id}>
       <div style={{ padding: "12px 16px" }}>
-        <button onClick={onVoltar} style={{
-          display: "inline-flex", alignItems: "center", gap: 5, marginBottom: 12, padding: "5px 10px",
-          borderRadius: 8, cursor: "pointer", fontFamily: SANS, fontSize: 11.5, fontWeight: 700,
-          color: C.muted, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`,
-        }}><ChevronLeft size={13} /> voltar às turmas</button>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+          <button onClick={onVoltar} style={{
+            display: "inline-flex", alignItems: "center", gap: 5, padding: "5px 10px",
+            borderRadius: 8, cursor: "pointer", fontFamily: SANS, fontSize: 11.5, fontWeight: 700,
+            color: C.muted, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`,
+          }}><ChevronLeft size={13} /> voltar às turmas</button>
+          <button disabled title="Em breve — depende do template DOCUMENT no Black CRM" style={{
+            display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9,
+            fontFamily: SANS, fontSize: 12, fontWeight: 800, cursor: "not-allowed",
+            color: C.faint, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, opacity: 0.7,
+          }}><Send size={13} /> Disparar turma (em breve)</button>
+        </div>
 
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 6,
           padding: "12px 14px", borderRadius: 10, background: "rgba(255,255,255,.03)", border: `1px solid ${C.cardLine}` }}>
@@ -8117,14 +8124,6 @@ function CertificadosTurma({ turma, onVoltar, notificar }) {
             ))}
           </div>
         </Estado>
-
-        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
-          <button disabled title="Em breve — depende do template DOCUMENT no Black CRM" style={{
-            display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9,
-            fontFamily: SANS, fontSize: 12, fontWeight: 800, cursor: "not-allowed",
-            color: C.faint, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, opacity: 0.7,
-          }}><Send size={13} /> Disparar turma (em breve)</button>
-        </div>
       </div>
     </Bloco>
   );
