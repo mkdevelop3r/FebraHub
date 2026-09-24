@@ -47,7 +47,7 @@ import {
   useTurmaDim, useTurmaSugestao,
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
   useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
-  useCertificadoTurmas, useCertificadoPresentes, certificadoUrl,
+  useCertificadoTurmas, useCertificadoPresentes, useCertificadoPorAluno, certificadoUrl,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useConsultores, useTrocaSolicitacoes, buscarLeadTroca, solicitarTroca,
   decidirTroca, dispararExecucaoTroca,
@@ -7983,6 +7983,7 @@ function CentralCertificados({ notificar }) {
   const turmas = useCertificadoTurmas();
   const [busca, setBusca] = useState("");
   const [sel, setSel] = useState(null);
+  const [modo, setModo] = useState("turma");
 
   const lista = useMemo(() => {
     const q = busca.trim().toLowerCase();
@@ -7996,6 +7997,11 @@ function CentralCertificados({ notificar }) {
   return (
     <Bloco titulo="Certificados" canto="turmas encerradas · a partir da presença">
       <div style={{ padding: "12px 16px" }}>
+        <div style={{ marginBottom: 12 }}>
+          <Segmentado opcoes={[{ key: "turma", label: "Por turma" }, { key: "aluno", label: "Por aluno" }]} valor={modo} onChange={setModo} />
+        </div>
+        {modo === "aluno" ? <CertificadosPorAluno notificar={notificar} /> : (
+        <>
         <div style={{ position: "relative", marginBottom: 12 }}>
           <Search size={14} style={{ position: "absolute", left: 11, top: 10, color: C.faint }} />
           <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por curso ou cidade…"
@@ -8026,8 +8032,87 @@ function CentralCertificados({ notificar }) {
             ))}
           </div>
         </Estado>
+        </>
+        )}
       </div>
     </Bloco>
+  );
+}
+
+/* Busca por aluno: digita o nome e vê os certificados dele (turmas encerradas
+   certificáveis em que foi credenciado), cada um com baixar. */
+function CertificadosPorAluno({ notificar }) {
+  const [busca, setBusca] = useState("");
+  const res = useCertificadoPorAluno(busca);
+  const [baixando, setBaixando] = useState(null);
+
+  const alunos = useMemo(() => {
+    const m = new Map();
+    for (const r of res.data ?? []) {
+      if (!m.has(r.cpf)) m.set(r.cpf, { cpf: r.cpf, nome: r.nome, certs: [] });
+      m.get(r.cpf).certs.push(r);
+    }
+    return [...m.values()]
+      .map((a) => ({ ...a, certs: a.certs.sort((x, y) => String(y.periodo_ini ?? "").localeCompare(String(x.periodo_ini ?? ""))) }))
+      .sort((a, b) => String(a.nome).localeCompare(String(b.nome)));
+  }, [res.data]);
+
+  const baixar = async (r) => {
+    setBaixando(`${r.turma_id}|${r.cpf}`);
+    try {
+      const url = await certificadoUrl({
+        turma_id: r.turma_id, cpf: r.cpf, nome: r.nome, curso: r.curso,
+        periodo_ini: r.periodo_ini, periodo_fim: r.periodo_fim, carga_horaria: r.carga_horaria,
+        email: r.email, telefone: r.telefone,
+      });
+      window.open(url, "_blank");
+    } catch (e) { notificar?.(e.message || "Falha ao gerar o certificado", "erro"); }
+    finally { setBaixando(null); }
+  };
+
+  const curto = busca.trim().length < 3;
+
+  return (
+    <>
+      <div style={{ position: "relative", marginBottom: 12 }}>
+        <Search size={14} style={{ position: "absolute", left: 11, top: 10, color: C.faint }} />
+        <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar pelo nome do aluno…"
+          style={{ ...inputAv, paddingLeft: 32 }} />
+      </div>
+      {curto ? (
+        <div style={{ fontSize: 12, color: C.faint, padding: "8px 2px" }}>Digite ao menos 3 letras do nome.</div>
+      ) : (
+        <Estado carregando={res.isLoading} erro={res.error} vazio={!alunos.length}
+          vazioTitulo="Nenhum certificado para esse nome"
+          vazioDica="Só aparecem cursos já encerrados em que a pessoa foi credenciada (presente).">
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {alunos.map((a) => (
+              <div key={a.cpf} style={{ borderRadius: 10, border: `1px solid ${C.cardLine}`, background: "rgba(255,255,255,.03)", padding: "10px 14px" }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.bright, marginBottom: 8 }}>{a.nome}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {a.certs.map((r) => (
+                    <div key={r.turma_id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+                      padding: "7px 10px", borderRadius: 8, background: "rgba(255,255,255,.02)", border: `1px solid ${C.hair}` }}>
+                      <span style={{ flex: "1 1 240px", minWidth: 0 }}>
+                        <span style={{ display: "block", fontSize: 12.5, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.curso}</span>
+                        <span style={{ fontSize: 10.5, color: C.faint }}>{fmtDataBR(r.periodo_ini)} a {fmtDataBR(r.periodo_fim)}{r.carga_horaria ? ` · ${r.carga_horaria}h` : ""} · {r.turma_id}</span>
+                      </span>
+                      <button onClick={() => baixar(r)} disabled={baixando === `${r.turma_id}|${r.cpf}`} style={{
+                        display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 11px", borderRadius: 8,
+                        fontFamily: SANS, fontSize: 11.5, fontWeight: 700, cursor: baixando === `${r.turma_id}|${r.cpf}` ? "default" : "pointer",
+                        color: C.gold, background: `${C.gold}14`, border: `1px solid ${C.gold}3A`, flexShrink: 0,
+                      }}>
+                        {baixando === `${r.turma_id}|${r.cpf}` ? <Loader2 size={12} className="girar" /> : <Download size={12} />} baixar
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Estado>
+      )}
+    </>
   );
 }
 

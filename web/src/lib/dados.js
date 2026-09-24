@@ -1005,6 +1005,29 @@ export function useCertificadoPresentes(turmaId) {
   });
 }
 
+/* Busca por ALUNO: dado um trecho do nome, traz os certificados disponíveis
+   (turmas certificáveis já encerradas em que a pessoa foi credenciada). */
+export function useCertificadoPorAluno(nome) {
+  const termo = (nome ?? "").trim();
+  return useQuery({
+    queryKey: ["cert-aluno", termo.toLowerCase()],
+    enabled: termo.length >= 3,
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vw_certificado_presente")
+        .select("*")
+        .ilike("nome", `%${termo}%`)
+        .limit(400);
+      if (error) throw error;
+      const hoje = new Date().toISOString().slice(0, 10);
+      return (data ?? []).filter(
+        (r) => r.carga_horaria != null && String(r.periodo_fim ?? "").slice(0, 10) < hoje
+      );
+    },
+  });
+}
+
 /* Grava/atualiza o token com os campos JÁ EDITADOS e devolve a URL do PDF
    (mesmo link para baixar e para o disparo). */
 export async function certificadoUrl({ turma_id, cpf, nome, curso, periodo_ini, periodo_fim, carga_horaria, email, telefone }) {
