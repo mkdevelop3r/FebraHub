@@ -8002,7 +8002,7 @@ function CentralCertificados({ notificar }) {
             style={{ ...inputAv, paddingLeft: 32 }} />
         </div>
         <Estado carregando={turmas.isLoading} erro={turmas.error} vazio={!lista.length}
-          vazioTitulo="Nenhuma turma encerrada com presença" vazioDica="Assim que uma turma terminar e tiver presença registrada, ela aparece aqui.">
+          vazioTitulo="Nenhuma turma encerrada com credenciados" vazioDica="Turmas certificáveis já encerradas, com credenciados (presença) no Salesforce, aparecem aqui.">
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {lista.map((t) => (
               <button key={t.turma_id} onClick={() => setSel(t)} style={{
@@ -8019,7 +8019,7 @@ function CentralCertificados({ notificar }) {
                   </span>
                 </span>
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                  <ContaTurma rotulo="presentes" valor={t.presentes} total={t.presentes} cor={C.up} />
+                  <ContaTurma rotulo="credenciados" valor={t.presentes} total={t.presentes} cor={C.up} />
                   <ChevronRight size={16} style={{ color: C.faint }} />
                 </span>
               </button>
@@ -8095,7 +8095,7 @@ function CertificadosTurma({ turma, onVoltar, notificar }) {
         </div>
 
         <Estado carregando={presentes.isLoading} erro={presentes.error} vazio={!presentes.data?.length}
-          vazioTitulo="Sem presentes registrados nesta turma">
+          vazioTitulo="Sem credenciados nesta turma">
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             {(presentes.data ?? []).map((p) => (
               <div key={p.cpf} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
