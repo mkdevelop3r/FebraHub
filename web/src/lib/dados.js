@@ -1007,11 +1007,12 @@ export function useCertificadoPresentes(turmaId) {
 
 /* Grava/atualiza o token com os campos JÁ EDITADOS e devolve a URL do PDF
    (mesmo link para baixar e para o disparo). */
-export async function certificadoUrl({ turma_id, cpf, nome, curso, periodo_ini, periodo_fim, carga_horaria }) {
+export async function certificadoUrl({ turma_id, cpf, nome, curso, periodo_ini, periodo_fim, carga_horaria, email, telefone }) {
   const { data, error } = await supabase.rpc("certificado_link", {
     p_turma: turma_id, p_cpf: cpf, p_nome: nome, p_curso: curso,
     p_ini: periodo_ini || null, p_fim: periodo_fim || null,
     p_carga: carga_horaria === "" || carga_horaria == null ? null : Number(carga_horaria),
+    p_email: email || null, p_telefone: telefone || null,
   });
   if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
   return `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/certificado/${data}.pdf`;

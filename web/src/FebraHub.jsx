@@ -8013,6 +8013,7 @@ function CentralCertificados({ notificar }) {
                 <span style={{ minWidth: 0 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.curso}</span>
                   <span style={{ display: "flex", gap: 10, fontSize: 11, color: C.faint, marginTop: 2, flexWrap: "wrap" }}>
+                    <span style={{ color: C.muted, fontWeight: 600 }}>{t.turma_id}</span>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><CalendarDays size={11} /> {fmtDataBR(t.data_inicio)} a {fmtDataBR(t.data_fim)}</span>
                     {t.cidade && <span>{t.cidade}</span>}
                   </span>
@@ -8037,6 +8038,7 @@ function CertificadosTurma({ turma, onVoltar, notificar }) {
   const [fim, setFim] = useState(String(turma.data_fim ?? turma.data_inicio ?? "").slice(0, 10));
   const [carga, setCarga] = useState("");
   const [nomes, setNomes] = useState({});
+  const [emails, setEmails] = useState({});
   const [baixando, setBaixando] = useState(null);
 
   useEffect(() => {
@@ -8050,6 +8052,7 @@ function CertificadosTurma({ turma, onVoltar, notificar }) {
       const url = await certificadoUrl({
         turma_id: turma.turma_id, cpf: p.cpf,
         nome: nomes[p.cpf] ?? p.nome, curso, periodo_ini: ini, periodo_fim: fim, carga_horaria: carga,
+        email: emails[p.cpf] ?? p.email, telefone: p.telefone,
       });
       window.open(url, "_blank");
     } catch (e) { notificar?.(e.message || "Falha ao gerar o certificado", "erro"); }
@@ -8059,7 +8062,7 @@ function CertificadosTurma({ turma, onVoltar, notificar }) {
   const campo = { display: "flex", flexDirection: "column", gap: 3, minWidth: 120 };
 
   return (
-    <Bloco titulo="Certificados da turma" canto={turma.curso}>
+    <Bloco titulo="Certificados da turma" canto={turma.turma_id}>
       <div style={{ padding: "12px 16px" }}>
         <button onClick={onVoltar} style={{
           display: "inline-flex", alignItems: "center", gap: 5, marginBottom: 12, padding: "5px 10px",
@@ -8098,10 +8101,11 @@ function CertificadosTurma({ turma, onVoltar, notificar }) {
               <div key={p.cpf} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
                 padding: "8px 12px", borderRadius: 9, background: "rgba(255,255,255,.02)", border: `1px solid ${C.hair}` }}>
                 <input value={nomes[p.cpf] ?? p.nome ?? ""} onChange={(e) => setNomes((v) => ({ ...v, [p.cpf]: e.target.value }))}
-                  style={{ ...inputAv, flex: "2 1 240px", fontWeight: 700 }} />
-                <span style={{ flex: "1 1 150px", fontSize: 11, color: C.faint, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {p.email || "sem e-mail"}{p.telefone ? ` · ${formataTelefone(p.telefone)}` : ""}
-                </span>
+                  style={{ ...inputAv, flex: "2 1 200px", fontWeight: 700 }} />
+                <input type="email" value={emails[p.cpf] ?? p.email ?? ""} placeholder="e-mail (preencher)"
+                  onChange={(e) => setEmails((v) => ({ ...v, [p.cpf]: e.target.value }))}
+                  style={{ ...inputAv, flex: "1 1 190px", borderColor: (emails[p.cpf] ?? p.email) ? undefined : `${C.warn}88` }} />
+                {p.telefone && <span style={{ fontSize: 11, color: C.faint, flexShrink: 0 }}>{formataTelefone(p.telefone)}</span>}
                 <button onClick={() => baixar(p)} disabled={baixando === p.cpf} style={{
                   display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 11px", borderRadius: 8,
                   fontFamily: SANS, fontSize: 11.5, fontWeight: 700, cursor: baixando === p.cpf ? "default" : "pointer",
