@@ -981,6 +981,42 @@ export async function salvarMeta(linha) {
    represado/ausência aparecer — sem ele, o dado velho passa por atual. */
 export const usePresencaSaude = () => useView("vw_presenca_saude", { staleTime: 60 * 1000, retry: 2 });
 
+/* ============ CERTIFICADOS ============
+   Turmas encerradas com nº de presentes; os presentes de uma turma com os
+   campos pré-preenchidos; e a criação do link (token) do certificado. O PDF
+   em si é gerado on-demand pela Edge Function `certificado` — nada fica salvo. */
+export const useCertificadoTurmas = () =>
+  useView("vw_certificado_turmas", { ordem: ["data_inicio"], staleTime: 5 * 60 * 1000 });
+
+export function useCertificadoPresentes(turmaId) {
+  return useQuery({
+    queryKey: ["cert-presentes", turmaId],
+    enabled: !!turmaId,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("vw_certificado_presente")
+        .select("*")
+        .eq("turma_id", turmaId)
+        .order("nome");
+      if (error) throw error;
+      return data ?? [];
+    },
+  });
+}
+
+/* Grava/atualiza o token com os campos JÁ EDITADOS e devolve a URL do PDF
+   (mesmo link para baixar e para o disparo). */
+export async function certificadoUrl({ turma_id, cpf, nome, curso, periodo_ini, periodo_fim, carga_horaria }) {
+  const { data, error } = await supabase.rpc("certificado_link", {
+    p_turma: turma_id, p_cpf: cpf, p_nome: nome, p_curso: curso,
+    p_ini: periodo_ini || null, p_fim: periodo_fim || null,
+    p_carga: carga_horaria === "" || carga_horaria == null ? null : Number(carga_horaria),
+  });
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/certificado/${data}.pdf`;
+}
+
 /* PRESENÇA POR TURMA.
    `vw_turmas_mensuraveis` é o subconjunto onde ausência SIGNIFICA alguma
    coisa: turma que já aconteceu, com registro de verdade (cobertura >= 40%)

@@ -47,6 +47,7 @@ import {
   useTurmaDim, useTurmaSugestao,
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
   useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
+  useCertificadoTurmas, useCertificadoPresentes, certificadoUrl,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useConsultores, useTrocaSolicitacoes, buscarLeadTroca, solicitarTroca,
   decidirTroca, dispararExecucaoTroca,
@@ -7871,6 +7872,7 @@ const ABAS_CENTRAL = [
   { key: "represados", label: "Represados" },
   { key: "presenca",   label: "Presença" },
   { key: "avaliacoes", label: "Avaliações" },
+  { key: "certificados", label: "Certificados" },
   { key: "maestros",   label: "Maestros" },
 ];
 
@@ -7948,8 +7950,9 @@ function CentralPedagogica() {
       {aba === "represados" && <CentralRepresados notificar={notificar} />}
       {aba === "presenca" && <CentralPresenca />}
       {aba === "avaliacoes" && <SecaoAvaliacaoEventos notificar={notificar} />}
+      {aba === "certificados" && <CentralCertificados notificar={notificar} />}
       {aba === "maestros" && <CentralMaestros notificar={notificar} />}
-      {!["turmas", "represados", "presenca", "avaliacoes", "maestros"].includes(aba) && (
+      {!["turmas", "represados", "presenca", "avaliacoes", "certificados", "maestros"].includes(aba) && (
         <div style={{ background: C.card, border: `1px solid ${C.cardLine}`, borderRadius: 14, padding: "26px 22px" }}>
           <div style={{ fontSize: 13.5, fontWeight: 800, color: C.bright, marginBottom: 5 }}>
             {ABAS_CENTRAL.find((a) => a.key === aba)?.label} chega na próxima etapa
@@ -7963,6 +7966,163 @@ function CentralPedagogica() {
 
       <Toast toast={toast} onFechar={() => setToast(null)} />
     </>
+  );
+}
+
+/* ============ CERTIFICADOS ============
+   Turma encerrada -> presentes -> baixar/disparar. Os campos (curso, período,
+   carga) vêm pré-preenchidos e são editáveis por turma; o nome é editável por
+   pessoa. O PDF é gerado on-demand (Edge Function); nada fica salvo. */
+const fmtDataBR = (s) => {
+  if (!s) return "—";
+  const [y, m, d] = String(s).slice(0, 10).split("-");
+  return `${d}/${m}/${y}`;
+};
+
+function CentralCertificados({ notificar }) {
+  const turmas = useCertificadoTurmas();
+  const [busca, setBusca] = useState("");
+  const [sel, setSel] = useState(null);
+
+  const lista = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return [...(turmas.data ?? [])]
+      .filter((t) => !q || `${t.curso ?? ""} ${t.cidade ?? ""}`.toLowerCase().includes(q))
+      .sort((a, b) => String(b.data_inicio ?? "").localeCompare(String(a.data_inicio ?? "")));
+  }, [turmas.data, busca]);
+
+  if (sel) return <CertificadosTurma turma={sel} onVoltar={() => setSel(null)} notificar={notificar} />;
+
+  return (
+    <Bloco titulo="Certificados" canto="turmas encerradas · a partir da presença">
+      <div style={{ padding: "12px 16px" }}>
+        <div style={{ position: "relative", marginBottom: 12 }}>
+          <Search size={14} style={{ position: "absolute", left: 11, top: 10, color: C.faint }} />
+          <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por curso ou cidade…"
+            style={{ ...inputAv, paddingLeft: 32 }} />
+        </div>
+        <Estado carregando={turmas.isLoading} erro={turmas.error} vazio={!lista.length}
+          vazioTitulo="Nenhuma turma encerrada com presença" vazioDica="Assim que uma turma terminar e tiver presença registrada, ela aparece aqui.">
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {lista.map((t) => (
+              <button key={t.turma_id} onClick={() => setSel(t)} style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
+                padding: "10px 14px", borderRadius: 10, cursor: "pointer", textAlign: "left",
+                background: "rgba(255,255,255,.03)", border: `1px solid ${C.cardLine}`, width: "100%",
+              }}>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: C.bright, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.curso}</span>
+                  <span style={{ display: "flex", gap: 10, fontSize: 11, color: C.faint, marginTop: 2, flexWrap: "wrap" }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><CalendarDays size={11} /> {fmtDataBR(t.data_inicio)} a {fmtDataBR(t.data_fim)}</span>
+                    {t.cidade && <span>{t.cidade}</span>}
+                  </span>
+                </span>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                  <ContaTurma rotulo="presentes" valor={t.presentes} total={t.presentes} cor={C.up} />
+                  <ChevronRight size={16} style={{ color: C.faint }} />
+                </span>
+              </button>
+            ))}
+          </div>
+        </Estado>
+      </div>
+    </Bloco>
+  );
+}
+
+function CertificadosTurma({ turma, onVoltar, notificar }) {
+  const presentes = useCertificadoPresentes(turma.turma_id);
+  const [curso, setCurso] = useState(turma.curso ?? "");
+  const [ini, setIni] = useState(String(turma.data_inicio ?? "").slice(0, 10));
+  const [fim, setFim] = useState(String(turma.data_fim ?? turma.data_inicio ?? "").slice(0, 10));
+  const [carga, setCarga] = useState("");
+  const [nomes, setNomes] = useState({});
+  const [baixando, setBaixando] = useState(null);
+
+  useEffect(() => {
+    const c = presentes.data?.[0]?.carga_horaria;
+    setCarga((v) => (v === "" && c != null ? String(c) : v));
+  }, [presentes.data]);
+
+  const baixar = async (p) => {
+    setBaixando(p.cpf);
+    try {
+      const url = await certificadoUrl({
+        turma_id: turma.turma_id, cpf: p.cpf,
+        nome: nomes[p.cpf] ?? p.nome, curso, periodo_ini: ini, periodo_fim: fim, carga_horaria: carga,
+      });
+      window.open(url, "_blank");
+    } catch (e) { notificar?.(e.message || "Falha ao gerar o certificado", "erro"); }
+    finally { setBaixando(null); }
+  };
+
+  const campo = { display: "flex", flexDirection: "column", gap: 3, minWidth: 120 };
+
+  return (
+    <Bloco titulo="Certificados da turma" canto={turma.curso}>
+      <div style={{ padding: "12px 16px" }}>
+        <button onClick={onVoltar} style={{
+          display: "inline-flex", alignItems: "center", gap: 5, marginBottom: 12, padding: "5px 10px",
+          borderRadius: 8, cursor: "pointer", fontFamily: SANS, fontSize: 11.5, fontWeight: 700,
+          color: C.muted, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`,
+        }}><ChevronLeft size={13} /> voltar às turmas</button>
+
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 6,
+          padding: "12px 14px", borderRadius: 10, background: "rgba(255,255,255,.03)", border: `1px solid ${C.cardLine}` }}>
+          <div style={{ ...campo, flex: "2 1 260px" }}>
+            <label style={labelAv}>Curso (como sai no certificado)</label>
+            <input value={curso} onChange={(e) => setCurso(e.target.value)} style={inputAv} />
+          </div>
+          <div style={campo}>
+            <label style={labelAv}>Início</label>
+            <input type="date" value={ini} onChange={(e) => setIni(e.target.value)} style={inputAv} />
+          </div>
+          <div style={campo}>
+            <label style={labelAv}>Fim</label>
+            <input type="date" value={fim} onChange={(e) => setFim(e.target.value)} style={inputAv} />
+          </div>
+          <div style={{ ...campo, minWidth: 96 }}>
+            <label style={labelAv}>Carga (h)</label>
+            <input value={carga} inputMode="numeric" onChange={(e) => setCarga(e.target.value.replace(/\D/g, ""))} style={inputAv} placeholder="—" />
+          </div>
+        </div>
+        <div style={{ fontSize: 10.5, color: C.faint, marginBottom: 12, lineHeight: 1.5 }}>
+          Curso, período e carga valem para todos desta turma. O <b style={{ color: C.muted }}>nome</b> é editável em cada linha.
+          O disparo por WhatsApp/e-mail entra na próxima etapa (depende do template no Black CRM).
+        </div>
+
+        <Estado carregando={presentes.isLoading} erro={presentes.error} vazio={!presentes.data?.length}
+          vazioTitulo="Sem presentes registrados nesta turma">
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {(presentes.data ?? []).map((p) => (
+              <div key={p.cpf} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+                padding: "8px 12px", borderRadius: 9, background: "rgba(255,255,255,.02)", border: `1px solid ${C.hair}` }}>
+                <input value={nomes[p.cpf] ?? p.nome ?? ""} onChange={(e) => setNomes((v) => ({ ...v, [p.cpf]: e.target.value }))}
+                  style={{ ...inputAv, flex: "2 1 240px", fontWeight: 700 }} />
+                <span style={{ flex: "1 1 150px", fontSize: 11, color: C.faint, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {p.email || "sem e-mail"}{p.telefone ? ` · ${formataTelefone(p.telefone)}` : ""}
+                </span>
+                <button onClick={() => baixar(p)} disabled={baixando === p.cpf} style={{
+                  display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 11px", borderRadius: 8,
+                  fontFamily: SANS, fontSize: 11.5, fontWeight: 700, cursor: baixando === p.cpf ? "default" : "pointer",
+                  color: C.gold, background: `${C.gold}14`, border: `1px solid ${C.gold}3A`, flexShrink: 0,
+                }}>
+                  {baixando === p.cpf ? <Loader2 size={12} className="girar" /> : <Download size={12} />} baixar
+                </button>
+              </div>
+            ))}
+          </div>
+        </Estado>
+
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+          <button disabled title="Em breve — depende do template DOCUMENT no Black CRM" style={{
+            display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9,
+            fontFamily: SANS, fontSize: 12, fontWeight: 800, cursor: "not-allowed",
+            color: C.faint, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, opacity: 0.7,
+          }}><Send size={13} /> Disparar turma (em breve)</button>
+        </div>
+      </div>
+    </Bloco>
   );
 }
 
