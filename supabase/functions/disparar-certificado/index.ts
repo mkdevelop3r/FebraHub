@@ -14,7 +14,14 @@ const SB_KEY   = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const CRM_TOKEN = Deno.env.get("CRM_TOKEN")!;
 const CRM_LOCATION = Deno.env.get("CRM_LOCATION_ID") ?? "JedXhdJDbwOl6lvHCCfj";
 const CERT_FIELD_ID = Deno.env.get("CERT_FIELD_ID") ?? "pOLGEB3taGpLlRFjb7fD"; // contact.certificado_url
+const CURSO_FIELD_ID = Deno.env.get("CERT_CURSO_FIELD_ID") ?? "6MI4rtFHaafHO0cN3TyX"; // contact.nome_do_curso
 const CERT_TAG = Deno.env.get("CERT_TAG") ?? "enviar_certificado";
+
+// "GILMA DE SOUZA" -> "Gilma" (pro {{contact.first_name}} no template não sair em CAIXA ALTA)
+const primeiroNome = (n) => {
+  const t = String(n || "").trim().split(/\s+/)[0] || "";
+  return t ? t.charAt(0).toUpperCase() + t.slice(1).toLowerCase() : "";
+};
 
 const CRM_API = "https://services.leadconnectorhq.com";
 const CORS = {
@@ -71,8 +78,10 @@ async function dispararPessoa(p: any): Promise<{ ok: boolean; motivo?: string }>
   const token = await upsertToken(p);
   const url = `${SB_URL}/functions/v1/certificado/${token}.pdf`;
 
-  const corpo: any = { locationId: CRM_LOCATION, customFields: [{ id: CERT_FIELD_ID, field_value: url }] };
-  if (p.nome) corpo.name = p.nome;
+  const customFields: any[] = [{ id: CERT_FIELD_ID, field_value: url }];
+  if (p.curso) customFields.push({ id: CURSO_FIELD_ID, field_value: p.curso });
+  const corpo: any = { locationId: CRM_LOCATION, customFields };
+  if (p.nome) { corpo.name = p.nome; corpo.firstName = primeiroNome(p.nome); }
   if (telefone) corpo.phone = telefone;
   if (email) corpo.email = email;
 
