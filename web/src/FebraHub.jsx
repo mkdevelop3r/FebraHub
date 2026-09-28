@@ -7,7 +7,7 @@ import BorderGlow from "./BorderGlow.jsx";
 import {
   TrendingUp, Wallet, Megaphone, GraduationCap, ShoppingBag, CalendarDays,
   LayoutDashboard, Lock, Mail, AlertTriangle, Package, LogOut, Power,
-  Database, ShieldAlert, Loader2, ArrowRight, Bell,
+  Database, ShieldAlert, Loader2, ArrowRight, Bell, Eye, EyeOff,
   Clock, Receipt, Hourglass, ChevronLeft, ChevronRight, ChevronDown, Calculator,
   Smile, Frown, Meh, Crown, Gift, X, ArrowUpRight,
   Users, Target, Construction, Percent, Filter, ChevronUp, GripVertical,
@@ -2246,7 +2246,7 @@ function CardTopConsultoras({ top3, estado, onIr }) {
   );
 }
 
-function HubExecutivo({ onIr }) {
+function HubExecutivo({ onIr, oculto = false }) {
   const hoje = new Date();
   const Y = hoje.getFullYear(), Mo = hoje.getMonth(), Di = hoje.getDate();
   const ym = `${Y}-${String(Mo + 1).padStart(2, "0")}`;
@@ -2351,6 +2351,17 @@ function HubExecutivo({ onIr }) {
         @media (min-width: 1040px) { .execCards { grid-template-columns: repeat(3, 1fr); } }
       `}</style>
 
+      {/* O modo privacidade preserva a geometria do painel para poder ser
+          ligado durante uma apresentação sem a tela pular. Também bloqueia
+          clique e seleção enquanto os números estiverem ocultos. */}
+      <div aria-hidden={oculto} style={{
+        filter: oculto ? "blur(9px)" : "none",
+        opacity: oculto ? 0.34 : 1,
+        pointerEvents: oculto ? "none" : "auto",
+        userSelect: oculto ? "none" : "auto",
+        transition: "filter .18s ease, opacity .18s ease",
+      }}>
+
       <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
         <h2 style={{ fontSize: 16, fontWeight: 800, color: C.bright }}>Visão executiva</h2>
         <span style={{ fontSize: 11.5, color: C.faint }}>{hoje.toLocaleDateString("pt-BR", { month: "long", year: "numeric" })} · mês corrente</span>
@@ -2391,6 +2402,7 @@ function HubExecutivo({ onIr }) {
           estado={{ carregando: pedPeriodo.isLoading || pedPresenca.isLoading, erro: pedPeriodo.error ?? pedPresenca.error }}
           linhas={[{ label: "recompra (grade)", valor: fmtPct(recompra, 1), cor: C.gold }, { label: "comparecimento", valor: fmtPct(comparec), cor: C.up }]} />
         <CardTopConsultoras top3={consultoras.top3} estado={{ carregando: cons30.isLoading, erro: cons30.error }} onIr={() => onIr("comercial")} />
+      </div>
       </div>
     </>
   );
@@ -10948,7 +10960,16 @@ function Shell({ perfil }) {
   const [mesIdx, setMesIdx] = useState(() => new Date().getMonth());
   const [transicaoPeriodo, setTransicaoPeriodo] = useState(0);
   const [geral, setGeral] = useState(false); // "Geral": todo o histórico, sem recorte de ano
+  const [executivoOculto, setExecutivoOculto] = useState(() => {
+    try { return localStorage.getItem("febrahub:executivo-oculto") === "1"; }
+    catch { return false; }
+  });
   const { minMes, maxMes, anos } = useRangeDatas();
+
+  useEffect(() => {
+    try { localStorage.setItem("febrahub:executivo-oculto", executivoOculto ? "1" : "0"); }
+    catch { /* O botão continua funcionando mesmo com storage bloqueado. */ }
+  }, [executivoOculto]);
 
   // Categoria: só recorta o Hub Comercial. A lista vem do dado; sem opção
   // "todas" de propósito (categorias são unidades de negócio separadas).
@@ -11015,7 +11036,7 @@ function Shell({ perfil }) {
 
   const conteudo = () => {
     switch (tela) {
-      case "executivo":  return <HubExecutivo onIr={setTela} />;
+      case "executivo":  return <HubExecutivo onIr={setTela} oculto={executivoOculto} />;
       case "metas":      return <HubMetas admin={admin} />;
       case "integracoes": return <HubIntegracoes />;
       case "comercial":  return <HubComercial />;
@@ -11277,6 +11298,22 @@ function Shell({ perfil }) {
                   prometeria um corte que elas não sabem fazer. */}
               {tela !== "executivo" && tela !== "auditoria" && <SeletorPeriodo />}
               {tela === "comercial" && <SeletorCategoria />}
+              {tela === "executivo" && (
+                <button type="button" onClick={() => setExecutivoOculto((v) => !v)}
+                  aria-label={executivoOculto ? "Mostrar informações do Hub Executivo" : "Ocultar informações do Hub Executivo"}
+                  aria-pressed={executivoOculto}
+                  title={executivoOculto ? "Mostrar informações" : "Ocultar informações"}
+                  style={{
+                    width: 40, height: 40, borderRadius: 10,
+                    border: `1px solid ${executivoOculto ? `${C.gold}55` : C.cardLine}`,
+                    background: executivoOculto ? `${C.gold}1F` : "rgba(255,255,255,.04)",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    color: executivoOculto ? C.gold : "#C9C9CE", cursor: "pointer",
+                    flexShrink: 0, fontFamily: SANS,
+                  }}>
+                  {executivoOculto ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              )}
               <div style={{
                 width: 40, height: 40, borderRadius: 10, border: `1px solid ${C.cardLine}`,
                 background: "rgba(255,255,255,.04)", display: "flex", alignItems: "center",

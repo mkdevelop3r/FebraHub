@@ -1400,3 +1400,13 @@ gravadas.
 - O mesmo workflow processa `MSG_FILA=turma` em lote de 10: confirmacao e
   link do grupo que o Pedagogico ja enfileirou no Hub. O script exige
   `link_grupo`; sem ele, nenhum dos dois tipos e enviado.
+### Codex - 28/09/2026 - Modo privacidade do Hub Executivo
+
+- O cabeçalho do Hub Executivo ganhou um botão de olho imediatamente antes do
+  sino. Ele alterna entre mostrar e ocultar todas as informações do painel,
+  preservando o layout e bloqueando cliques enquanto o conteúdo está oculto.
+- A preferência fica em `localStorage` (`febrahub:executivo-oculto`) e continua
+  valendo depois de atualizar o navegador. O controle aparece somente no Hub
+  Executivo; os demais hubs não são afetados.
+- O botão segue os tokens do Design System, informa o estado por `aria-pressed`
+  e possui rótulo acessível dinâmico. `npm.cmd run build` passou.
