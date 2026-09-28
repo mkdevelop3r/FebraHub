@@ -1005,6 +1005,21 @@ export function useCertificadoPresentes(turmaId) {
   });
 }
 
+/* Dispara os certificados de uma turma via Black CRM (Edge Function): grava o
+   link no contato + aplica a tag que dispara o workflow (WhatsApp + e-mail).
+   `teste` = cpf de uma pessoa só (validar antes do lote). */
+export async function dispararCertificados({ turma_id, pessoas, teste = null }) {
+  const { data, error } = await supabase.functions.invoke("disparar-certificado", {
+    body: { turma_id, pessoas, teste },
+  });
+  if (error) {
+    let msg = error.message;
+    try { const c = await error.context?.json?.(); if (c?.erro) msg = c.erro; } catch { /* ignore */ }
+    const e = new Error(msg); throw e;
+  }
+  return data;
+}
+
 /* Busca por ALUNO: dado um trecho do nome, traz os certificados disponíveis
    (turmas certificáveis já encerradas em que a pessoa foi credenciada). */
 export function useCertificadoPorAluno(nome) {

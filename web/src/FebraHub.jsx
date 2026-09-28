@@ -47,7 +47,7 @@ import {
   useTurmaDim, useTurmaSugestao,
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
   useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
-  useCertificadoTurmas, useCertificadoPresentes, useCertificadoPorAluno, certificadoUrl,
+  useCertificadoTurmas, useCertificadoPresentes, useCertificadoPorAluno, certificadoUrl, dispararCertificados,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useConsultores, useTrocaSolicitacoes, buscarLeadTroca, solicitarTroca,
   decidirTroca, dispararExecucaoTroca,
@@ -8156,6 +8156,28 @@ function CertificadosTurma({ turma, onVoltar, notificar }) {
     finally { setBaixando(null); }
   };
 
+  const [disparando, setDisparando] = useState(false);
+  const [confirmar, setConfirmar] = useState(false);
+
+  const pessoas = useMemo(() => (presentes.data ?? []).map((p) => ({
+    turma_id: turma.turma_id, cpf: p.cpf,
+    nome: nomes[p.cpf] ?? p.nome, curso, periodo_ini: ini, periodo_fim: fim, carga_horaria: carga,
+    email: emails[p.cpf] ?? p.email, telefone: p.telefone,
+  })), [presentes.data, nomes, emails, curso, ini, fim, carga, turma.turma_id]);
+  const comContato = pessoas.filter((p) => p.email || p.telefone).length;
+
+  const disparar = async (teste = null) => {
+    setDisparando(true); setConfirmar(false);
+    try {
+      const r = await dispararCertificados({ turma_id: turma.turma_id, pessoas, teste });
+      const partes = [`${r.enviados} enviado(s)`];
+      if (r.sem_contato) partes.push(`${r.sem_contato} sem contato`);
+      if (r.erros?.length) partes.push(`${r.erros.length} erro(s)`);
+      notificar?.(partes.join(" · "), r.erros?.length ? "erro" : "ok");
+    } catch (e) { notificar?.(e.message || "Falha no disparo", "erro"); }
+    finally { setDisparando(false); }
+  };
+
   const campo = { display: "flex", flexDirection: "column", gap: 3, minWidth: 120 };
 
   return (
@@ -8167,12 +8189,31 @@ function CertificadosTurma({ turma, onVoltar, notificar }) {
             borderRadius: 8, cursor: "pointer", fontFamily: SANS, fontSize: 11.5, fontWeight: 700,
             color: C.muted, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`,
           }}><ChevronLeft size={13} /> voltar às turmas</button>
-          <button disabled title="Em breve — depende do template DOCUMENT no Black CRM" style={{
+          <button onClick={() => setConfirmar((v) => !v)} disabled={disparando || !comContato} style={{
             display: "inline-flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9,
-            fontFamily: SANS, fontSize: 12, fontWeight: 800, cursor: "not-allowed",
-            color: C.faint, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, opacity: 0.7,
-          }}><Send size={13} /> Disparar turma (em breve)</button>
+            fontFamily: SANS, fontSize: 12, fontWeight: 800, cursor: disparando || !comContato ? "default" : "pointer",
+            color: "#100c04", background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})`,
+            border: "none", opacity: disparando || !comContato ? 0.5 : 1,
+          }}>
+            {disparando ? <Loader2 size={13} className="girar" /> : <Send size={13} />} Disparar turma
+          </button>
         </div>
+        {confirmar && (
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12,
+            padding: "10px 14px", borderRadius: 10, background: `${C.gold}12`, border: `1px solid ${C.gold}3A` }}>
+            <span style={{ fontSize: 12.5, color: C.bright, flex: "1 1 240px" }}>
+              Disparar o certificado para <b>{comContato} pessoa(s)</b> por WhatsApp e e-mail?
+            </span>
+            <button onClick={() => disparar()} style={{
+              padding: "7px 14px", borderRadius: 8, fontFamily: SANS, fontSize: 12, fontWeight: 800, cursor: "pointer",
+              color: "#100c04", background: `linear-gradient(150deg, ${C.goldTop}, ${C.goldBase})`, border: "none",
+            }}>Confirmar envio</button>
+            <button onClick={() => setConfirmar(false)} style={{
+              padding: "7px 12px", borderRadius: 8, fontFamily: SANS, fontSize: 12, fontWeight: 700, cursor: "pointer",
+              color: C.muted, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`,
+            }}>cancelar</button>
+          </div>
+        )}
 
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 6,
           padding: "12px 14px", borderRadius: 10, background: "rgba(255,255,255,.03)", border: `1px solid ${C.cardLine}` }}>
@@ -8217,6 +8258,14 @@ function CertificadosTurma({ turma, onVoltar, notificar }) {
                 }}>
                   {baixando === p.cpf ? <Loader2 size={12} className="girar" /> : <Download size={12} />} baixar
                 </button>
+                <button onClick={() => disparar(p.cpf)} disabled={disparando || !(p.email || p.telefone)}
+                  title="Enviar teste só para esta pessoa" style={{
+                  display: "inline-flex", alignItems: "center", gap: 5, padding: "6px 10px", borderRadius: 8,
+                  fontFamily: SANS, fontSize: 11.5, fontWeight: 700,
+                  cursor: disparando || !(p.email || p.telefone) ? "default" : "pointer",
+                  color: C.muted, background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, flexShrink: 0,
+                  opacity: !(p.email || p.telefone) ? 0.5 : 1,
+                }}><Send size={12} /> teste</button>
               </div>
             ))}
           </div>
