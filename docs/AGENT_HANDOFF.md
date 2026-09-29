@@ -1437,19 +1437,19 @@ gravadas.
   esquerda com pontos numerados, e a legenda à direita mostra consultora, score e
   venda. Isso evita sobreposição de nomes quando scores/receitas são próximos.
 
-### Codex - 29/09/2026 - Agendador local das mensagens do Pedagógico
+### Codex - 29/09/2026 - Mensagens do Pedagógico serverless
 
 - Os schedules do GitHub Actions estão pulando horas, inclusive Salesforce e
   `mensagens-pedagogico`; não é falha do script de envio. Para mensageria, o
   GitHub deixa de ser o relógio principal.
-- `etl/pedagogico_mensagens_task.ps1` roda boas-vindas (5) e turma (10), bloqueia
-  sobreposição por arquivo exclusivo e registra sucesso/erro em
-  `integracao_status`.
-- `etl/instalar_mensagens_pedagogico.ps1` instala no PC dedicado a tarefa
-  `FebraHub - Mensagens Pedagogico`, a cada 15 minutos, usando `etl/.env` sem
-  colocar secrets na tarefa ou no repositório.
-- Instalação no PC dedicado, depois de atualizar a `main`:
-  `powershell -ExecutionPolicy Bypass -File etl/instalar_mensagens_pedagogico.ps1`.
-- Cutover obrigatório: validar `LastTaskResult = 0` e só então remover o bloco
-  `schedule` do workflow do GitHub. Manter dois relógios ativos pode duplicar a
-  aplicação da tag se ambos começarem a mesma pessoa ao mesmo tempo.
+- A alternativa de usar o PC dedicado foi descartada. Os scripts locais do
+  commit `1c41fde` foram removidos antes de qualquer instalação.
+- `supabase/functions/mensagens-pedagogico/index.ts` processa boas-vindas (5) e
+  turma (10), preserva bloqueio de turma iniciada, aplica campos/tags no CRM,
+  registra cada pessoa e atualiza `integracao_status`.
+- Migration `db/207_mensagens_pedagogico_serverless.sql`: lock distribuído com
+  validade de 12 minutos e `pg_cron` a cada 15 minutos chamando a Edge Function
+  por `pg_net`. A chamada exige `PEDAGOGICO_CRON_SECRET` igual no Vault e nos
+  Edge Function Secrets.
+- Cutover obrigatório: deploy + secrets + migration 207 + teste de duas rodadas;
+  só então remover o `schedule` de `.github/workflows/mensagens-pedagogico.yml`.

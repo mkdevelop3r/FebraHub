@@ -18,7 +18,6 @@ service_account.json
 # que o banco ja nao saiba.
 etl/agenda_sync.log
 etl/agenda_sync.log.old
-etl/pedagogico_mensagens_task.log
 
 # Conversa de lead exportada para depuracao da auditoria. Tem contact_id,
 # URL de audio e o que a pessoa falou. Commitar poe dado pessoal num
@@ -30,6 +29,7 @@ etl/auditorias_whatsapp.csv
 node_modules/
 dist/
 .vite/
+supabase/.temp/
 
 # Python
 __pycache__/
