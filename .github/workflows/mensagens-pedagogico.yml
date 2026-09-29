@@ -6,10 +6,9 @@ on:
     paths:
       - '.github/workflows/mensagens-pedagogico.yml'
       - 'etl/pedagogico_mensagens.py'
-  schedule:
-    # A carga Salesforce inicia em 00/15/30/45. Este fluxo entra depois,
-    # sem acoplar mensageria ao sucesso de uma integracao especifica.
-    - cron: '7,22,37,52 * * * *'
+  # O relógio principal agora é o pg_cron do Supabase (migration 207).
+  # GitHub fica apenas como contingência manual: schedules deste repositório
+  # estavam pulando várias horas e não são adequados para mensageria.
   workflow_dispatch:
     inputs:
       limite:

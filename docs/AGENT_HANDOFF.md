@@ -1451,5 +1451,7 @@ gravadas.
   validade de 12 minutos e `pg_cron` a cada 15 minutos chamando a Edge Function
   por `pg_net`. A chamada exige `PEDAGOGICO_CRON_SECRET` igual no Vault e nos
   Edge Function Secrets.
-- Cutover obrigatório: deploy + secrets + migration 207 + teste de duas rodadas;
-  só então remover o `schedule` de `.github/workflows/mensagens-pedagogico.yml`.
+- Cutover concluído em 29/09: rodada manual às 11h08 enviou 5 sem falha; o
+  `pg_cron` executou sozinho às 11h15, encontrou a fila vazia e registrou status
+  `ok`. O `schedule` foi removido de `mensagens-pedagogico.yml`; o workflow
+  permanece disponível apenas por `workflow_dispatch` como contingência.
