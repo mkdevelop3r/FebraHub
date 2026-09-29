@@ -1436,3 +1436,20 @@ gravadas.
 - O gráfico de conformidade separa os pontos da identificação: a dispersão fica à
   esquerda com pontos numerados, e a legenda à direita mostra consultora, score e
   venda. Isso evita sobreposição de nomes quando scores/receitas são próximos.
+
+### Codex - 29/09/2026 - Agendador local das mensagens do Pedagógico
+
+- Os schedules do GitHub Actions estão pulando horas, inclusive Salesforce e
+  `mensagens-pedagogico`; não é falha do script de envio. Para mensageria, o
+  GitHub deixa de ser o relógio principal.
+- `etl/pedagogico_mensagens_task.ps1` roda boas-vindas (5) e turma (10), bloqueia
+  sobreposição por arquivo exclusivo e registra sucesso/erro em
+  `integracao_status`.
+- `etl/instalar_mensagens_pedagogico.ps1` instala no PC dedicado a tarefa
+  `FebraHub - Mensagens Pedagogico`, a cada 15 minutos, usando `etl/.env` sem
+  colocar secrets na tarefa ou no repositório.
+- Instalação no PC dedicado, depois de atualizar a `main`:
+  `powershell -ExecutionPolicy Bypass -File etl/instalar_mensagens_pedagogico.ps1`.
+- Cutover obrigatório: validar `LastTaskResult = 0` e só então remover o bloco
+  `schedule` do workflow do GitHub. Manter dois relógios ativos pode duplicar a
+  aplicação da tag se ambos começarem a mesma pessoa ao mesmo tempo.
