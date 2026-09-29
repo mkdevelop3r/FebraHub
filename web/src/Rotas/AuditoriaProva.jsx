@@ -125,6 +125,9 @@ const fmtData = (iso) => {
   return `${d}/${m}/${a}`;
 };
 
+const normalizar = (v) => String(v ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const ehOperacional = (a) => normalizar(a?.tipo_atendimento).includes("operacional");
+
 /* ============ CITAÇÃO ============ */
 
 function Fala({ quem, texto }) {
@@ -203,35 +206,45 @@ function Citacao({ trecho }) {
 function EtapaProva({ linha }) {
   const estado = linha.nota == null ? naoSeAplica : (ESTADO_NOTA[linha.nota] ?? naoSeAplica);
   const { Icone } = estado;
+  const [aberta, setAberta] = useState(linha.nota === 0);
 
   return (
-    <div className="py-5" style={{ borderTop: `1px solid ${C.hair}` }}>
-      <div className="flex items-baseline justify-between gap-3 flex-wrap mb-2">
+    <div style={{ borderTop: `1px solid ${C.hair}` }}>
+      <button type="button" onClick={() => setAberta((v) => !v)}
+        className="w-full flex items-center justify-between gap-4 text-left"
+        style={{ padding: "14px 2px" }}>
         <div className="flex items-center gap-2.5 min-w-0">
           <Icone size={15} style={{ color: estado.cor }} className="shrink-0" />
-          <h4 style={{ fontFamily: DISPLAY, fontSize: 15, fontWeight: 600, color: C.text }}>
+          <h4 style={{ fontFamily: DISPLAY, fontSize: 14, fontWeight: 650, color: C.text }}>
             {rotuloEtapa(linha.etapa)}
           </h4>
-          {linha.peso != null && (
-            <span style={{ ...etiqueta, fontSize: 9, color: C.faint }}>
-              peso {Number(linha.peso).toLocaleString("pt-BR")}
-            </span>
-          )}
         </div>
-        <span style={{ ...etiqueta, fontSize: 9.5, color: estado.cor }}>{estado.rotulo}</span>
-      </div>
+        <span className="flex items-center gap-2 shrink-0">
+          <span style={{ ...etiqueta, fontSize: 9.5, color: estado.cor }}>{estado.rotulo}</span>
+          <ChevronRight size={14} style={{ color: C.faint, transform: aberta ? "rotate(90deg)" : "none", transition: "transform .16s" }} />
+        </span>
+      </button>
 
-      {linha.observacao ? (
-        <p className="mb-3" style={{ color: C.muted, fontSize: 13.5, lineHeight: 1.6 }}>
-          {linha.observacao}
-        </p>
-      ) : (
-        <p className="mb-3" style={{ color: C.dim, fontSize: 12.5, fontStyle: "italic" }}>
-          Sem justificativa registrada.
-        </p>
+      {aberta && (
+        <div style={{ padding: "0 2px 18px 27px" }}>
+          <div style={{ ...etiqueta, fontSize: 8.5, color: C.faint, marginBottom: 6 }}>
+            Interpretação da auditoria
+          </div>
+          {linha.observacao ? (
+            <p className="mb-3" style={{ color: C.text, fontSize: 13.5, lineHeight: 1.65 }}>
+              {linha.observacao}
+            </p>
+          ) : (
+            <p className="mb-3" style={{ color: C.dim, fontSize: 12.5, fontStyle: "italic" }}>
+              Sem justificativa registrada.
+            </p>
+          )}
+          <div style={{ ...etiqueta, fontSize: 8.5, color: C.faint, marginBottom: 7 }}>
+            Trecho que sustenta a análise
+          </div>
+          <Citacao trecho={linha.trecho} />
+        </div>
       )}
-
-      <Citacao trecho={linha.trecho} />
     </div>
   );
 }
@@ -345,6 +358,7 @@ function PainelProva({ auditoria, aoFechar }) {
   const prova = useAuditoriaProva(auditoria.auditoria_id);
   const cumpridas = auditoria.etapas_cumpridas ?? 0;
   const avaliadas = auditoria.etapas_avaliadas ?? 0;
+  const falhas = Math.max(Number(avaliadas) - Number(cumpridas), 0);
 
   const dado = (rotulo, valor, cor) => (
     <div className="min-w-0">
@@ -358,20 +372,27 @@ function PainelProva({ auditoria, aoFechar }) {
   return (
     <div className="fixed inset-0 z-50 flex justify-end" style={{ background: "rgba(0,0,0,.66)" }}
       onMouseDown={(e) => e.target === e.currentTarget && aoFechar()}>
-      <aside className="h-full w-full overflow-y-auto"
+      <aside className="auditoriaPainel h-full w-full overflow-y-auto"
         style={{ maxWidth: 760, background: "#0E0E10", borderLeft: `1px solid ${C.linha}` }}>
 
-        <div className="px-8 pt-7 pb-6" style={{ borderBottom: `1px solid ${C.linha}` }}>
+        <style>{`
+          .auditoriaPainelCabecalho, .auditoriaPainelCorpo { padding-left:32px; padding-right:32px; }
+          @media(max-width:640px) {
+            .auditoriaPainelCabecalho, .auditoriaPainelCorpo { padding-left:18px; padding-right:18px; }
+          }
+        `}</style>
+
+        <div className="auditoriaPainelCabecalho pt-7 pb-6" style={{ borderBottom: `1px solid ${C.linha}` }}>
           <div className="flex items-start justify-between gap-4 mb-5">
             <div className="min-w-0">
               <div style={{ ...etiqueta, color: C.gold, marginBottom: 8 }}>
-                Prova da auditoria
+                Análise da conversa
               </div>
               <h2 style={{ fontFamily: DISPLAY, fontSize: 24, fontWeight: 600, color: C.text }}>
-                {auditoria.consultora || "Consultora não identificada"}
+                {auditoria.contato || "Cliente não identificado"}
               </h2>
               <p className="mt-1.5" style={{ color: C.muted, fontSize: 13 }}>
-                {auditoria.contato || "contato não registrado"} · {fmtData(auditoria.data_ref)} · {auditoria.canal}
+                Atendida por {auditoria.consultora || "consultora não identificada"} · {fmtData(auditoria.data_ref)} · {auditoria.canal}
               </p>
             </div>
             <button onClick={aoFechar} aria-label="Fechar"
@@ -381,11 +402,10 @@ function PainelProva({ auditoria, aoFechar }) {
             </button>
           </div>
 
-          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))" }}>
+          <div className="grid gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))" }}>
             {dado("Score", auditoria.score, C.gold)}
-            {dado("Faixa", auditoria.faixa)}
-            {dado("Tipo de atendimento", auditoria.tipo_atendimento)}
-            {dado("Etapas cumpridas", `${cumpridas} de ${avaliadas}`)}
+            {dado("Pontos fortes", cumpridas, C.up)}
+            {dado("Pontos de atenção", falhas, falhas ? C.down : C.up)}
           </div>
 
           {/* A justificativa do TIPO explica por que uma conversa
@@ -398,13 +418,13 @@ function PainelProva({ auditoria, aoFechar }) {
           )}
         </div>
 
-        <div className="px-8 py-6">
+        <div className="auditoriaPainelCorpo py-6">
           <div className="flex items-center gap-2 mb-1">
             <FileText size={13} style={{ color: C.gold }} />
-            <span style={{ ...etiqueta, color: C.gold }}>Etapas do roteiro</span>
+            <span style={{ ...etiqueta, color: C.gold }}>Leitura por etapa</span>
           </div>
-          <p className="mb-2 text-[12.5px]" style={{ color: C.faint }}>
-            Na ordem do roteiro. O trecho é citação literal da conversa.
+          <p className="mb-3 text-[12.5px]" style={{ color: C.faint, lineHeight: 1.55 }}>
+            Os pontos de atenção já aparecem abertos. Os pontos cumpridos ficam recolhidos; clique para consultar a justificativa e o trecho original.
           </p>
 
           {prova.isLoading ? (
@@ -432,31 +452,41 @@ const CORES_FAIXA = { alta: C.up, media: C.warn, baixa: C.down };
 
 function LinhaAuditoria({ a, aoAbrir }) {
   const corFaixa = CORES_FAIXA[a.faixa] ?? C.muted;
+  const leitura = a.faixa === "alta" ? "Boa condução" : a.faixa === "media" ? "Pode melhorar" : a.faixa === "baixa" ? "Precisa de atenção" : "Sem classificação";
   return (
     <button onClick={aoAbrir}
-      className="w-full text-left flex items-center gap-4 px-4 py-3.5 transition-colors"
-      style={{ borderTop: `1px solid ${C.hair}` }}>
-      <div className="min-w-0 flex-1">
+      className="audConversaLinha w-full text-left transition-colors"
+      style={{ borderTop: `1px solid ${C.hair}`, padding: "15px 18px" }}>
+      <div className="audConversaIdentidade min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
-          <span style={{ color: C.text, fontSize: 13.5, fontWeight: 500 }}>
-            {a.consultora || "—"}
+          <span style={{ color: C.text, fontSize: 13.5, fontWeight: 700 }}>
+            {a.contato || "Cliente não identificado"}
           </span>
-          {!a.tem_prova && (
-            <span style={{ ...etiqueta, fontSize: 8.5, color: C.dim }}>sem conversa</span>
-          )}
+          {!a.tem_prova && <span style={{ ...etiqueta, fontSize: 8.5, color: C.dim }}>sem transcrição</span>}
         </div>
-        <div className="text-[11.5px] mt-0.5" style={{ color: C.faint }}>
-          {fmtData(a.data_ref)} · {a.tipo_atendimento || "tipo não classificado"}
-          {a.contato ? ` · ${a.contato}` : ""}
+        <div className="text-[11.5px] mt-1" style={{ color: C.faint }}>
+          Atendida por <span style={{ color: C.muted }}>{a.consultora || "consultora não identificada"}</span>
+          {` · ${fmtData(a.data_ref)}`}
         </div>
+        {a.conclusao && (
+          <p className="mt-2" style={{ color: C.muted, fontSize: 12.5, lineHeight: 1.5,
+            display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+            {a.conclusao}
+          </p>
+        )}
       </div>
 
-      <div className="shrink-0 text-right">
-        <div className="tabular-nums" style={{ fontFamily: DISPLAY, fontSize: 17, fontWeight: 700, color: corFaixa }}>
-          {a.score ?? "—"}
-        </div>
-        <div style={{ ...etiqueta, fontSize: 8.5, color: C.faint }}>
-          {a.etapas_cumpridas ?? 0}/{a.etapas_avaliadas ?? 0} etapas
+      <div className="audConversaResultado shrink-0">
+        <span style={{
+          ...etiqueta, display: "inline-flex", alignItems: "center", justifyContent: "center",
+          color: corFaixa, background: `${corFaixa}16`, border: `1px solid ${corFaixa}40`,
+          borderRadius: 999, padding: "5px 9px",
+        }}>{leitura}</span>
+        <div className="mt-2 flex items-baseline justify-end gap-1.5">
+          <span className="tabular-nums" style={{ fontFamily: DISPLAY, fontSize: 19, fontWeight: 700, color: corFaixa }}>
+            {a.score ?? "—"}
+          </span>
+          <span style={{ fontSize: 10, color: C.faint }}>de 100</span>
         </div>
       </div>
 
@@ -471,6 +501,7 @@ export default function ProvaAuditoria({ canal, consultora, desde }) {
 
   const filtradas = useMemo(() => {
     const linhas = (lista.data ?? []).filter((a) => {
+      if (ehOperacional(a)) return false;
       if (canal && a.canal !== canal) return false;
       if (consultora && a.consultora !== consultora) return false;
       if (desde && String(a.data_ref ?? "") < desde) return false;
@@ -482,15 +513,27 @@ export default function ProvaAuditoria({ canal, consultora, desde }) {
 
   return (
     <div>
-      <div className="flex items-baseline justify-between gap-3 mb-1">
-        <span style={{ ...etiqueta, color: C.gold }}>Auditorias</span>
-        <span style={{ ...etiqueta, fontSize: 9, color: C.faint }}>
+      <style>{`
+        .audConversaLinha { display:grid; grid-template-columns:minmax(0,1fr) 150px 20px; align-items:center; gap:18px; }
+        .audConversaLinha:hover { background:rgba(255,255,255,.02); }
+        .audConversaResultado { text-align:right; }
+        @media(max-width:720px) {
+          .audConversaLinha { grid-template-columns:minmax(0,1fr) 20px; }
+          .audConversaResultado { grid-column:1; grid-row:2; text-align:left; display:flex; align-items:center; gap:10px; }
+          .audConversaResultado .mt-2 { margin-top:0; }
+        }
+      `}</style>
+      <div className="flex items-end justify-between gap-4 mb-3">
+        <div>
+          <div style={{ color: C.text, fontSize: 14, fontWeight: 700 }}>Conversas avaliadas</div>
+          <p className="mt-1 text-[12.5px]" style={{ color: C.faint }}>
+            Somente atendimentos comerciais. Abra uma conversa para entender o que foi bem e o que precisa melhorar.
+          </p>
+        </div>
+        <span className="shrink-0 tabular-nums" style={{ fontFamily: DISPLAY, fontSize: 12, color: C.muted }}>
           {filtradas.length} conversa{filtradas.length === 1 ? "" : "s"}
         </span>
       </div>
-      <p className="mb-3 text-[12.5px]" style={{ color: C.faint }}>
-        Abra uma para ver a justificativa de cada etapa e o trecho da conversa que a sustenta.
-      </p>
 
       <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${C.linha}` }}>
         {lista.isLoading ? (

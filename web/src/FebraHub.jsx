@@ -9971,6 +9971,60 @@ function BadgeRestrito() {
   );
 }
 
+/* Consultora pode ter dezenas de valores. Segmentado serve para poucas opções
+   mutuamente exclusivas; aqui o Popover preserva espaço e segue o padrão dos
+   seletores longos do Hub. O pai é relativo porque ancora o menu. */
+function SeletorConsultoraAuditoria({ consultoras, valor, onChange }) {
+  const [aberto, setAberto] = useState(false);
+  return (
+    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 7 }}>
+      <span style={{ fontSize: 10, fontWeight: 700, color: C.dim, textTransform: "uppercase", letterSpacing: ".5px" }}>
+        Consultora
+      </span>
+      <button type="button" onClick={() => setAberto((v) => !v)} aria-expanded={aberto} style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8,
+        minWidth: 156, maxWidth: 230, padding: "6px 10px", borderRadius: 9,
+        background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`,
+        color: valor ? C.gold : C.muted, fontFamily: SANS, fontSize: 11.5,
+        fontWeight: 700, cursor: "pointer",
+      }}>
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{valor ?? "Todas"}</span>
+        <ChevronDown size={13} style={{ flexShrink: 0 }} />
+      </button>
+      <Popover aberto={aberto} onFechar={() => setAberto(false)} largura={250}>
+        <button style={itemPop(valor == null)} onClick={() => { onChange(null); setAberto(false); }}>Todas</button>
+        {consultoras.map((nome) => (
+          <button key={nome} style={itemPop(valor === nome)}
+            onClick={() => { onChange(nome); setAberto(false); }}>{nome}</button>
+        ))}
+      </Popover>
+    </div>
+  );
+}
+
+/* Uma falha em um gráfico não pode apagar o Shell inteiro. Além de preservar
+   a navegação, a mensagem torna o erro acionável durante a homologação. */
+class LimiteErroAuditoria extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { erro: null };
+  }
+  static getDerivedStateFromError(erro) { return { erro }; }
+  componentDidCatch(erro, info) { console.error("Falha no Hub da Auditoria", erro, info); }
+  render() {
+    if (!this.state.erro) return this.props.children;
+    return (
+      <div style={{ display: "flex", gap: 11, padding: "28px 0" }}>
+        <ShieldAlert size={16} style={{ color: C.down, marginTop: 2, flexShrink: 0 }} />
+        <div>
+          <div style={{ fontSize: 13.5, color: C.bright, fontWeight: 700 }}>A Auditoria encontrou um erro ao montar a tela</div>
+          <div style={{ fontSize: 12, color: C.faint, marginTop: 5 }}>{String(this.state.erro?.message ?? this.state.erro)}</div>
+        </div>
+      </div>
+    );
+  }
+}
+
 /* Aviso de recorte que a view não sabe fazer. Aparece onde o filtro do topo
    não alcança — em vez de o bloco fingir que obedeceu ao chip. */
 function ForaDoRecorte({ texto }) {
@@ -10144,10 +10198,7 @@ function HubAuditoria() {
         <Segmentado label="Período" valor={periodo} onChange={setPeriodo}
           opcoes={PERIODOS_AUDITORIA.map((p) => ({ key: p.key, label: p.label }))} />
         <Segmentado label="Canal" valor={canal} onChange={setCanal} opcoes={CANAIS_AUDITORIA} />
-        {consultoras.length > 0 && (
-          <Segmentado label="Consultora" valor={quemAtiva} onChange={setQuem}
-            opcoes={[{ key: null, label: "Todas" }, ...consultoras.map((c) => ({ key: c, label: c }))]} />
-        )}
+        {consultoras.length > 0 && <SeletorConsultoraAuditoria consultoras={consultoras} valor={quemAtiva} onChange={setQuem} />}
         <span style={{ marginLeft: "auto" }}><BadgeRestrito /></span>
       </div>
 
@@ -10155,45 +10206,39 @@ function HubAuditoria() {
         <CanalSemDado canal={canal} rotulo={rotuloCanal} />
       ) : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))", gap: 12, marginBottom: 18 }}>
-            <ChipKpi Icone={ClipboardCheck} label="Conversas auditadas" hero
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))", gap: 10, marginBottom: 8 }}>
+            <ChipKpi Icone={ClipboardCheck} label="Conversas auditadas" hero compacto
               valor={numero(k.auditadas)}
               sub={`${rotuloCanal} · ${janela.label.toLowerCase()}`} />
-            <ChipKpi Icone={Target} label="Score médio"
+            <ChipKpi Icone={Target} label="Score médio" compacto
               valor={<span style={{ color: corScore(k.score) }}>{k.score == null ? "—" : k.score.toFixed(0)}</span>}
               unidade="/100"
               sub="ponderado pelo peso das etapas" />
-            <ChipKpi Icone={ShieldCheck} label="Etapas cumpridas"
+            <ChipKpi Icone={ShieldCheck} label="Etapas cumpridas" compacto
               valor={k.etapas == null ? "—" : k.etapas.toFixed(1).replace(".", ",")}
               unidade={`de ${k.possiveis || "—"}`}
               sub="média por conversa" />
-            <ChipKpi Icone={Search} label="Sondagem completa"
+            <ChipKpi Icone={Search} label="Sondagem completa" compacto
               valor={<span style={{ color: k.sondagem ? C.up : C.down }}>{numero(k.sondagem)}</span>}
               unidade={`de ${numero(k.auditadas)}`}
               sub="objetivos E desafios na mesma conversa" />
-            <ChipKpi Icone={Smile} label="Leads quentes"
+            <ChipKpi Icone={Smile} label="Leads quentes" compacto
               valor={numero(k.quentes)} unidade={`de ${numero(k.auditadas)}`}
               sub={`${k.audios ? numero(k.audios) : "nenhum"} áudio${k.audios === 1 ? "" : "s"} no período`} />
           </div>
 
-          {/* Duas COLUNAS que empilham sozinhas, não duas faixas. Em faixa, a
-              altura da linha é ditada pelo bloco mais alto (o gráfico de
-              falhas, que tem 10-12 etapas), e a coluna da direita ficava com
-              um buraco entre a dispersão e a tabela de pesos. Empilhando por
-              coluna, cada bloco sobe até encostar no de cima. */}
+          <SecaoTitulo titulo="Qualidade do atendimento"
+            canto="onde o roteiro quebra e se isso acompanha venda" />
           <div className="gridAud">
-            <div>
-              <FalhaPorEtapa
-                linhas={etapas}
-                recorte={quemAtiva ?? "equipe"}
-                onEtapa={setEtapaAberta}
-              />
-              <PlacarConsultoras linhas={linhasPlacar} />
-            </div>
-            <div>
-              <ConformidadeVenda pontos={pontos} mes={mesDispersao} canalIgnorado={canal} />
-              <TabelaPesos linhas={pesos} rotuloCanal={rotuloCanal} />
-            </div>
+            <FalhaPorEtapa linhas={etapas} recorte={quemAtiva ?? "equipe"} onEtapa={setEtapaAberta} />
+            <ConformidadeVenda pontos={pontos} mes={mesDispersao} canalIgnorado={canal} />
+          </div>
+
+          <SecaoTitulo titulo="Gestão da equipe"
+            canto={`posição exige pelo menos ${MIN_AUDITORIAS} auditorias`} />
+          <div className="gridAud">
+            <PlacarConsultoras linhas={linhasPlacar} />
+            <TabelaPesos linhas={pesos} rotuloCanal={rotuloCanal} />
           </div>
 
           {/* A PROVA. Tudo acima é agregado — score médio, falha por etapa,
@@ -10205,9 +10250,8 @@ function HubAuditoria() {
               filtros de cima (canal, consultora, período) para que abrir
               uma auditoria seja continuação do que já estava na tela, e
               não um recorte novo. */}
-          <div style={{ marginTop: 26 }}>
-            <ProvaAuditoria canal={canal} consultora={quemAtiva} desde={desde} />
-          </div>
+          <SecaoTitulo titulo="Conversas auditadas" canto="do resultado para a conversa completa" />
+          <ProvaAuditoria canal={canal} consultora={quemAtiva} desde={desde} />
         </>
       )}
 
@@ -10249,7 +10293,8 @@ function CanalSemDado({ canal, rotulo }) {
 function FalhaPorEtapa({ linhas, recorte, onEtapa }) {
   return (
     <Bloco titulo="Falha por etapa do roteiro"
-      canto={recorte === "equipe" ? "equipe" : recorte}>
+      canto={recorte === "equipe" ? "equipe · maior falha primeiro" : recorte}
+      altura={ALTURA_PAINEL}>
       {!linhas.length ? (
         <div style={{ fontSize: 12.5, color: C.faint, padding: "18px 0" }}>
           Nenhuma etapa avaliada neste recorte.
@@ -10460,22 +10505,27 @@ function DrawerEtapa({ etapa, canal, onFechar }) {
    pessoas de 1 a 15 conversas classificaria gente que a view se recusou a
    classificar. */
 function ConformidadeVenda({ pontos, mes, canalIgnorado }) {
-  const L = 44, B = 30, W = 480, H = 250;
+  /* O viewBox acompanha a largura real de uma coluna do grid. Com 720 px
+     virtuais o navegador reduzia também textos e pontos, deixando o gráfico
+     visualmente menor que o painel vizinho. */
+  const L = 48, PLOT_R = 326, DIVISOR_X = 340, LEGENDA_X = 354, B = 30, T = 18, W = 520, H = 228;
 
   const medX = pontos.find((p) => p.score_mediano != null)?.score_mediano ?? null;
   const medY = pontos.find((p) => p.receita_mediana != null)?.receita_mediana ?? null;
 
   const comReceita = pontos.filter((p) => p.receita != null);
+  const pontosOrdenados = [...comReceita].sort((a, b) => Number(b.receita ?? 0) - Number(a.receita ?? 0));
   const maxY = Math.max(...comReceita.map((p) => Number(p.receita)), Number(medY ?? 0), 1);
-  const px = (s) => L + (Math.min(Math.max(Number(s ?? 0), 0), 100) / 100) * (W - L - 14);
-  const py = (r) => H - B - (Number(r ?? 0) / maxY) * (H - B - 16);
+  const px = (s) => L + (Math.min(Math.max(Number(s ?? 0), 0), 100) / 100) * (PLOT_R - L);
+  const py = (r) => H - B - (Number(r ?? 0) / maxY) * (H - B - T);
 
   const semVenda = pontos.filter((p) => p.receita == null);
 
   return (
     // O canto nomeia o MÊS, não a janela: este bloco é sempre de um mês só,
     // e rotulá-lo "trimestre" prometeria um recorte que ele não faz.
-    <Bloco titulo="Conformidade × venda real" canto={mes ? mesAnoCurto(mes) : null}>
+    <Bloco titulo="Conformidade × venda real" canto={mes ? `${mesAnoCurto(mes)} · mês mais recente` : null}
+      altura={ALTURA_PAINEL}>
       {!pontos.length ? (
         <div style={{ fontSize: 12.5, color: C.faint, padding: "18px 0" }}>
           Sem consultora com auditoria e venda no período.
@@ -10483,41 +10533,59 @@ function ConformidadeVenda({ pontos, mes, canalIgnorado }) {
       ) : (
         <>
           <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", height: "auto", display: "block" }}>
-            <line x1={L} y1={H - B} x2={W - 6} y2={H - B} stroke="rgba(255,255,255,.12)" />
-            <line x1={L} y1={12} x2={L} y2={H - B} stroke="rgba(255,255,255,.12)" />
+            {[0, 0.5, 1].map((f) => {
+              const y = H - B - f * (H - B - T);
+              return <g key={f}>
+                <line x1={L} y1={y} x2={PLOT_R} y2={y} stroke="rgba(255,255,255,.06)" strokeWidth="1" />
+                <text x={L - 7} y={y + 3} textAnchor="end" fill={C.faint} fontSize="10" fontFamily={SANS}>
+                  {compacto(maxY * f)}
+                </text>
+              </g>;
+            })}
 
             {medX != null && medY != null && (
               <>
-                <line x1={px(medX)} y1={12} x2={px(medX)} y2={H - B} stroke={C.gold} strokeOpacity=".45" strokeDasharray="4 4" />
-                <line x1={L} y1={py(medY)} x2={W - 6} y2={py(medY)} stroke={C.gold} strokeOpacity=".45" strokeDasharray="4 4" />
-                <text x={px(medX) + 4} y={20} fill={C.dim} fontSize="9">mediana</text>
+                <line x1={px(medX)} y1={T} x2={px(medX)} y2={H - B} stroke={C.gold} strokeOpacity=".45" strokeDasharray="5 4" />
+                <line x1={L} y1={py(medY)} x2={PLOT_R} y2={py(medY)} stroke={C.gold} strokeOpacity=".45" strokeDasharray="5 4" />
+                <text x={px(medX) + 5} y={T + 3} fill={C.muted} fontSize="10" fontFamily={SANS}>mediana</text>
               </>
             )}
 
             {[0, 25, 50, 75, 100].map((s) => (
-              <text key={s} x={px(s)} y={H - B + 13} fill={C.dim} fontSize="9" textAnchor="middle">{s}</text>
+              <text key={s} x={px(s)} y={H - B + 14} fill={C.faint} fontSize="10" textAnchor="middle" fontFamily={SANS}>{s}</text>
             ))}
-            <text x={L} y={H - 4} fill={C.faint} fontSize="9.5">score médio →</text>
-            <text x={6} y={20} fill={C.faint} fontSize="9.5">receita ↑</text>
+            <text x={L} y={H - 3} fill={C.muted} fontSize="10" fontFamily={SANS}>score médio →</text>
 
-            {comReceita.map((p) => {
+            {pontosOrdenados.map((p, i) => {
               const ok = p.amostra_suficiente;
               return (
                 <g key={`${p.mes}-${p.consultora}`}>
-                  <circle cx={px(p.score_medio)} cy={py(p.receita)} r={6}
+                  <circle cx={px(p.score_medio)} cy={py(p.receita)} r={9}
                     fill={ok ? C.gold : "rgba(255,255,255,.16)"}
                     stroke={ok ? C.goldTop : C.faint} strokeWidth="1" />
-                  <text x={px(p.score_medio) + 10} y={py(p.receita) + 3.5}
-                    fill={ok ? C.bright : C.faint} fontSize="10">
-                    {p.consultora}
+                  <text x={px(p.score_medio)} y={py(p.receita) + 3.5} textAnchor="middle"
+                    fill={ok ? C.void : C.bright} fontSize="10" fontWeight="800" fontFamily={GROTESK}>
+                    {i + 1}
                   </text>
-                  {!ok && (
-                    <text x={px(p.score_medio) + 10} y={py(p.receita) + 14}
-                      fill={C.dim} fontSize="8.5">amostra insuficiente</text>
-                  )}
                 </g>
               );
             })}
+
+            <line x1={DIVISOR_X} y1={T} x2={DIVISOR_X} y2={H - 10} stroke="rgba(255,255,255,.08)" />
+            <text x={LEGENDA_X} y={T + 1} fill={C.faint} fontSize="9" fontWeight="800" fontFamily={SANS}>CONSULTORAS</text>
+            {pontosOrdenados.slice(0, 5).map((p, i) => {
+              const y = 43 + i * 34;
+              const ok = p.amostra_suficiente;
+              return <g key={`leg-${p.mes}-${p.consultora}`}>
+                <circle cx={LEGENDA_X + 7} cy={y} r="7" fill={ok ? C.gold : "rgba(255,255,255,.16)"} stroke={ok ? C.goldTop : C.faint} />
+                <text x={LEGENDA_X + 7} y={y + 3} textAnchor="middle" fill={ok ? C.void : C.bright} fontSize="8.5" fontWeight="800" fontFamily={GROTESK}>{i + 1}</text>
+                <text x={LEGENDA_X + 21} y={y - 2} fill={C.bright} fontSize="10.5" fontWeight="700" fontFamily={SANS}>{String(p.consultora ?? "—").slice(0, 18)}</text>
+                <text x={LEGENDA_X + 21} y={y + 11} fill={C.faint} fontSize="9.5" fontFamily={SANS}>score {Number(p.score_medio ?? 0).toFixed(0)} · {compacto(p.receita)}</text>
+              </g>;
+            })}
+            {pontosOrdenados.length > 5 && (
+              <text x={LEGENDA_X} y={H - 8} fill={C.faint} fontSize="9.5" fontFamily={SANS}>+{pontosOrdenados.length - 5} consultoras no gráfico</text>
+            )}
           </svg>
 
           {medX == null && (
@@ -10548,60 +10616,58 @@ function ConformidadeVenda({ pontos, mes, canalIgnorado }) {
    quem tem pouca amostra deixaria a gestão achando que a pessoa não foi
    auditada. */
 function PlacarConsultoras({ linhas }) {
-  const th = {
-    fontSize: 10, fontWeight: 800, letterSpacing: ".5px", textTransform: "uppercase",
-    color: C.dim, padding: "0 0 8px", textAlign: "right", whiteSpace: "nowrap",
-  };
-  const td = { fontFamily: GROTESK, fontSize: 13, fontWeight: 700, padding: "9px 0", textAlign: "right", whiteSpace: "nowrap" };
   let posicao = 0;
+  const cab = (texto, extra = {}) => (
+    <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, ...extra }}>
+      {texto}
+    </span>
+  );
   return (
-    <Bloco titulo="Placar por consultora" canto={`${linhas.length} ${linhas.length === 1 ? "consultora" : "consultoras"}`}>
+    <Bloco titulo="Placar por consultora"
+      canto={`${linhas.length} ${linhas.length === 1 ? "consultora" : "consultoras"}`}
+      sem altura={ALTURA_PAINEL}>
       {!linhas.length ? (
-        <div style={{ fontSize: 12.5, color: C.faint, padding: "18px 0" }}>Sem consultora neste recorte.</div>
+        <div style={{ fontSize: 12.5, color: C.faint, padding: "18px 20px" }}>Sem consultora neste recorte.</div>
       ) : (
         <>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr style={{ borderBottom: `1px solid ${C.hair}` }}>
-                <th style={{ ...th, textAlign: "left", width: 28 }}>#</th>
-                <th style={{ ...th, textAlign: "left", width: "40%" }}>Consultora</th>
-                <th style={th}>Auditadas</th>
-                <th style={th}>Score</th>
-                <th style={th}>Etapas</th>
-                <th style={th}>Pior–melhor</th>
-              </tr>
-            </thead>
-            <tbody>
-              {linhas.map((l) => {
-                const ok = l.amostra_suficiente;
-                if (ok) posicao += 1;
-                return (
-                  <tr key={`${l.canal}-${l.consultora}`} style={{ borderBottom: `1px solid ${C.hair}` }}>
-                    <td style={{ ...td, textAlign: "left", color: ok ? C.gold : C.dim }}>
-                      {ok ? posicao : "—"}
-                    </td>
-                    <td style={{
-                      fontSize: 12.5, fontWeight: 600, padding: "9px 0", textAlign: "left",
-                      color: ok ? C.bright : C.muted, maxWidth: 0,
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                    }} title={ok ? l.consultora : `${l.consultora} — amostra insuficiente para classificar`}>
-                      {l.consultora}
-                      {!ok && <span style={{ fontSize: 10, color: C.dim, marginLeft: 7 }}>amostra insuficiente</span>}
-                    </td>
-                    <td style={{ ...td, color: C.muted }}>{numero(l.auditadas)}</td>
-                    <td style={{ ...td, color: corScore(Number(l.score_medio)) }}>
-                      {l.score_medio == null ? "—" : Number(l.score_medio).toFixed(0)}
-                    </td>
-                    <td style={{ ...td, color: C.text }}>
-                      {l.etapas_medias == null ? "—" : String(l.etapas_medias).replace(".", ",")}
-                    </td>
-                    <td style={{ ...td, color: C.muted }}>{l.pior ?? "—"}–{l.melhor ?? "—"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <div style={{ fontSize: 10.5, color: C.dim, marginTop: 10, lineHeight: 1.5 }}>
+          <style>{`
+            .audPlacarGrade { display:grid; grid-template-columns: 28px minmax(0,1.5fr) 76px 58px 62px 88px; align-items:center; gap:10px; }
+            @media (max-width: 900px) { .audPlacarGrade { grid-template-columns: 28px minmax(0,1.5fr) 70px 54px 58px; } .audPlacarFaixa { display:none; } }
+            .audPlacarLinha:hover { background:rgba(255,255,255,.02); }
+          `}</style>
+          <div>
+            <div className="audPlacarGrade" style={{
+              position: "sticky", top: 0, zIndex: 2, background: "#17171c",
+              padding: "8px 12px", borderBottom: `1px solid ${C.cardLine}`,
+            }}>
+              {cab("#")}{cab("Consultora")}{cab("Auditadas", { textAlign: "right" })}
+              {cab("Score", { textAlign: "right" })}{cab("Etapas", { textAlign: "right" })}
+              <span className="audPlacarFaixa">{cab("Pior–melhor", { textAlign: "right" })}</span>
+            </div>
+            {linhas.map((l, i) => {
+              const ok = l.amostra_suficiente;
+              if (ok) posicao += 1;
+              const valor = (v, cor) => <span style={{ fontFamily: GROTESK, fontSize: 12.5, fontWeight: 700, textAlign: "right", color: cor }}>{v}</span>;
+              return (
+                <div key={`${l.canal}-${l.consultora}`} className="audPlacarGrade audPlacarLinha" style={{
+                  minHeight: 46, padding: "0 12px",
+                  borderBottom: i === linhas.length - 1 ? "none" : `1px solid ${C.hair}`,
+                }}>
+                  {valor(ok ? posicao : "—", ok ? C.gold : C.dim)}
+                  <span title={ok ? l.consultora : `${l.consultora} — amostra insuficiente para classificar`}
+                    style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12.5, fontWeight: 700, color: ok ? C.text : C.muted }}>
+                    {l.consultora}
+                    {!ok && <span style={{ display: "block", fontSize: 9.5, fontWeight: 600, color: C.dim }}>amostra insuficiente</span>}
+                  </span>
+                  {valor(numero(l.auditadas), C.muted)}
+                  {valor(l.score_medio == null ? "—" : Number(l.score_medio).toFixed(0), corScore(Number(l.score_medio)))}
+                  {valor(l.etapas_medias == null ? "—" : Number(l.etapas_medias).toFixed(1).replace(".", ","), C.text)}
+                  <span className="audPlacarFaixa">{valor(`${l.pior ?? "—"}–${l.melhor ?? "—"}`, C.muted)}</span>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 10.5, color: C.dim, padding: "9px 12px", borderTop: `1px solid ${C.hair}`, lineHeight: 1.5 }}>
             Posição só para quem tem 20 auditorias ou mais. Score e etapas cumpridas
             são medidas distintas e ficam em colunas separadas de propósito.
           </div>
@@ -10616,7 +10682,8 @@ function PlacarConsultoras({ linhas }) {
 function TabelaPesos({ linhas, rotuloCanal }) {
   const total = linhas.reduce((s, l) => s + l.peso, 0);
   return (
-    <Bloco titulo="Peso de cada etapa" canto={rotuloCanal}>
+    <Bloco titulo="Peso de cada etapa" canto={`${rotuloCanal} · soma ${total}`}
+      altura={ALTURA_PAINEL}>
       {!linhas.length ? (
         <div style={{ fontSize: 12.5, color: C.faint, padding: "18px 0" }}>
           Sem pesos cadastrados para este canal.
@@ -11093,7 +11160,7 @@ function Shell({ perfil }) {
       case "marketing":  return <HubMarketing />;
       case "pedagogico": return <HubPedagogico />;
       case "central":    return <CentralPedagogica />;
-      case "auditoria":  return <HubAuditoria />;
+      case "auditoria":  return <LimiteErroAuditoria><HubAuditoria /></LimiteErroAuditoria>;
       case "central-febracis": return <CentralFebracis />;
       case "central-eventos": return <CentralEventosLegado />;
       case "eventos":    return <HubEventos />;

@@ -1410,3 +1410,29 @@ gravadas.
   Executivo; os demais hubs não são afetados.
 - O botão segue os tokens do Design System, informa o estado por `aria-pressed`
   e possui rótulo acessível dinâmico. `npm.cmd run build` passou.
+
+### Codex - 29/09/2026 - Hub da Auditoria no Design System
+
+- O Hub da Auditoria foi reorganizado em três faixas: qualidade do atendimento,
+  gestão da equipe e auditorias individuais, mantendo as regras e consultas já
+  existentes.
+- Os KPIs usam `ChipKpi` compacto, os painéis analíticos usam a altura canônica
+  de 260 px e o filtro de consultora virou um seletor compacto.
+- O placar deixou de usar `<table>` e agora segue o padrão de grade CSS com
+  cabeçalho fixo, números em `GROTESK` e tratamento responsivo.
+- O gráfico de conformidade ganhou geometria, eixos, grade e medianas alinhados
+  ao Design System. Cores continuam reservadas a estado e semântica.
+- Validação: `npm.cmd run build` passou. O aviso de chunk acima de 500 kB já é
+  estrutural do frontend e não impede a compilação.
+- A lista de conversas não exibe atendimentos cujo `tipo_atendimento` seja
+  operacional (comparação normalizada, sem depender de caixa ou acento).
+- Cada linha passou a priorizar cliente, consultora, data e conclusão, com uma
+  leitura gerencial da faixa: Boa condução, Pode melhorar ou Precisa de atenção.
+  O score aparece como valor de 100 e o detalhe/prova continua no painel lateral.
+- O painel lateral agora abre pelo cliente e resume score, pontos fortes e pontos
+  de atenção. Etapas com falha ficam abertas; etapas cumpridas e não aplicáveis
+  ficam recolhidas. Peso e demais rótulos técnicos saíram da leitura principal,
+  mas justificativa, trecho literal e conversa completa continuam acessíveis.
+- O gráfico de conformidade separa os pontos da identificação: a dispersão fica à
+  esquerda com pontos numerados, e a legenda à direita mostra consultora, score e
+  venda. Isso evita sobreposição de nomes quando scores/receitas são próximos.
