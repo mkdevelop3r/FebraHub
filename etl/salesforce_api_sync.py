@@ -217,7 +217,7 @@ def opportunity_rows(sf, start):
         "Account.PersonEmail,Account.PersonMobilePhone,Owner.Name,"
         "Data_de_Aprova_o__c,CloseDate,StageName,CreatedDate,Amount,LeadSource,"
         "Tipo_de_Matricula__c,NomeCurso__r.Name,Turma__r.Name,"
-        "Unidade_Geradora_Venda__r.Name,Treinador__r.Name,"
+        "Unidade_Geradora_Venda__r.Name,Unidade__r.Name,Treinador__r.Name,"
         "utm_campaign__c,UltimaOrigemLead__c"
     )
     soql = (
@@ -261,6 +261,10 @@ def transform_students(records, allowed, labels):
             "origem_lead": record.get("LeadSource"),
             "unidade_geradora_venda": nested(
                 record, "Unidade_Geradora_Venda__r.Name"),
+            # Matriz realizadora do curso (Opportunity.Unidade__c -> Coligada__c).
+            # Serve pra tirar da lista de represados de Salvador as vendas cuja
+            # matriz e outra praca (ex. FEBRACIS RECIFE 2), ver migration 219.
+            "unidade_realizadora_matriz": nested(record, "Unidade__r.Name"),
             "fase": None,
             "ganho": None,
             "treinador": nested(record, "Treinador__r.Name"),
