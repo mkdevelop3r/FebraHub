@@ -8302,7 +8302,22 @@ function CertificadosTurma({ turma, onVoltar, notificar }) {
 function CentralTurmas({ notificar }) {
   const turmas = useTurmasCentral();
   const painel = usePedagogicoPainel();
+  const represados = useRepresadoLista();
   const [sel, setSel] = useState(null);
+
+  /* Represados por turma: vw_represado_lista já traz turma_id (= próxima turma)
+     e `confirmado` (entrou no grupo ou respondeu sim). Agrego pra mostrar na
+     linha da turma quantos represados vão pra ela e quantos já confirmaram. */
+  const repPorTurma = useMemo(() => {
+    const m = new Map();
+    for (const r of represados.data ?? []) {
+      if (!r.turma_id) continue;
+      const a = m.get(r.turma_id) ?? { total: 0, conf: 0, nao: 0 };
+      a.total++; if (r.confirmado) a.conf++; else a.nao++;
+      m.set(r.turma_id, a);
+    }
+    return m;
+  }, [represados.data]);
   const [quando, setQuando] = useState("futuras");
   const [verVazias, setVerVazias] = useState(false);
 
@@ -8367,7 +8382,7 @@ function CentralTurmas({ notificar }) {
       >
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {lista.map((t) => (
-            <LinhaTurmaCentral key={t.turma_id} turma={t} onAbrir={() => setSel(t)} />
+            <LinhaTurmaCentral key={t.turma_id} turma={t} rep={repPorTurma.get(t.turma_id)} onAbrir={() => setSel(t)} />
           ))}
         </div>
 
@@ -8385,7 +8400,7 @@ function CentralTurmas({ notificar }) {
             {verVazias && (
               <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
                 {vazias.map((t) => (
-                  <LinhaTurmaCentral key={t.turma_id} turma={t} onAbrir={() => setSel(t)} />
+                  <LinhaTurmaCentral key={t.turma_id} turma={t} rep={repPorTurma.get(t.turma_id)} onAbrir={() => setSel(t)} />
                 ))}
               </div>
             )}
@@ -8404,7 +8419,7 @@ function CentralTurmas({ notificar }) {
   );
 }
 
-function LinhaTurmaCentral({ turma, onAbrir }) {
+function LinhaTurmaCentral({ turma, rep, onAbrir }) {
   // Os contadores já vêm na linha da turma (vw_turmas_central agrega
   // vw_turma_inscritos num LATERAL) — sem segunda consulta.
   const conf = turma;
@@ -8433,11 +8448,7 @@ function LinhaTurmaCentral({ turma, onAbrir }) {
         <ArrowUpRight size={15} style={{ color: C.faint, flexShrink: 0 }} />
       </div>
 
-      {!total ? (
-        // Sem ninguém inscrito não há contador a mostrar — e a linha fica
-        // baixa de propósito: ela só precisa saber que a turma existe.
-        <div style={{ fontSize: 10.5, color: C.dim, marginTop: 6 }}>Nenhuma matrícula aprovada até agora.</div>
-      ) : (
+      {total ? (
         <div style={{ display: "flex", gap: 14, marginTop: 9, flexWrap: "wrap" }}>
           <ContaTurma rotulo="confirmaram" valor={Number(conf.confirmados ?? 0)} total={total} cor={C.up} />
           <ContaTurma rotulo="não vêm" valor={Number(conf.nao_vem ?? 0)} total={total} cor={C.down} />
@@ -8446,6 +8457,20 @@ function LinhaTurmaCentral({ turma, onAbrir }) {
           {Number(conf.nao_enfileirados ?? 0) > 0 && (
             <ContaTurma rotulo="ainda não receberam" valor={Number(conf.nao_enfileirados ?? 0)} total={total} cor={C.dim} />
           )}
+        </div>
+      ) : (!rep || !rep.total) ? (
+        // Sem ninguém inscrito não há contador a mostrar — e a linha fica
+        // baixa de propósito: ela só precisa saber que a turma existe.
+        <div style={{ fontSize: 10.5, color: C.dim, marginTop: 6 }}>Nenhuma matrícula aprovada até agora.</div>
+      ) : null}
+
+      {rep && rep.total > 0 && (
+        <div style={{ display: "flex", gap: 14, marginTop: 8, paddingTop: 8, borderTop: `1px solid ${C.hair}`, flexWrap: "wrap", alignItems: "center" }}>
+          <span style={{ fontSize: 9.5, fontWeight: 800, textTransform: "uppercase", letterSpacing: ".5px", color: C.dim }}>
+            Represados
+          </span>
+          <ContaTurma rotulo="confirmaram" valor={rep.conf} total={rep.total} cor={C.up} />
+          <ContaTurma rotulo="não confirmaram" valor={rep.nao} total={rep.total} cor={C.warn} />
         </div>
       )}
     </button>
