@@ -2739,6 +2739,22 @@ function MemoriaRecife({ m }) {
           <span style={{ fontFamily: GROTESK, fontWeight: 700, color: C.text }}>{val}</span>
         </div>
       ))}
+      {Array.isArray(mem.cursos) && mem.cursos.length > 0 && (
+        <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.hair}` }}>
+          <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, marginBottom: 3 }}>
+            Cursos do mês (peso por tipo)
+          </div>
+          {mem.cursos.map((c) => (
+            <div key={c.tipo} style={{ display: "grid", gridTemplateColumns: "22px minmax(0,1fr) 74px 62px",
+                                       gap: 8, alignItems: "baseline", padding: "1px 0", fontSize: 11.5 }}>
+              <span style={{ fontFamily: GROTESK, fontWeight: 700, color: C.muted, textAlign: "right" }}>{c.qtd}×</span>
+              <span style={{ color: C.muted }}>{c.tipo}</span>
+              <span style={{ fontFamily: GROTESK, color: C.faint, textAlign: "right" }}>peso {Number(c.peso).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}</span>
+              <span style={{ fontFamily: GROTESK, fontWeight: 700, color: C.text, textAlign: "right" }}>{Number(c.subtotal).toLocaleString("pt-BR", { maximumFractionDigits: 2 })} pts</span>
+            </div>
+          ))}
+        </div>
+      )}
       <div style={{ marginTop: 4, fontSize: 10.5, color: C.dim, lineHeight: 1.5 }}>
         A meta parte do que a loja fatura hoje (run-rate sazonal), com crescimento por cima; os <b style={{ color: C.muted }}>cursos do mês</b> modulam pra cima/baixo — cada tipo pesa por quanto enche a loja (FCIS/Master pesam mais que palestra). Em Recife o calendário só ajusta — não define o número, porque a venda é picada.
       </div>
