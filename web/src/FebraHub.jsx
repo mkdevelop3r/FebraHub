@@ -3074,7 +3074,9 @@ function LinhaMeta({ cfg, mesRef, linha, admin, editando, onEditar, onFechar, on
               </button>
               {verMemoria && (
                 <div style={{ marginTop: 6 }}>
-                  <MemoriaCalculo m={linha.memoria} />
+                  {cfg.setor === "loja_recife"
+                    ? <MemoriaRecife m={linha} />
+                    : <MemoriaCalculo m={linha.memoria} />}
                   <AvisosMeta avisos={linha.memoria.avisos} />
                 </div>
               )}
