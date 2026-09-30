@@ -2726,8 +2726,8 @@ function MemoriaRecife({ m }) {
     ["Fator de tendência (Recife vs. ano anterior)", `× ${Number(mem.fator_tendencia ?? 1).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}`],
     ["Base run-rate (o que a loja faz hoje)", moeda(mem.base_runrate)],
     ["Crescimento aplicado (inflação + esticada)", `+ ${Math.round((mem.crescimento ?? 0) * 100)}%`],
-    ...(mem.cursos_no_mes != null ? [
-      ["Cursos no mês (vs. média mensal)", `${mem.cursos_no_mes} evento(s) · méd. ${mem.cursos_media_mes}`],
+    ...((mem.score_no_mes ?? mem.cursos_no_mes) != null ? [
+      ["Cursos do mês (score ponderado por tipo)", `${mem.score_no_mes ?? mem.cursos_no_mes} pts · méd. ${mem.score_media_mes ?? mem.cursos_media_mes}`],
       ["Ajuste pelos cursos do mês", `× ${Number(mem.fator_cursos ?? 1).toLocaleString("pt-BR", { maximumFractionDigits: 2 })}`],
     ] : []),
   ];
@@ -2740,7 +2740,7 @@ function MemoriaRecife({ m }) {
         </div>
       ))}
       <div style={{ marginTop: 4, fontSize: 10.5, color: C.dim, lineHeight: 1.5 }}>
-        A meta parte do que a loja fatura hoje (run-rate sazonal), com crescimento por cima; os <b style={{ color: C.muted }}>cursos do mês</b> modulam pra cima/baixo (mais cursos, meta maior). Em Recife o calendário só ajusta — não define o número, porque a venda é picada.
+        A meta parte do que a loja fatura hoje (run-rate sazonal), com crescimento por cima; os <b style={{ color: C.muted }}>cursos do mês</b> modulam pra cima/baixo — cada tipo pesa por quanto enche a loja (FCIS/Master pesam mais que palestra). Em Recife o calendário só ajusta — não define o número, porque a venda é picada.
       </div>
     </div>
   );
