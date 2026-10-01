@@ -31,6 +31,7 @@ def main():
     soql = (
         f"SELECT {fields} FROM Opportunity "
         f"WHERE Unidade_Geradora_Venda__r.Name = '{UNIDADE}' "
+        f"AND Unidade__r.Name = '{UNIDADE}' "          # Unidade Realizadora do Curso (Matriz) = Salvador 2
         "AND StageName IN ('Cancelado','Perdida') "
         f"AND (CloseDate >= {desde} OR DataCancelamento__c >= {desde}T00:00:00Z)"
     )
