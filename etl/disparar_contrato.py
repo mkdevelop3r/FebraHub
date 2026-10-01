@@ -178,6 +178,10 @@ def main():
     ap.add_argument("--dry-run", action="store_true",
                     help="baixa ficha + junta, mas NAO cria no Autentique nem grava")
     ap.add_argument("--venda", help="processa SO esta venda (OpportunityId); util pra teste")
+    ap.add_argument("--email-teste", dest="email_teste",
+                    help="envio real de teste: manda pra ESTE e-mail (nao pro cliente)")
+    ap.add_argument("--telefone-teste", dest="telefone_teste",
+                    help="envio real de teste: manda pra ESTE telefone (nao pro cliente)")
     args = ap.parse_args()
     load_env()
 
@@ -190,10 +194,11 @@ def main():
         # em dry-run, monta um registro mínimo só pra validar ficha + merge.
         pend = [r for r in sb_get_pendentes(1000) if r.get("venda_id") == args.venda]
         if not pend:
-            if not args.dry_run:
+            if args.dry_run or args.email_teste or args.telefone_teste:
+                pend = [{"venda_id": args.venda, "nome": "TESTE", "curso": "TESTE"}]
+            else:
                 log("venda nao esta na fila (vw_contrato_pendente); abortando envio real.")
                 return 1
-            pend = [{"venda_id": args.venda, "nome": "TESTE", "curso": "TESTE"}]
     else:
         pend = sb_get_pendentes(args.limite)
     log(f"vendas pendentes: {len(pend)}")
@@ -205,6 +210,11 @@ def main():
 
     enviados = erros = 0
     for i, row in enumerate(pend, 1):
+        # envio real de teste: sobrescreve o contato pra ir pro testador, nao pro cliente
+        if args.email_teste:
+            row["email"] = args.email_teste
+        if args.telefone_teste:
+            row["telefone"] = args.telefone_teste
         venda = row.get("venda_id")
         nome = row.get("nome")
         log(f"[{i}/{len(pend)}] {nome} · {row.get('curso_sigla') or row.get('curso')} · venda {venda}")
