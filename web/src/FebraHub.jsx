@@ -8034,7 +8034,9 @@ function CentralFinanceira() {
   const [busca, setBusca] = useState("");
 
   const linhas = useMemo(() => {
-    const arr = [...(envios.data ?? [])];
+    // 'manual' = contrato mandado fora da automação (ex.: pelo Cleberson à mão);
+    // fica no banco só pra não reenviar, mas não aparece no hub.
+    const arr = (envios.data ?? []).filter((r) => r.status !== "manual");
     arr.sort((a, b) => String(b.enviado_em ?? "").localeCompare(String(a.enviado_em ?? "")));
     return arr;
   }, [envios.data]);
