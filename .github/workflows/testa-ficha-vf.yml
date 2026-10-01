@@ -1,0 +1,40 @@
+# Teste pontual: provar que dá pra puxar a Ficha de Inscrição (Anexo I) do
+# domínio Visualforce usando o login do Salesforce que o sync já tem.
+# É o "teste antes" da automação de contratos (Fase 2). Não grava nada.
+name: Testar ficha (Visualforce)
+
+on:
+  workflow_dispatch:
+    inputs:
+      venda_id:
+        description: ID da venda (Opportunity) para testar
+        required: true
+        default: '006V200000oGkdBIAS'
+
+jobs:
+  testa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r etl/requirements.txt
+      - name: Puxar a ficha de teste
+        working-directory: etl
+        env:
+          SALESFORCE_AUTH_URL: ${{ secrets.SALESFORCE_AUTH_URL }}
+          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SALESFORCE_LOGIN_URL: ${{ secrets.SALESFORCE_LOGIN_URL }}
+          VENDA_ID: ${{ inputs.venda_id }}
+        run: python testa_ficha_vf.py
+      - name: Guardar a ficha (se saiu PDF)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ficha-teste
+          path: etl/ficha.pdf
+          if-no-files-found: ignore
