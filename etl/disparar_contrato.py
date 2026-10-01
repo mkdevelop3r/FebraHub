@@ -133,16 +133,19 @@ def e164(tel):
 
 
 def cria_documento(nome, email, telefone, pdf_bytes, curso):
+    # Autentique aceita SO UM canal por signatario (email OU phone, nunca os dois).
     signer = {"name": nome or "Aluno(a)", "action": "SIGN"}
-    if email:
-        signer["email"] = email
     tel = e164(telefone)
     if DELIVERY == "whatsapp" and tel:
         signer["phone"] = tel
         signer["delivery_method"] = "DELIVERY_METHOD_WHATSAPP"
-    elif not email and tel:          # sem e-mail: cai pra SMS/WhatsApp
+    elif email:
+        signer["email"] = email
+    elif tel:                        # sem e-mail: cai pra WhatsApp
         signer["phone"] = tel
         signer["delivery_method"] = "DELIVERY_METHOD_WHATSAPP"
+    else:
+        raise RuntimeError("sem e-mail e sem telefone para o signatario")
 
     variables = {
         "document": {"name": f"Contrato {curso} - {nome}"[:200], "refusable": True},
