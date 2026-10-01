@@ -890,6 +890,13 @@ export async function marcarResposta(alunoId, turmaId, tipo, resposta) {
 export const useRepresadoLista = () =>
   useView("vw_represado_lista", { ordem: ["dias_restantes", "aluno_id"], staleTime: 60 * 1000, retry: 2 });
 
+/* CONTRATOS — Central Financeira (migration 223). Cada venda de Curso GGB vira
+   uma linha; status enviado -> abriu -> assinou (ou erro). A automação do
+   Autentique vai alimentar; por ora tem linhas de exemplo. A ordenação final
+   (envio mais recente primeiro) é feita na tela. */
+export const useContratoEnvios = () =>
+  useView("vw_contrato_envio", { ordem: ["enviado_em", "nome"], staleTime: 60 * 1000, retry: 2 });
+
 /* ENFILEIRA o convite dos elegíveis — não envia. Devolve { enfileirados,
    turma, mensagem }. A tela mostra `mensagem` como veio.
    `turmaId` recorta o disparo a uma turma (migration 167); sem ele vale a

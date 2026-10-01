@@ -48,6 +48,7 @@ import {
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
   useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
   useCertificadoTurmas, useCertificadoPresentes, useCertificadoPorAluno, certificadoUrl, dispararCertificados,
+  useContratoEnvios,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useConsultores, useTrocaSolicitacoes, buscarLeadTroca, solicitarTroca,
   decidirTroca, dispararExecucaoTroca,
@@ -97,6 +98,12 @@ const ALTURA_PAINEL = 260;
 const HUBS = [
   { key: "comercial",  nome: "Comercial",  Icone: TrendingUp,    desc: "Pódio de consultoras e placar da semana" },
   { key: "financeiro", nome: "Financeiro", Icone: Wallet,        desc: "Receita por curso e cobertura" },
+  /* Operação do Financeiro (como a Central Pedagógica é a do Pedagógico):
+     auditoria dos contratos enviados pelo Autentique — quem assinou, quem não,
+     e cobrança da assinatura. `setor: "financeiro"` = quem vê o Financeiro. */
+  { key: "central-financeira", pai: "financeiro", setor: "financeiro",
+    nome: "Central Financeira", Icone: Receipt,
+    desc: "Contratos: envio, assinatura e cobrança" },
   { key: "marketing",  nome: "Marketing",  Icone: Megaphone,     desc: "Origem de leads e campanhas" },
   /* Operação do Marketing, como a Central Pedagógica é a do Pedagógico.
      DOIS setores abrem este hub, e é o único assim: quem é do marketing
@@ -8003,6 +8010,197 @@ function CentralPedagogica() {
   );
 }
 
+/* ============ CENTRAL FINANCEIRA ============
+   Auditoria dos contratos (Cursos GGB) que o Autentique envia: funil de
+   assinatura, tabela por venda e cobrança por WhatsApp de quem não assinou.
+   Lê `vw_contrato_envio` (migration 223). Hoje com dados de EXEMPLO — a
+   automação do Autentique passa a alimentar a tabela quando entrar. */
+const STATUS_CONTRATO = {
+  assinou: { rotulo: "Assinou", cor: C.up },
+  abriu:   { rotulo: "Abriu, não assinou", cor: C.warn },
+  enviado: { rotulo: "Não abriu", cor: C.down },
+  erro:    { rotulo: "Erro no envio", cor: C.down },
+};
+const primeiroNomeContrato = (n) => String(n || "").trim().split(/\s+/)[0] || "";
+const waContrato = (r) => {
+  const tel = String(r.telefone || "").replace(/\D/g, "");
+  const msg = `Oi ${primeiroNomeContrato(r.nome)}, tudo bem? Seu contrato do ${r.curso} está te esperando para assinatura${r.link ? `: ${r.link}` : "."}`;
+  return `https://wa.me/${tel}?text=${encodeURIComponent(msg)}`;
+};
+
+function CentralFinanceira() {
+  const envios = useContratoEnvios();
+  const [filtro, setFiltro] = useState("todos");
+  const [busca, setBusca] = useState("");
+
+  const linhas = useMemo(() => {
+    const arr = [...(envios.data ?? [])];
+    arr.sort((a, b) => String(b.enviado_em ?? "").localeCompare(String(a.enviado_em ?? "")));
+    return arr;
+  }, [envios.data]);
+
+  const contas = useMemo(() => {
+    const c = { todos: linhas.length, assinou: 0, abriu: 0, enviado: 0, nao_assinou: 0 };
+    for (const r of linhas) {
+      if (r.status === "assinou") c.assinou++;
+      else {
+        c.nao_assinou++;
+        if (r.status === "abriu") c.abriu++;
+        else c.enviado++;
+      }
+    }
+    return c;
+  }, [linhas]);
+
+  const temExemplo = linhas.some((r) => String(r.venda_id ?? "").toUpperCase().startsWith("EXEMPLO"));
+
+  const visiveis = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return linhas.filter((r) => {
+      if (filtro === "assinou" && r.status !== "assinou") return false;
+      if (filtro === "abriu" && r.status !== "abriu") return false;
+      if (filtro === "enviado" && r.status !== "enviado") return false;
+      if (filtro === "nao_assinou" && r.status === "assinou") return false;
+      if (q && !`${r.nome ?? ""} ${r.curso ?? ""} ${r.cpf ?? ""}`.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [linhas, filtro, busca]);
+
+  const chips = [
+    { key: "todos", rotulo: "enviados", valor: contas.todos, cor: C.bright },
+    { key: "assinou", rotulo: "assinaram", valor: contas.assinou, cor: C.up },
+    { key: "abriu", rotulo: "abriram, não assinaram", valor: contas.abriu, cor: C.warn },
+    { key: "enviado", rotulo: "não abriram", valor: contas.enviado, cor: C.down },
+    { key: "nao_assinou", rotulo: "a cobrar (não assinaram)", valor: contas.nao_assinou, cor: C.gold },
+  ];
+
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: C.bright }}>Central Financeira</h2>
+        <span style={{ fontSize: 11.5, color: C.faint }}>contratos dos Cursos GGB · envio, assinatura e cobrança</span>
+      </div>
+
+      {temExemplo && (
+        <div style={{
+          display: "flex", gap: 8, alignItems: "center", marginBottom: 14, padding: "9px 13px",
+          borderRadius: 10, background: `${C.gold}14`, border: `1px solid ${C.gold}3A`,
+        }}>
+          <AlertTriangle size={13} style={{ color: C.gold, flexShrink: 0 }} />
+          <span style={{ fontSize: 11.5, color: C.muted }}>
+            Mostrando <b style={{ color: C.gold }}>dados de exemplo</b> pra validar a tela. Quando a automação do Autentique entrar, as linhas reais aparecem aqui.
+          </span>
+        </div>
+      )}
+
+      <Bloco titulo="Funil da assinatura" canto={envios.isLoading ? "carregando…" : `${numero(contas.todos)} contrato(s)`}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {chips.map((it) => {
+            const ativo = filtro === it.key;
+            const vazio = it.valor === 0 && it.key !== "todos";
+            return (
+              <button key={it.key} onClick={() => setFiltro(ativo ? "todos" : it.key)} disabled={vazio} aria-pressed={ativo}
+                title={vazio ? "ninguém nesta situação" : ativo ? "Clique para ver todos" : `Filtrar: ${it.rotulo}`}
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1,
+                  padding: "7px 12px", borderRadius: 10, fontFamily: SANS, textAlign: "left",
+                  cursor: vazio ? "default" : "pointer",
+                  background: ativo ? `${it.cor}1C` : "rgba(255,255,255,.03)",
+                  border: `1px solid ${ativo ? `${it.cor}66` : C.cardLine}`,
+                  opacity: vazio ? 0.45 : 1,
+                }}>
+                <span style={{ fontFamily: GROTESK, fontSize: 17, fontWeight: 700, lineHeight: 1, color: vazio ? C.dim : it.cor }}>{numero(it.valor)}</span>
+                <span style={{ fontSize: 9.5, fontWeight: 700, color: ativo ? it.cor : C.faint, whiteSpace: "nowrap" }}>{it.rotulo}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Bloco>
+
+      <Bloco titulo="Contratos" canto={`${numero(visiveis.length)} na lista`} sem>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.hair}` }}>
+          <div style={{ position: "relative", maxWidth: 320 }}>
+            <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.dim }} />
+            <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar nome, curso ou CPF"
+              style={{
+                width: "100%", padding: "8px 10px 8px 30px", borderRadius: 9, fontFamily: SANS, fontSize: 12.5,
+                background: "rgba(255,255,255,.03)", border: `1px solid ${C.cardLine}`, color: C.text, outline: "none",
+              }} />
+          </div>
+        </div>
+
+        <style>{`
+          .cfGrade { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1.3fr) 96px 96px 150px 128px; align-items: center; gap: 10px; }
+          @media (max-width: 1040px) { .cfGrade { grid-template-columns: minmax(0,1.6fr) 96px 150px 128px; } .cfCurso, .cfData { display: none; } }
+          .cfLinha:hover { background: rgba(255,255,255,.02); }
+        `}</style>
+
+        <div className="rolagem" style={{ maxHeight: 520, overflowY: "auto" }}>
+          <div className="cfGrade" style={{
+            position: "sticky", top: 0, zIndex: 2, background: "#17171c",
+            padding: "9px 16px", borderBottom: `1px solid ${C.cardLine}`,
+          }}>
+            {["Cliente","Curso","Valor","Enviado","Status","Ação"].map((h, i) => (
+              <span key={h} className={i === 1 ? "cfCurso" : i === 3 ? "cfData" : undefined}
+                style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim,
+                         textAlign: i === 2 ? "right" : "left" }}>{h}</span>
+            ))}
+          </div>
+
+          {envios.isLoading ? (
+            <div style={{ padding: "28px 16px", color: C.faint, fontSize: 12.5 }}>Carregando contratos…</div>
+          ) : envios.error ? (
+            <div style={{ padding: "28px 16px", color: C.down, fontSize: 12.5 }}>Não deu pra carregar os contratos.</div>
+          ) : visiveis.length === 0 ? (
+            <div style={{ padding: "28px 16px", color: C.faint, fontSize: 12.5 }}>
+              {linhas.length === 0 ? "Nenhum contrato ainda." : "Nada nesse filtro."}
+            </div>
+          ) : visiveis.map((r) => {
+            const st = STATUS_CONTRATO[r.status] ?? { rotulo: r.status, cor: C.muted };
+            const assinado = r.status === "assinou";
+            return (
+              <div key={r.id} className="cfGrade cfLinha" style={{ padding: "11px 16px", borderBottom: `1px solid ${C.hair}` }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nome}</div>
+                  <div style={{ fontSize: 10.5, color: C.faint }}>{r.cpf}{r.turma ? ` · ${r.turma}` : ""}</div>
+                </div>
+                <span className="cfCurso" style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.curso}>{r.curso}</span>
+                <span style={{ fontFamily: GROTESK, fontSize: 12.5, color: C.text, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.valor != null ? moeda(r.valor) : "—"}</span>
+                <span className="cfData" style={{ fontSize: 11.5, color: C.faint }}>{dataBR(r.enviado_em)}</span>
+                <span>
+                  <span style={{
+                    fontSize: 10.5, fontWeight: 700, color: st.cor, background: `${st.cor}18`,
+                    border: `1px solid ${st.cor}3A`, borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap",
+                  }}>{st.rotulo}</span>
+                </span>
+                <span style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                  {!assinado && r.telefone && (
+                    <a href={waContrato(r)} target="_blank" rel="noopener noreferrer"
+                      title="Cobrar assinatura por WhatsApp"
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 5, textDecoration: "none",
+                        fontSize: 11, fontWeight: 700, color: C.up, background: `${C.up}16`,
+                        border: `1px solid ${C.up}3A`, borderRadius: 8, padding: "5px 9px",
+                      }}><Send size={11} /> Cobrar</a>
+                  )}
+                  {r.link && (
+                    <a href={r.link} target="_blank" rel="noopener noreferrer" title="Abrir contrato no Autentique"
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 4, textDecoration: "none",
+                        fontSize: 11, fontWeight: 700, color: C.muted, background: "rgba(255,255,255,.03)",
+                        border: `1px solid ${C.cardLine}`, borderRadius: 8, padding: "5px 9px",
+                      }}><Link2 size={11} /> Contrato</a>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </Bloco>
+    </>
+  );
+}
+
 /* ============ CERTIFICADOS ============
    Turma encerrada -> presentes -> baixar/disparar. Os campos (curso, período,
    carga) vêm pré-preenchidos e são editáveis por turma; o nome é editável por
@@ -11207,6 +11405,7 @@ function Shell({ perfil }) {
       case "marketing":  return <HubMarketing />;
       case "pedagogico": return <HubPedagogico />;
       case "central":    return <CentralPedagogica />;
+      case "central-financeira": return <CentralFinanceira />;
       case "auditoria":  return <LimiteErroAuditoria><HubAuditoria /></LimiteErroAuditoria>;
       case "central-febracis": return <CentralFebracis />;
       case "central-eventos": return <CentralEventosLegado />;
