@@ -6,9 +6,10 @@ name: Disparar contratos (GGB)
 
 on:
   schedule:
-    # 09:00, 13:00 e 17:00 de Salvador (UTC-3). Rodada automatica = envio REAL
-    # (sem dry-run), processa a fila de vendas GGB pendentes.
-    - cron: '0 12,16,20 * * *'
+    # 10:00, 13:00, 16:00 e 21:00 de Salvador (UTC-3) = 13/16/19/00 UTC.
+    # Rodada automatica = envio REAL (sem dry-run), processa a fila de vendas
+    # GGB pendentes.
+    - cron: '0 0,13,16,19 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
