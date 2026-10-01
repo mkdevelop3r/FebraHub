@@ -1455,3 +1455,17 @@ gravadas.
   `pg_cron` executou sozinho às 11h15, encontrou a fila vazia e registrou status
   `ok`. O `schedule` foi removido de `mensagens-pedagogico.yml`; o workflow
   permanece disponível apenas por `workflow_dispatch` como contingência.
+
+### Codex - 01/10/2026 - Represados no agendador serverless
+
+- A Edge Function `mensagens-pedagogico` passa a processar também
+  `vw_prazo_fila_envio`, em lotes de 10 a cada execução de 15 minutos.
+- Antes da correção havia 114 registros `prazo_vencendo` pendentes; 64 estavam
+  imediatamente liberados pela view com telefone, turma e link do grupo.
+- Para cada represado, a função grava curso, prazo, próxima turma e link do
+  grupo no CRM, aplica `pedagogico prazo` e chama
+  `registrar_envio_prazo` somente depois das chamadas ao CRM.
+- Turmas já iniciadas continuam bloqueadas. Linhas sem próxima turma ou sem
+  link são puladas, sem registro falso de envio.
+- `disparar-represados.yml` permanece manual como contingência e para campanhas
+  direcionadas; o escoamento da fila pendente deixa de depender dele.

@@ -8,11 +8,13 @@ const CRM_BASE = "https://services.leadconnectorhq.com";
 const CRM_VERSION = "2021-07-28";
 const CAMPO_CURSO = "aEypUKJotJp6CNa9qkjm";
 const CAMPO_PRAZO = "hgKOTXvRxnNxFiULiRFi";
+const CAMPO_PROXIMA = "oGv3CqcWa4lUekDI9Wap";
 const CAMPO_DATAS = "qjFuniXeOdO812RlO3k4";
 const CAMPO_HORARIOS = "NO62an9Rmr7izspnABUG";
 const CAMPO_CREDENC = "Xjza3zFQ0KqopHqFVoJv";
 const CAMPO_LINK = "fXr7R9YN5Jz7Hv14RoHm";
 const TAG_BOAS = "pedagogico boas-vindas";
+const TAG_PRAZO = "pedagogico prazo";
 const TAG_CONFIRMACAO = "pedagogico:confirmacao";
 const TAG_GRUPO = "pedagogico:grupo";
 const TURMAS_BLOQUEADAS = new Set(["2026 - IF36"]);
@@ -114,7 +116,7 @@ Deno.serve(async (req) => {
   };
 
   const processar = async (
-    fila: any[], tipo: "boas_vindas" | "turma",
+    fila: any[], tipo: "boas_vindas" | "turma" | "prazo",
   ) => {
     for (const linha of fila) {
       const rotulo = linha.nome ?? linha.aluno_id;
@@ -123,6 +125,22 @@ Deno.serve(async (req) => {
         let tag = TAG_BOAS;
         if (tipo === "boas_vindas") {
           if (linha.data_limite) campos.push({ id: CAMPO_PRAZO, field_value: dataBr(linha.data_limite) });
+        } else if (tipo === "prazo") {
+          const proxima = dataBr(linha.proxima_turma_em);
+          const link = String(linha.link_grupo ?? "").trim();
+          if (!proxima || !link) {
+            pulados++;
+            detalhes.push({
+              aluno: rotulo,
+              resultado: "pulado",
+              motivo: !proxima ? "sem próxima turma" : "sem link_grupo",
+            });
+            continue;
+          }
+          if (linha.vence_em) campos.push({ id: CAMPO_PRAZO, field_value: dataBr(linha.vence_em) });
+          campos.push({ id: CAMPO_PROXIMA, field_value: proxima });
+          campos.push({ id: CAMPO_LINK, field_value: link });
+          tag = TAG_PRAZO;
         } else {
           if (!linha.link_grupo) {
             pulados++; detalhes.push({ aluno: rotulo, resultado: "pulado", motivo: "sem link_grupo" });
@@ -146,7 +164,11 @@ Deno.serve(async (req) => {
           canal: linha.canal ?? "whatsapp",
         };
         if (linha.tipo) item.tipo = linha.tipo;
-        const rpc = tipo === "boas_vindas" ? "registrar_envio_boas_vindas" : "registrar_envio_turma";
+        const rpc = tipo === "boas_vindas"
+          ? "registrar_envio_boas_vindas"
+          : tipo === "prazo"
+          ? "registrar_envio_prazo"
+          : "registrar_envio_turma";
         const { error } = await db.rpc(rpc, { p_itens: [item] });
         if (error) {
           semRegistro++;
@@ -179,6 +201,11 @@ Deno.serve(async (req) => {
     if (erroFila) throw new Error(`fila de turma: ${erroFila.message}`);
     const filaTurma = (turma ?? []).filter((l: any) => !bloqueadas.has(String(l.turma_id ?? ""))).slice(0, 10);
     await processar(filaTurma, "turma");
+
+    const { data: prazo, error: erroPrazo } = await db.from("vw_prazo_fila_envio").select("*").limit(1000);
+    if (erroPrazo) throw new Error(`fila de represados: ${erroPrazo.message}`);
+    const filaPrazo = (prazo ?? []).filter((l: any) => !bloqueadas.has(String(l.turma_id ?? ""))).slice(0, 10);
+    await processar(filaPrazo, "prazo");
 
     if (falhas || semRegistro) {
       status = semRegistro ? "erro" : "parcial";
