@@ -209,13 +209,6 @@ def main():
         nome = row.get("nome")
         log(f"[{i}/{len(pend)}] {nome} · {row.get('curso_sigla') or row.get('curso')} · venda {venda}")
         try:
-            if not row.get("telefone") and not row.get("email"):
-                log("  - sem telefone e sem e-mail; pulando")
-                if not args.dry_run:
-                    sb_grava_envio(row, "erro", erro="sem telefone e sem e-mail")
-                erros += 1
-                continue
-
             ficha = baixa_ficha(sf, base, venda)
             pdf = junta(contrato, ficha)
             log(f"  - ficha {len(ficha)}b + contrato -> pacote {len(pdf)}b")
@@ -226,6 +219,12 @@ def main():
                     f.write(pdf)
                 log(f"  - DRY-RUN: pacote salvo em {nome_arq} (nao enviado)")
                 enviados += 1
+                continue
+
+            if not row.get("telefone") and not row.get("email"):
+                log("  - sem telefone e sem e-mail; nao da pra enviar")
+                sb_grava_envio(row, "erro", erro="sem telefone e sem e-mail")
+                erros += 1
                 continue
 
             doc_id, link = cria_documento(nome, row.get("email"),
