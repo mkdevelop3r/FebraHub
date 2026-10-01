@@ -137,7 +137,10 @@ const HUBS = [
   /* `setor: "geral"` = só direção. Não existe setor 'metas': quem define meta
      de TODOS os setores é quem enxerga todos, e no filtro de visibilidade
      'geral' só pertence a admin. */
-  { key: "metas", setor: "geral", nome: "Metas", Icone: Target,
+  /* Metas: diretoria (geral/admin) vê e edita. O setor dedicado 'metas' abre o
+     hub só pra VER (editar segue exigindo papel admin na RLS de meta_setor) —
+     usado pra liberar Metas a alguém sem dar 'geral' (que tornaria admin). */
+  { key: "metas", setores: ["geral", "metas"], nome: "Metas", Icone: Target,
     desc: "Meta de cada setor, mês a mês" },
   { key: "integracoes", setor: "geral", nome: "Central de APIs", Icone: Database,
     desc: "Saúde real das fontes e suas gravações" },
