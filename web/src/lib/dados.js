@@ -897,6 +897,12 @@ export const useRepresadoLista = () =>
 export const useContratoEnvios = () =>
   useView("vw_contrato_envio", { ordem: ["enviado_em", "nome"], staleTime: 60 * 1000, retry: 2 });
 
+/* CANCELADOS — Central Financeira (migration 227). Vendas de Salvador 2 com
+   StageName 'Cancelado' ou 'Perdida', sincronizadas do Salesforce pelo
+   cancelados_sync. data_ref = coalesce(data_cancelamento, data_fechamento). */
+export const useCancelados = () =>
+  useView("vw_financeiro_cancelados", { ordem: ["data_ref", "nome"], staleTime: 60 * 1000, retry: 2 });
+
 /* ENFILEIRA o convite dos elegíveis — não envia. Devolve { enfileirados,
    turma, mensagem }. A tela mostra `mensagem` como veio.
    `turmaId` recorta o disparo a uma turma (migration 167); sem ele vale a

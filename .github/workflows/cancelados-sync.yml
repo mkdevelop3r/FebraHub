@@ -1,0 +1,40 @@
+# Sincroniza vendas canceladas/perdidas (Salvador 2) -> fato_venda_cancelada,
+# que alimenta a aba "Cancelados" da Central Financeira. 1x/dia + manual.
+name: Sync cancelados
+
+on:
+  schedule:
+    - cron: '30 11 * * *'   # 08:30 Salvador
+  workflow_dispatch:
+    inputs:
+      lookback_dias:
+        description: Quantos dias para tras puxar (padrao 540)
+        type: string
+        default: '540'
+
+concurrency:
+  group: cancelados-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r etl/requirements.txt
+      - name: Puxar canceladas/perdidas
+        working-directory: etl
+        env:
+          SALESFORCE_AUTH_URL: ${{ secrets.SALESFORCE_AUTH_URL }}
+          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SALESFORCE_LOGIN_URL: ${{ secrets.SALESFORCE_LOGIN_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CANCELADOS_LOOKBACK_DAYS: ${{ inputs.lookback_dias || '540' }}
+        run: python cancelados_sync.py

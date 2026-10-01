@@ -48,7 +48,7 @@ import {
   useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
   useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
   useCertificadoTurmas, useCertificadoPresentes, useCertificadoPorAluno, certificadoUrl, dispararCertificados,
-  useContratoEnvios,
+  useContratoEnvios, useCancelados,
   useCarteira, usePerfisVisiveis, criarEvento, salvarPerguntas,
   useConsultores, useTrocaSolicitacoes, buscarLeadTroca, solicitarTroca,
   decidirTroca, dispararExecucaoTroca,
@@ -8031,7 +8031,7 @@ const waContrato = (r) => {
   return `https://wa.me/${tel}?text=${encodeURIComponent(msg)}`;
 };
 
-function CentralFinanceira() {
+function ContratosFinanceira() {
   const envios = useContratoEnvios();
   const [filtro, setFiltro] = useState("todos");
   const [busca, setBusca] = useState("");
@@ -8081,11 +8081,6 @@ function CentralFinanceira() {
 
   return (
     <>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
-        <h2 style={{ fontSize: 16, fontWeight: 800, color: C.bright }}>Central Financeira</h2>
-        <span style={{ fontSize: 11.5, color: C.faint }}>contratos dos Cursos GGB · envio, assinatura e cobrança</span>
-      </div>
-
       {temExemplo && (
         <div style={{
           display: "flex", gap: 8, alignItems: "center", marginBottom: 14, padding: "9px 13px",
@@ -8197,6 +8192,152 @@ function CentralFinanceira() {
                       }}><Link2 size={11} /> Contrato</a>
                   )}
                 </span>
+              </div>
+            );
+          })}
+        </div>
+      </Bloco>
+    </>
+  );
+}
+
+/* Central Financeira: abas Contratos (automação de assinatura) + Cancelados
+   (vendas que saíram do Aprovada — Cancelado/Perdida, migration 227). */
+const ABAS_FIN = [
+  { key: "contratos", label: "Contratos" },
+  { key: "cancelados", label: "Cancelados" },
+];
+function CentralFinanceira() {
+  const [aba, setAba] = useState("contratos");
+  return (
+    <>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+        <h2 style={{ fontSize: 16, fontWeight: 800, color: C.bright }}>Central Financeira</h2>
+        <span style={{ fontSize: 11.5, color: C.faint }}>contratos (envio/assinatura) e cancelamentos</span>
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        <Segmentado opcoes={ABAS_FIN} valor={aba} onChange={setAba} />
+      </div>
+      {aba === "contratos" && <ContratosFinanceira />}
+      {aba === "cancelados" && <CanceladosFinanceira />}
+    </>
+  );
+}
+
+const MES_PT = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const CANC_INFO = {
+  Cancelado: { rotulo: "Cancelado", cor: C.down },
+  Perdida: { rotulo: "Perdida", cor: C.warn },
+};
+function CanceladosFinanceira() {
+  const dados = useCancelados();
+  const [mesOffset, setMesOffset] = useState(0);   // 0 = mês corrente
+  const [filtro, setFiltro] = useState("todos");    // todos | Cancelado | Perdida
+  const [busca, setBusca] = useState("");
+
+  const ymAlvo = useMemo(() => {
+    const d = new Date();
+    d.setDate(1); d.setMonth(d.getMonth() - mesOffset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }, [mesOffset]);
+  const labelMes = `${MES_PT[Number(ymAlvo.slice(5, 7)) - 1]}/${ymAlvo.slice(0, 4)}`;
+
+  const doMes = useMemo(
+    () => (dados.data ?? []).filter((r) => String(r.data_ref ?? "").slice(0, 7) === ymAlvo),
+    [dados.data, ymAlvo]);
+
+  const contas = useMemo(() => {
+    const c = { todos: doMes.length, Cancelado: 0, Perdida: 0, valor: 0 };
+    for (const r of doMes) {
+      c[r.etapa] = (c[r.etapa] ?? 0) + 1;
+      c.valor += Number(r.valor ?? 0);
+    }
+    return c;
+  }, [doMes]);
+
+  const visiveis = useMemo(() => {
+    const q = busca.trim().toLowerCase();
+    return [...doMes]
+      .filter((r) => (filtro === "todos" || r.etapa === filtro)
+        && (!q || `${r.nome ?? ""} ${r.curso ?? ""} ${r.cpf ?? ""} ${r.consultor ?? ""}`.toLowerCase().includes(q)))
+      .sort((a, b) => String(b.data_ref ?? "").localeCompare(String(a.data_ref ?? "")));
+  }, [doMes, filtro, busca]);
+
+  const chips = [
+    { key: "todos", rotulo: "no mês", valor: contas.todos, cor: C.bright },
+    { key: "Cancelado", rotulo: "cancelados", valor: contas.Cancelado, cor: C.down },
+    { key: "Perdida", rotulo: "perdidas", valor: contas.Perdida, cor: C.warn },
+  ];
+
+  return (
+    <>
+      <Bloco titulo="Cancelamentos e perdas"
+        canto={dados.isLoading ? "carregando…" : `${labelMes} · ${moeda(contas.valor)} em jogo`}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
+          <button onClick={() => setMesOffset((v) => v + 1)} title="mês anterior"
+            style={{ background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, borderRadius: 8, color: C.muted, cursor: "pointer", padding: "4px 8px" }}>
+            <ChevronLeft size={14} />
+          </button>
+          <span style={{ fontFamily: GROTESK, fontSize: 13, fontWeight: 700, color: C.text, minWidth: 92, textAlign: "center" }}>{labelMes}</span>
+          <button onClick={() => setMesOffset((v) => Math.max(0, v - 1))} disabled={mesOffset === 0} title="próximo mês"
+            style={{ background: "rgba(255,255,255,.04)", border: `1px solid ${C.cardLine}`, borderRadius: 8, color: mesOffset === 0 ? C.dim : C.muted, cursor: mesOffset === 0 ? "default" : "pointer", padding: "4px 8px" }}>
+            <ChevronRight size={14} />
+          </button>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {chips.map((it) => {
+            const ativo = filtro === it.key;
+            const vazio = it.valor === 0 && it.key !== "todos";
+            return (
+              <button key={it.key} onClick={() => setFiltro(ativo ? "todos" : it.key)} disabled={vazio} aria-pressed={ativo}
+                style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 1, padding: "7px 12px", borderRadius: 10, fontFamily: SANS, textAlign: "left", cursor: vazio ? "default" : "pointer", background: ativo ? `${it.cor}1C` : "rgba(255,255,255,.03)", border: `1px solid ${ativo ? `${it.cor}66` : C.cardLine}`, opacity: vazio ? 0.45 : 1 }}>
+                <span style={{ fontFamily: GROTESK, fontSize: 17, fontWeight: 700, lineHeight: 1, color: vazio ? C.dim : it.cor }}>{numero(it.valor)}</span>
+                <span style={{ fontSize: 9.5, fontWeight: 700, color: ativo ? it.cor : C.faint, whiteSpace: "nowrap" }}>{it.rotulo}</span>
+              </button>
+            );
+          })}
+        </div>
+      </Bloco>
+
+      <Bloco titulo="Vendas canceladas / perdidas" canto={`${numero(visiveis.length)} na lista`} sem>
+        <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.hair}` }}>
+          <div style={{ position: "relative", maxWidth: 320 }}>
+            <Search size={13} style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.dim }} />
+            <input value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar nome, curso, CPF ou consultor"
+              style={{ width: "100%", padding: "8px 10px 8px 30px", borderRadius: 9, fontFamily: SANS, fontSize: 12.5, background: "rgba(255,255,255,.03)", border: `1px solid ${C.cardLine}`, color: C.text, outline: "none" }} />
+          </div>
+        </div>
+        <style>{`
+          .cancGrade { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1.3fr) 96px 110px 92px minmax(0,1fr); align-items: center; gap: 10px; }
+          @media (max-width: 1040px) { .cancGrade { grid-template-columns: minmax(0,1.6fr) 96px 92px; } .cancCurso, .cancData, .cancCons { display: none; } }
+          .cancLinha:hover { background: rgba(255,255,255,.02); }
+        `}</style>
+        <div className="rolagem" style={{ maxHeight: 520, overflowY: "auto" }}>
+          <div className="cancGrade" style={{ position: "sticky", top: 0, zIndex: 2, background: "#17171c", padding: "9px 16px", borderBottom: `1px solid ${C.cardLine}` }}>
+            {["Cliente", "Curso", "Valor", "Status", "Data", "Consultor"].map((h, i) => (
+              <span key={h} className={i === 1 ? "cancCurso" : i === 4 ? "cancData" : i === 5 ? "cancCons" : undefined}
+                style={{ fontSize: 10, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim, textAlign: i === 2 ? "right" : "left" }}>{h}</span>
+            ))}
+          </div>
+          {dados.isLoading ? (
+            <div style={{ padding: "28px 16px", color: C.faint, fontSize: 12.5 }}>Carregando…</div>
+          ) : dados.error ? (
+            <div style={{ padding: "28px 16px", color: C.down, fontSize: 12.5 }}>Não deu pra carregar os cancelamentos.</div>
+          ) : visiveis.length === 0 ? (
+            <div style={{ padding: "28px 16px", color: C.faint, fontSize: 12.5 }}>Nada nesse mês/filtro.</div>
+          ) : visiveis.map((r) => {
+            const st = CANC_INFO[r.etapa] ?? { rotulo: r.etapa, cor: C.muted };
+            return (
+              <div key={r.venda_id} className="cancGrade cancLinha" style={{ padding: "11px 16px", borderBottom: `1px solid ${C.hair}` }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: C.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.nome}</div>
+                  <div style={{ fontSize: 10.5, color: C.faint }}>{r.cpf || "—"}</div>
+                </div>
+                <span className="cancCurso" style={{ fontSize: 12, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.curso}>{r.curso}</span>
+                <span style={{ fontFamily: GROTESK, fontSize: 12.5, color: C.text, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.valor != null ? moeda(r.valor) : "—"}</span>
+                <span><span style={{ fontSize: 10.5, fontWeight: 700, color: st.cor, background: `${st.cor}18`, border: `1px solid ${st.cor}3A`, borderRadius: 999, padding: "3px 9px", whiteSpace: "nowrap" }}>{st.rotulo}</span></span>
+                <span className="cancData" style={{ fontSize: 11.5, color: C.faint }}>{dataBR(r.data_ref)}</span>
+                <span className="cancCons" style={{ fontSize: 11.5, color: C.muted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={r.consultor}>{r.consultor}</span>
               </div>
             );
           })}
