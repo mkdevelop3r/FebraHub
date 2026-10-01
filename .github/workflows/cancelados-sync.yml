@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       lookback_dias:
-        description: Quantos dias para tras puxar (padrao 540)
+        description: Quantos dias para tras puxar (padrao 760 = 2025+2026)
         type: string
-        default: '540'
+        default: '760'
 
 concurrency:
   group: cancelados-sync

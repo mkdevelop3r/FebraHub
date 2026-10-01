@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 from salesforce_api_sync import Salesforce, Supabase, load_env, nested, digits
 
 UNIDADE = os.getenv("SALESFORCE_UNIDADE", "FEBRACIS SALVADOR 2")
-LOOKBACK = int(os.getenv("CANCELADOS_LOOKBACK_DAYS", "540"))
+LOOKBACK = int(os.getenv("CANCELADOS_LOOKBACK_DAYS", "760"))  # cobre 2025 + 2026
 
 
 def dia(v):
