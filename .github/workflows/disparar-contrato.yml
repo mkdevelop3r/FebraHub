@@ -1,0 +1,60 @@
+# Contratos GGB - Fase 2: gera (contrato + ficha) e envia pelo Autentique.
+# Comeca MANUAL. Deixe "dry_run" marcado pra testar ficha+merge sem enviar nada.
+# Quando validar, desmarque dry_run pra enviar de verdade (precisa do secret
+# AUTENTIQUE_TOKEN). O agendamento (rodar sozinho) entra depois do ok.
+name: Disparar contratos (GGB)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Teste (baixa ficha + junta, NAO envia nem grava)
+        type: boolean
+        default: true
+      limite:
+        description: Quantas vendas processar
+        type: string
+        default: '3'
+      venda_id:
+        description: (opcional) testar SO esta venda (OpportunityId)
+        type: string
+        default: ''
+
+concurrency:
+  group: disparar-contrato
+  cancel-in-progress: false
+
+jobs:
+  disparar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        run: pip install -r etl/requirements.txt
+      - name: Gerar e enviar contratos
+        working-directory: etl
+        env:
+          SALESFORCE_AUTH_URL: ${{ secrets.SALESFORCE_AUTH_URL }}
+          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SALESFORCE_LOGIN_URL: ${{ secrets.SALESFORCE_LOGIN_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          AUTENTIQUE_TOKEN: ${{ secrets.AUTENTIQUE_TOKEN }}
+          CONTRATO_DELIVERY: whatsapp
+        run: >-
+          python disparar_contrato.py
+          --limite ${{ inputs.limite }}
+          ${{ inputs.dry_run && '--dry-run' || '' }}
+          ${{ inputs.venda_id != '' && format('--venda {0}', inputs.venda_id) || '' }}
+      - name: Guardar os pacotes do teste (dry-run)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: contratos-dry-run
+          path: etl/pacote_*.pdf
+          if-no-files-found: ignore
