@@ -5,6 +5,10 @@
 name: Disparar contratos (GGB)
 
 on:
+  schedule:
+    # 09:00, 13:00 e 17:00 de Salvador (UTC-3). Rodada automatica = envio REAL
+    # (sem dry-run), processa a fila de vendas GGB pendentes.
+    - cron: '0 12,16,20 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -56,7 +60,7 @@ jobs:
           CONTRATO_DELIVERY: whatsapp
         run: >-
           python disparar_contrato.py
-          --limite ${{ inputs.limite }}
+          --limite ${{ inputs.limite || '50' }}
           ${{ inputs.dry_run && '--dry-run' || '' }}
           ${{ inputs.venda_id != '' && format('--venda {0}', inputs.venda_id) || '' }}
           ${{ inputs.email_teste != '' && format('--email-teste {0}', inputs.email_teste) || '' }}
