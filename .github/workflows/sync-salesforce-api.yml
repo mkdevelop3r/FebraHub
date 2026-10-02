@@ -6,9 +6,9 @@ on:
     paths:
       - '.github/workflows/sync-salesforce-api.yml'
       - 'etl/salesforce_api_sync.py'
-  schedule:
-    # Consulta direta ao Salesforce, com atraso maximo nominal de 15 minutos.
-    - cron: '*/15 * * * *'
+  # Agendamento sai do GitHub (que estrangula o */15) e passa para o pg_cron do
+  # Supabase, que chama este workflow via workflow_dispatch a cada 15 min
+  # (funcao public.invocar_sync_salesforce + job sync-salesforce-15m, db/232).
   workflow_dispatch:
     inputs:
       incluir_presenca:
