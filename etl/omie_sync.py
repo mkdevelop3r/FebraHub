@@ -171,6 +171,7 @@ def sync_vendas(desde, ate):
         pagina += 1
         time.sleep(1)
     print(f"vendas: {total_cupom} cupons, {total_item} itens")
+    return total_cupom + total_item
 
 
 # ---------------- PAGAMENTOS (formas de pagamento dos cupons) ----------------
@@ -213,6 +214,7 @@ def sync_pagamentos(desde, ate):
         pagina += 1
         time.sleep(1)
     print(f"pagamentos: {total} registros")
+    return total
 
 # ---------------- ESTOQUE (posição) ----------------
 def sync_estoque():
@@ -246,14 +248,15 @@ def sync_estoque():
         pagina += 1
         time.sleep(1)
     print(f"estoque: {total} produtos")
+    return total
 
-def registrar_status(ok, total):
+def registrar_status(status, total, mensagem=None):
     try:
         fonte = 'omie' if UNIDADE == 'salvador' else f'omie_{UNIDADE}'
         nome  = 'Loja (Omie)' if UNIDADE == 'salvador' else f'Loja {UNIDADE.capitalize()} (Omie)'
         st = {'fonte':fonte,'nome_exibicao':nome,
               'ultima_sync':datetime.now(timezone.utc).isoformat(),
-              'status':'ok' if ok else 'erro','registros':total,
+              'status':status,'registros':total,'mensagem':mensagem,
               'atualizado_em':datetime.now(timezone.utc).isoformat()}
         req = urllib.request.Request(
             f"{SB_URL}/rest/v1/integracao_status?on_conflict=fonte",
@@ -281,16 +284,36 @@ def main():
         raise SystemExit(f"Faltando credencial Omie de {UNIDADE}: variavel {e} nao definida")
     print(f"== Omie · unidade={UNIDADE} · {a.desde} a {a.ate} ==")
 
-    ok = True
-    try:
-        sync_vendas(a.desde, a.ate)
-        sync_pagamentos(a.desde, a.ate)
-        sync_estoque()
-    except Exception as e:
-        ok = False
-        print(f"ERRO: {e}")
-    registrar_status(ok, 0)
-    if not ok:
+    etapas = (
+        ('vendas', lambda: sync_vendas(a.desde, a.ate)),
+        ('pagamentos', lambda: sync_pagamentos(a.desde, a.ate)),
+        ('estoque', sync_estoque),
+    )
+    totais = {}
+    erros = {}
+    for nome_etapa, executar in etapas:
+        try:
+            totais[nome_etapa] = executar()
+        except Exception as e:
+            erros[nome_etapa] = str(e)
+            print(f"ERRO [{nome_etapa}]: {e}")
+
+    total = sum(totais.values())
+    if not erros:
+        status = 'ok'
+        mensagem = 'Todas as etapas concluídas: ' + ', '.join(
+            f'{nome}={quantidade}' for nome, quantidade in totais.items())
+    elif totais:
+        status = 'parcial'
+        mensagem = 'Falharam ' + '; '.join(
+            f'{nome}: {erro[:300]}' for nome, erro in erros.items())
+    else:
+        status = 'erro'
+        mensagem = 'Todas as etapas falharam: ' + '; '.join(
+            f'{nome}: {erro[:300]}' for nome, erro in erros.items())
+
+    registrar_status(status, total, mensagem)
+    if erros:
         raise SystemExit(1)
 
 if __name__ == '__main__':
