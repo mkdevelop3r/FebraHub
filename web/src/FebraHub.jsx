@@ -5695,6 +5695,13 @@ const dataCurta = (d) => {
 // vermelho (Vencido = benefício expirado, oportunidade de renovação).
 const COR_STATUS_MAESTRIA = { "válido": C.up, "valido": C.up, "perto de vencer": C.warn, "vencido": C.down };
 const corStatus = (s) => COR_STATUS_MAESTRIA[String(s ?? "").trim().toLowerCase()] ?? C.muted;
+// Aniversário como "DD/MM" (sem ano — o foco é a data comemorativa). Vem de
+// dim_alunos.data_nascimento (fonte: Salesforce).
+const aniversarioDiaMes = (d) => {
+  if (!d) return "—";
+  const [, m, dia] = String(d).slice(0, 10).split("-");
+  return dia ? `${dia}/${m}` : "—";
+};
 
 // Contador de validade com número colorido — mesma altura do ChipKpi compacto.
 function TileValidade({ Icone, label, valor, cor, nota }) {
@@ -5718,14 +5725,23 @@ function LinhaMaestro({ m, onEditar }) {
   const cor = corStatus(m.status_maestria);
   const s = String(m.status_maestria ?? "").trim().toLowerCase();
   const acao = s === "vencido" || s === "perto de vencer"; // realça quem pede ação
+  const aniver = !!m.aniversaria_mes; // faz aniversário neste mês — destaque dourado
   const subInfo = [m.empresa, m.email].filter(Boolean).join(" · ") || "—";
   return (
     <div style={{
       display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12,
       padding: "9px 20px", borderBottom: `1px solid ${C.hair}`,
-      background: acao ? `${cor}12` : "transparent",
+      // aniversariante tem prioridade visual (dourado); senão, quem pede ação
+      background: aniver ? `${C.gold}18` : acao ? `${cor}12` : "transparent",
+      boxShadow: aniver ? `inset 3px 0 0 ${C.gold}` : "none",
     }}>
       <div style={{ minWidth: 0, display: "flex", alignItems: "center", gap: 10 }}>
+        {aniver && (
+          <span title={`Faz aniversário dia ${m.dia_nascimento} deste mês`}
+            style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 9.5, fontWeight: 800, letterSpacing: ".2px", padding: "2px 8px", borderRadius: 999, color: C.gold, background: `${C.gold}1F`, border: `1px solid ${C.gold}66`, whiteSpace: "nowrap", flexShrink: 0 }}>
+            <Gift size={11} /> {aniversarioDiaMes(m.data_nascimento)}
+          </span>
+        )}
         {m.status_maestria && (
           <span title={m.vence_em ? `Maestria vence em ${dataCurta(m.vence_em)}` : m.status_maestria}
             style={{ fontSize: 9.5, fontWeight: 800, letterSpacing: ".2px", padding: "2px 8px", borderRadius: 999, color: cor, background: `${cor}1A`, border: `1px solid ${cor}44`, whiteSpace: "nowrap", flexShrink: 0 }}>
@@ -5747,6 +5763,10 @@ function LinhaMaestro({ m, onEditar }) {
         <span style={{ textAlign: "right", width: 46 }}>
           <div style={{ fontSize: 11.5, color: C.text, fontWeight: 600 }}>{m.taxa_presenca != null ? fmtPct(m.taxa_presenca) : "—"}</div>
           <div style={{ fontSize: 9, color: C.dim }}>presença</div>
+        </span>
+        <span style={{ textAlign: "right", width: 50 }}>
+          <div style={{ fontSize: 11.5, color: aniver ? C.gold : C.text, fontWeight: aniver ? 700 : 600 }}>{aniversarioDiaMes(m.data_nascimento)}</div>
+          <div style={{ fontSize: 9, color: C.dim }}>nasc.</div>
         </span>
         <span style={{ textAlign: "right", width: 54 }}>
           <div style={{ fontSize: 11.5, color: cor, fontWeight: 600 }}>{dataCurta(m.vence_em)}</div>
@@ -9060,10 +9080,21 @@ function CentralMaestros({ notificar }) {
   // traz); os contadores de VALIDADE vêm da vw_pedagogico_maestros_kpis,
   // mesma fonte do selo por linha.
   const listaMaestros = useMemo(() => {
-    const arr = [...(maestros.data ?? [])].sort((a, b) => Number(b.total_investido ?? 0) - Number(a.total_investido ?? 0));
+    // aniversariantes do mês sobem ao topo (destaque); depois, por investido.
+    const arr = [...(maestros.data ?? [])].sort((a, b) => {
+      if (!!b.aniversaria_mes !== !!a.aniversaria_mes) return b.aniversaria_mes ? 1 : -1;
+      return Number(b.total_investido ?? 0) - Number(a.total_investido ?? 0);
+    });
     if (statusMaestro === "todos") return arr;
     return arr.filter((m) => String(m.status_maestria ?? "").trim().toLowerCase() === statusMaestro);
   }, [maestros.data, statusMaestro]);
+  // Aniversariantes do mês corrente (independe do filtro de validade).
+  const aniversariantes = useMemo(
+    () => (maestros.data ?? []).filter((m) => m.aniversaria_mes)
+      .sort((a, b) => Number(a.dia_nascimento ?? 99) - Number(b.dia_nascimento ?? 99)),
+    [maestros.data]
+  );
+  const mesAtualNome = MESES[new Date().getMonth()] ?? "";
   const maestrosKpi = useMemo(() => {
     const arr = maestros.data ?? [];
     const ativos = arr.filter((m) => m.ativo).length;
@@ -9100,6 +9131,18 @@ function CentralMaestros({ notificar }) {
           opcoes={[{ key: "todos", label: "Todos" }, { key: "perto de vencer", label: "Perto de vencer" }, { key: "vencido", label: "Vencidos" }, { key: "válido", label: "Válidos" }]} />
         <span style={{ fontSize: 10.5, color: C.faint }}>{numero(listaMaestros.length)} {listaMaestros.length === 1 ? "maestro" : "maestros"}</span>
       </div>
+
+      {/* Destaque dos aniversariantes do mês — gancho de relacionamento da gestora. */}
+      {aniversariantes.length > 0 && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8, padding: "9px 12px", borderRadius: 10, background: `${C.gold}14`, border: `1px solid ${C.gold}44` }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: C.gold, fontWeight: 800, fontSize: 12, whiteSpace: "nowrap" }}>
+            <Gift size={14} /> Aniversariantes de {String(mesAtualNome).toLowerCase()}
+          </span>
+          <span style={{ fontSize: 11.5, color: C.text }}>
+            {aniversariantes.map((m) => `${m.como_gosta_ser_chamado || m.nome} (${aniversarioDiaMes(m.data_nascimento)})`).join("  ·  ")}
+          </span>
+        </div>
+      )}
 
       <div className="rolagem" style={{ maxHeight: 460, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
         <Estado carregando={maestros.isLoading} erro={maestros.error} vazio={!listaMaestros.length}
