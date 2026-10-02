@@ -23,6 +23,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 
 import requests
 from pypdf import PdfReader, PdfWriter
@@ -78,6 +79,31 @@ def sb_grava_envio(row, status, doc_id=None, link=None, erro=None):
     )
     if not r.ok:
         log(f"  ! falha ao gravar contrato_envio: {r.status_code} {r.text[:200]}")
+
+
+def sb_marca_integracao(registros, status="ok", mensagem=None):
+    """Heartbeat na integracao_status para a Central de APIs enxergar o disparo
+    (fonte 'autentique'). So em rodada de producao — dry-run/teste nao marca."""
+    corpo = {
+        "fonte": "autentique",
+        "nome_exibicao": "Contratos (Autentique)",
+        "ultima_sync": datetime.now(timezone.utc).isoformat(),
+        "registros": registros,
+        "status": status,
+        "mensagem": mensagem,
+    }
+    try:
+        r = requests.post(
+            f"{SB_URL}/rest/v1/integracao_status?on_conflict=fonte",
+            headers={"apikey": SB_KEY, "Authorization": f"Bearer {SB_KEY}",
+                     "Content-Type": "application/json",
+                     "Prefer": "resolution=merge-duplicates,return=minimal"},
+            data=json.dumps(corpo), timeout=60,
+        )
+        if not r.ok:
+            log(f"  ! falha heartbeat integracao_status: {r.status_code} {r.text[:200]}")
+    except Exception as e:
+        log(f"  ! heartbeat integracao_status: {e}")
 
 
 # ---------------------------------------------------------------- Ficha (VF)
@@ -187,6 +213,9 @@ def main():
                     help="envio real de teste: manda pra ESTE telefone (nao pro cliente)")
     args = ap.parse_args()
     load_env()
+    # rodada de producao de verdade: so ela marca o heartbeat na Central de APIs
+    # (dry-run, --venda e envios de teste nao sujam o status da integracao).
+    producao = not (args.dry_run or args.email_teste or args.telefone_teste or args.venda)
 
     sf = Salesforce()
     base = vf_base(sf.instance)
@@ -206,6 +235,8 @@ def main():
         pend = sb_get_pendentes(args.limite)
     log(f"vendas pendentes: {len(pend)}")
     if not pend:
+        if producao:
+            sb_marca_integracao(0, "ok", "sem contratos pendentes")
         return 0
 
     contrato = contrato_limpo()
@@ -252,6 +283,9 @@ def main():
             erros += 1
 
     log(f"FIM: {enviados} processado(s), {erros} erro(s)")
+    if producao:
+        sb_marca_integracao(enviados, "erro" if erros else "ok",
+                            f"{enviados} enviado(s), {erros} erro(s)")
     return 0
 
 
