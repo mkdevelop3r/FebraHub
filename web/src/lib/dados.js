@@ -859,6 +859,28 @@ export function useTurmaInscritos(turmaId) {
   });
 }
 
+export function useTurmaRepresados(turmaId) {
+  return useQuery({
+    queryKey: ["turma_represados", turmaId],
+    enabled: turmaId != null,
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase.from("vw_turma_represados")
+        .select("*").eq("turma_id", turmaId).order("nome");
+      if (error) throw error;
+      return (data ?? []).map((r) => ({ ...r, pode_confirmar_manualmente: true }));
+    },
+  });
+}
+
+export async function marcarRespostaRepresado(alunoId, turmaId, resposta) {
+  const { data, error } = await supabase.rpc("marcar_resposta_represado", {
+    p_aluno_id: alunoId, p_turma_id: turmaId, p_resposta: resposta,
+  });
+  if (error) throw error;
+  return data;
+}
+
 /* ENFILEIRA a mensagem da turma — não envia. Quem envia é o script,
    na rodada seguinte. Devolve { ok, enfileirados, sem_contato,
    mensagem } ou { ok:false, faltando, mensagem } quando falta campo

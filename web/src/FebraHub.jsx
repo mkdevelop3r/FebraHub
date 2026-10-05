@@ -45,7 +45,7 @@ import {
   useMarketingInvestimento, useLojaMetaRealizado,
   useExecutivoReativacao,
   useTurmaDim, useTurmaSugestao,
-  useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, dispararTurma, marcarResposta,
+  useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, useTurmaRepresados, dispararTurma, marcarResposta, marcarRespostaRepresado,
   useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
   useCertificadoTurmas, useCertificadoPresentes, useCertificadoPorAluno, certificadoUrl, dispararCertificados,
   useContratoEnvios, useCancelados,
@@ -8858,6 +8858,9 @@ function DrawerTurmaCentral({ turma, onFechar, notificar }) {
   }, [resumoTurma.data, turma.turma_id]);
   const sug = useTurmaSugestao(dim.data?.sigla, dim.data?.data_inicio, turma.turma_id);
   const inscritos = useTurmaInscritos(turma.turma_id);
+  const represados = useTurmaRepresados(turma.turma_id);
+  const [origemAlunos, setOrigemAlunos] = useState("vendas");
+  const listaAlunos = origemAlunos === "represados" ? represados : inscritos;
   const [tipo, setTipo] = useState("confirmacao");
   const [disparando, setDisparando] = useState(null);
   const [retorno, setRetorno] = useState(null); // o que a função devolveu
@@ -8865,7 +8868,14 @@ function DrawerTurmaCentral({ turma, onFechar, notificar }) {
   const [busca, setBusca] = useState("");
   const [aberta, setAberta] = useState(null);    // linha com as opções abertas
 
-  const resumoTipo = resumo?.[tipo];
+  const resumoTipo = useMemo(() => {
+    const rows = (listaAlunos.data ?? []).filter((r) => r.tipo === tipo);
+    const conta = (situacao) => rows.filter((r) => r.situacao === situacao).length;
+    return { confirmados: conta("confirmado"), nao_vem: conta("nao vem"),
+      sem_resposta: conta("sem resposta"), aguardando_resposta: conta("aguardando resposta"),
+      nao_enfileirados: conta("nao enfileirado"), aguardando_envio: conta("aguardando envio"),
+      sem_contato: rows.filter((r) => r.sem_contato).length };
+  }, [listaAlunos.data, tipo]);
 
   /* Ordem padrão é a de TRABALHO: quem precisa de ação sobe. Erro no envio
      primeiro (alguém tem que consertar), depois quem nunca foi enfileirado,
@@ -8877,12 +8887,12 @@ function DrawerTurmaCentral({ turma, onFechar, notificar }) {
     setOrdem((o) => ({ campo, dir: o.campo === campo ? -o.dir : 1 }));
 
   const doTipo = useMemo(() => {
-    const rows = (inscritos.data ?? []).filter((r) => r.tipo === tipo);
+    const rows = (listaAlunos.data ?? []).filter((r) => r.tipo === tipo);
     const porNome = (a, b) => String(a.nome ?? "").localeCompare(String(b.nome ?? ""), "pt-BR");
     return [...rows].sort((a, b) => ordem.campo === "nome"
       ? ordem.dir * porNome(a, b)
       : ordem.dir * (daSituacao(a.situacao).ordem - daSituacao(b.situacao).ordem) || porNome(a, b));
-  }, [inscritos.data, tipo, ordem]);
+  }, [listaAlunos.data, tipo, ordem]);
 
   /* Filtro do contador + busca. A busca casa nome, CPF (com ou sem
      pontuação — ela digita dos dois jeitos) e telefone. */
@@ -8901,6 +8911,9 @@ function DrawerTurmaCentral({ turma, onFechar, notificar }) {
 
   const recarregar = () => {
     qc.invalidateQueries({ queryKey: ["turma_inscritos", turma.turma_id] });
+    qc.invalidateQueries({ queryKey: ["turma_represados", turma.turma_id] });
+    qc.invalidateQueries({ queryKey: ["view", "vw_represado_lista"] });
+    qc.invalidateQueries({ queryKey: ["view", "vw_turmas_central"] });
     qc.invalidateQueries({ queryKey: ["vw_turma_inscritos_resumo"] });
     qc.invalidateQueries({ queryKey: ["turma_dim", turma.turma_id] });
   };
@@ -8926,7 +8939,11 @@ function DrawerTurmaCentral({ turma, onFechar, notificar }) {
 
   const marcar = async (alunoId, resposta) => {
     try {
-      await marcarResposta(alunoId, turma.turma_id, tipo, resposta);
+      if (origemAlunos === "represados" && tipo === "confirmacao") {
+        await marcarRespostaRepresado(alunoId, turma.turma_id, resposta);
+      } else {
+        await marcarResposta(alunoId, turma.turma_id, tipo, resposta);
+      }
       notificar("Resposta registrada.", "ok");
       recarregar();
     } catch (e) {
@@ -8995,6 +9012,13 @@ function DrawerTurmaCentral({ turma, onFechar, notificar }) {
 
       {/* ---- Inscritos ---- */}
       <div style={{ marginTop: 22 }}>
+        <Segmentado
+          opcoes={[{ key: "vendas", label: "Vendas" }, { key: "represados", label: "Represados" }]}
+          valor={origemAlunos} onChange={(v) => { setOrigemAlunos(v); setFiltro("todos"); setAberta(null); }}
+        />
+        {origemAlunos === "represados" && <p style={{ fontSize: 11, color: C.faint, lineHeight: 1.5 }}>
+          A confirmação manual ou automática mantém o aluno como represado. Você pode confirmar a participação mesmo sem envio anterior.
+        </p>}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
           <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>Inscritos</span>
           {/* Confirmação e grupo são estados independentes: dá pra ter
@@ -9007,11 +9031,11 @@ function DrawerTurmaCentral({ turma, onFechar, notificar }) {
         </div>
 
         <Estado
-          carregando={inscritos.isLoading}
-          erro={inscritos.error}
+          carregando={listaAlunos.isLoading}
+          erro={listaAlunos.error}
           vazio={!doTipo.length}
-          vazioTitulo="Nenhuma matrícula aprovada nesta turma"
-          vazioDica="A lista sai das matrículas aprovadas. Compradores de vaga ficam de fora — eles não são alunos."
+          vazioTitulo={origemAlunos === "represados" ? "Nenhum represado para esta turma" : "Nenhuma matrícula aprovada nesta turma"}
+          vazioDica={origemAlunos === "represados" ? "Represados confirmados continuam nesta aba." : "As vendas desta turma ficam separadas dos represados."}
         >
           <FaixaContadores resumo={resumoTipo} total={doTipo.length} filtro={filtro} onFiltrar={setFiltro} />
 
@@ -9035,7 +9059,7 @@ function DrawerTurmaCentral({ turma, onFechar, notificar }) {
             </div>
           ) : (
             <TabelaInscritos
-              linhas={visiveis}
+              linhas={visiveis.map((r) => ({ ...r, pode_confirmar_manualmente: origemAlunos === "represados" && tipo === "confirmacao" }))}
               ordem={ordem}
               onOrdenar={ordenarPor}
               aberta={aberta}
@@ -9625,7 +9649,7 @@ function CentralRepresados({ notificar }) {
         erro={lista.error}
         vazio={!linhas.length}
         vazioTitulo="Ninguém represado agora"
-        vazioDica="Represado é quem comprou, ainda está dentro da validade de um ano e tem turma disponível antes de vencer. Lista vazia quer dizer que todo mundo nessa situação já foi alocado."
+        vazioDica="A lista considera matrículas anteriores ainda válidas e sem presença. Represados confirmados continuam aqui; vendas de turmas futuras ficam na aba de vendas."
       >
         {/* A data da carga fica junto do número: represado sem ela convida à
             decisão errada — dado velho passa por atual. */}
@@ -10085,7 +10109,7 @@ function TabelaInscritos({ linhas, ordem, onOrdenar, aberta, onAbrir, onMarcar }
    toda linha. Nada de modal: ela marca várias em sequência. */
 function LinhaInscrito({ r, ultima, aberta, onAbrir, onMarcar }) {
   const s = daSituacao(r.situacao);
-  const naFila = String(r.situacao ?? "") !== "nao enfileirado";
+  const naFila = r.pode_confirmar_manualmente || String(r.situacao ?? "") !== "nao enfileirado";
   const anonimo = semCadastro(r);
   const zap = r.sem_contato ? null : linkWhatsapp(r.telefone);
   const naMao = r.resposta_origem === "hub";

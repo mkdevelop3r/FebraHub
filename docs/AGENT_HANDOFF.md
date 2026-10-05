@@ -1455,3 +1455,11 @@ gravadas.
   `pg_cron` executou sozinho às 11h15, encontrou a fila vazia e registrou status
   `ok`. O `schedule` foi removido de `mensagens-pedagogico.yml`; o workflow
   permanece disponível apenas por `workflow_dispatch` como contingência.
+
+### Codex — 05/10/2026 — Represados separados de vendas na turma
+
+- Migration 203 aplicada ao Supabase bcorkfhfjfurlvggzgco. Confirmação não remove o aluno da classificação represada; matrículas da turma futura e presença oficial ficam fora dos represados.
+- Aba Represados no drawer da turma, separada de Vendas, com contadores próprios e confirmação manual mesmo sem envio anterior. A função do script atual e evidências de entrada no grupo alimentam o mesmo status automaticamente.
+- A origem represada é preservada nas respostas manuais e automáticas. Confirmados não são reenfileirados pelo disparo de represados. Nenhuma matrícula comercial alterada.
+- Testes SQL transacionais com rollback passaram: manual, negativa, registrar_respostas do script e separação de Brenno/Lilian/Julio. Build da versão atual main com a alteração passou (6,44s); diff --check passou.
+- Publicação autorizada pelo usuário nesta conversa em 05/10/2026. Alteração portada sobre main 1924584 para preservar as demais melhorias do sistema. Nenhuma migration pendente desta tarefa.
