@@ -78,13 +78,28 @@ CRM_API = "https://services.leadconnectorhq.com"
 
 # IDs, não fieldKey. A API do LeadConnector devolve 400 quando recebe
 # "contact.pedagogico_curso" no lugar do id.
-CAMPO_CURSO = "aEypUKJotJp6CNa9qkjm"   # Pedagogico Curso
-CAMPO_PRAZO = "hgKOTXvRxnNxFiULiRFi"   # Pedagogico Prazo
-CAMPO_PROXIMA = "oGv3CqcWa4lUekDI9Wap" # Pedagogico Proxima Turma
-CAMPO_DATAS = "qjFuniXeOdO812RlO3k4"   # Pedagogico Datas
-CAMPO_HORARIOS = "NO62an9Rmr7izspnABUG" # Pedagogico Horarios
-CAMPO_CREDENC = "Xjza3zFQ0KqopHqFVoJv" # Pedagogico Credenciamento
-CAMPO_LINK = "fXr7R9YN5Jz7Hv14RoHm"    # Pedagogico Link Grupo
+CAMPO_FALLBACK = {
+    "curso": "aEypUKJotJp6CNa9qkjm",
+    "prazo": "hgKOTXvRxnNxFiULiRFi",
+    "proxima": "oGv3CqcWa4lUekDI9Wap",
+    "datas": "qjFuniXeOdO812RlO3k4",
+    "horarios": "NO62an9Rmr7izspnABUG",
+    "credenciamento": "Xjza3zFQ0KqopHqFVoJv",
+    "link_grupo": "fXr7R9YN5Jz7Hv14RoHm",
+}
+CAMPO_CHAVES = {
+    "curso": "contact.pedagogico_curso",
+    "prazo": "contact.pedagogico_prazo",
+    "proxima": "contact.pedagogico_proxima_turma",
+    "datas": "contact.pedagogico_datas",
+    "horarios": "contact.pedagogico_horarios",
+    "credenciamento": "contact.pedagogico_credenciamento",
+    "link_grupo": "contact.pedagogico_link_grupo",
+    "local": "contact.pedagogico_local",
+    "endereco": "contact.pedagogico_endereco",
+}
+CAMPOS_CRM = dict(CAMPO_FALLBACK)
+TURMAS_CACHE = {}
 
 TAG_BOAS_VINDAS = "pedagogico boas-vindas"
 TAG_PRAZO = "pedagogico prazo"
@@ -111,6 +126,57 @@ def erro_com_corpo(r):
     if not r.ok:
         raise RuntimeError(f"{r.status_code} {r.text[:400]}")
     return r
+
+
+def resolver_campos_crm(obrigatorios=()):
+    """Resolve fieldKey -> id no CRM para nao depender de IDs recriados."""
+    obrigatorios = tuple(obrigatorios)
+    if any(not CAMPOS_CRM.get(nome) for nome in obrigatorios):
+        r = erro_com_corpo(requests.get(
+            f"{CRM_API}/locations/{CRM_LOCATION}/customFields",
+            headers=CRM, timeout=30))
+        campos = r.json().get("customFields") or r.json().get("fields") or []
+        por_chave = {
+            str(c.get("fieldKey") or "").strip().lower(): c.get("id")
+            for c in campos if c.get("id")
+        }
+        for nome, chave in CAMPO_CHAVES.items():
+            cid = por_chave.get(chave.lower()) or os.environ.get(
+                f"CRM_CAMPO_{nome.upper()}_ID") or CAMPO_FALLBACK.get(nome)
+            if cid:
+                CAMPOS_CRM[nome] = cid
+
+    faltando = [nome for nome in obrigatorios if not CAMPOS_CRM.get(nome)]
+    if faltando:
+        raise RuntimeError(
+            "campos personalizados ausentes no CRM: " + ", ".join(faltando))
+    return CAMPOS_CRM
+
+
+def dados_turma(turma_id):
+    """Busca os campos editaveis direto da dim_turmas e guarda em cache."""
+    if not turma_id:
+        return {}
+    if turma_id not in TURMAS_CACHE:
+        r = erro_com_corpo(requests.get(
+            f"{SUPABASE_URL}/rest/v1/dim_turmas", headers=SB,
+            params={
+                "select": "turma_id,curso,nome_comercial,data_inicio,data_fim,"
+                          "horario_credenciamento,horario_inicio,horario_fim,"
+                          "local,endereco,link_grupo",
+                "turma_id": f"eq.{turma_id}", "limit": 1,
+            }, timeout=60))
+        linhas = r.json()
+        TURMAS_CACHE[turma_id] = linhas[0] if linhas else {}
+    return TURMAS_CACHE[turma_id]
+
+
+def completar_dados_turma(linha):
+    turma = dados_turma(linha.get("turma_id"))
+    combinado = {**linha, **{k: v for k, v in turma.items() if v is not None}}
+    combinado["curso"] = (turma.get("nome_comercial") or
+                           turma.get("curso") or linha.get("curso"))
+    return combinado
 
 
 def ler_fila(view, limite):
@@ -152,7 +218,8 @@ def data_br(iso):
 
 
 def upsert_contato(nome, telefone, email, curso, prazo=None, proxima=None,
-                   datas=None, horarios=None, credenciamento=None, link_grupo=None):
+                   datas=None, horarios=None, credenciamento=None, link_grupo=None,
+                   local=None, endereco=None):
     """Cria ou atualiza o contato com os campos que o template usa.
 
     Devolve o contactId. O upsert deduplica por telefone/e-mail, então
@@ -162,17 +229,23 @@ def upsert_contato(nome, telefone, email, curso, prazo=None, proxima=None,
     de turma de propósito: a turma da venda é frequentemente uma que o
     cliente nunca combinou.
     """
-    campos = [{"id": CAMPO_CURSO, "field_value": curso or ""}]
+    ids = resolver_campos_crm(("curso",))
+    valores = {"curso": curso or ""}
     if prazo:
-        campos.append({"id": CAMPO_PRAZO, "field_value": data_br(prazo)})
+        valores["prazo"] = data_br(prazo)
     if proxima:
-        campos.append({"id": CAMPO_PROXIMA, "field_value": data_br(proxima)})
-    for cid_campo, valor in ((CAMPO_DATAS, datas),
-                             (CAMPO_HORARIOS, horarios),
-                             (CAMPO_CREDENC, credenciamento),
-                             (CAMPO_LINK, link_grupo)):
+        valores["proxima"] = data_br(proxima)
+    for nome_campo, valor in (("datas", datas),
+                              ("horarios", horarios),
+                              ("credenciamento", credenciamento),
+                              ("link_grupo", link_grupo),
+                              ("local", local),
+                              ("endereco", endereco)):
         if valor:
-            campos.append({"id": cid_campo, "field_value": valor})
+            valores[nome_campo] = valor
+    resolver_campos_crm(valores)
+    campos = [{"id": ids[nome_campo], "field_value": valor}
+              for nome_campo, valor in valores.items()]
 
     corpo = {"locationId": CRM_LOCATION, "customFields": campos}
     if nome:
@@ -188,7 +261,37 @@ def upsert_contato(nome, telefone, email, curso, prazo=None, proxima=None,
     r = erro_com_corpo(requests.post(f"{CRM_API}/contacts/upsert",
                                      headers=CRM, json=corpo, timeout=30))
     d = r.json()
-    return (d.get("contact") or {}).get("id") or d.get("id")
+    contact_id = (d.get("contact") or {}).get("id") or d.get("id")
+    if contact_id:
+        aguardar_campos_contato(contact_id, valores)
+    return contact_id
+
+
+def aguardar_campos_contato(contact_id, esperados):
+    """So libera a tag depois que o GET do CRM devolver todos os valores."""
+    ids = resolver_campos_crm(esperados)
+    esperados_id = {ids[nome]: str(valor).strip()
+                    for nome, valor in esperados.items()}
+    ultimo = {}
+    for tentativa in range(4):
+        if tentativa:
+            time.sleep(0.75 * (2 ** (tentativa - 1)))
+        r = erro_com_corpo(requests.get(
+            f"{CRM_API}/contacts/{contact_id}", headers=CRM, timeout=30))
+        contato = r.json().get("contact") or r.json()
+        campos = contato.get("customFields") or []
+        ultimo = {
+            str(c.get("id")): str(c.get("field_value", c.get("fieldValue",
+                c.get("value", "")))).strip()
+            for c in campos if c.get("id")
+        }
+        pendentes = [cid for cid, valor in esperados_id.items()
+                     if ultimo.get(cid) != valor]
+        if not pendentes:
+            return
+    nomes = [nome for nome in esperados if ultimo.get(ids[nome]) !=
+             str(esperados[nome]).strip()]
+    raise RuntimeError("CRM nao confirmou os campos: " + ", ".join(nomes))
 
 
 def tag_turma(turma_id):
@@ -243,12 +346,12 @@ def periodo(de, ate):
 
 
 def horario_faixa(ini, fim):
-    """'9h' + '22h' -> 'das 9h às 22h'. Só o início se não houver fim."""
+    """'9h' + '22h' -> '9h às 22h'. O template ja escreve 'das'."""
     ini = (ini or "").strip()
     fim = (fim or "").strip()
     if not ini:
         return ""
-    return f"das {ini} às {fim}" if fim else f"a partir das {ini}"
+    return f"{ini} às {fim}" if fim else ini
 
 
 def buscar_contato(telefone, email):
@@ -357,6 +460,8 @@ def processar(view, tag, funcao_registro, monta_campos, exige=()):
     ok = falhas = sem_registro = pulados = 0
 
     for linha in fila:
+        if view == "vw_turma_fila_envio":
+            linha = completar_dados_turma(linha)
         rotulo = linha.get("nome") or linha.get("aluno_id")
         cid = None
 
@@ -446,8 +551,11 @@ def main():
                 "horarios": horario_faixa(l.get("horario_inicio"), l.get("horario_fim")),
                 "credenciamento": l.get("horario_credenciamento"),
                 "link_grupo": l.get("link_grupo"),
+                "local": l.get("local"),
+                "endereco": l.get("endereco"),
             },
-            exige=("link_grupo",),
+            exige=("curso", "datas", "horarios", "credenciamento",
+                   "local", "endereco", "link_grupo"),
         )
 
     if FILA in {"todas", "prazo"}:
