@@ -580,6 +580,13 @@ def main():
 
 if __name__ == "__main__":
     try:
+        if "--validar-campos" in sys.argv:
+            campos = resolver_campos_crm(CAMPOS_TURMA_OBRIGATORIOS)
+            log(
+                "campos pedagogicos validados no CRM: "
+                + ", ".join(sorted(campos))
+            )
+            sys.exit(0)
         if "--diagnostico-respostas" in sys.argv:
             colher_respostas(diagnostico=True)
             sys.exit(0)

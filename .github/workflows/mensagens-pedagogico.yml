@@ -21,6 +21,11 @@ on:
         required: true
         type: number
         default: 10
+      somente_validar_campos:
+        description: Validar token e campos sem enviar mensagens
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   # Compartilhado com o disparo manual de represados: duas rotinas nunca
@@ -41,7 +46,17 @@ jobs:
       - name: Instalar dependencias
         run: pip install -r etl/requirements.txt
 
+      - name: Validar token e campos pedagogicos
+        if: github.event_name == 'workflow_dispatch' && inputs.somente_validar_campos
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          CRM_TOKEN: ${{ secrets.CRM_TOKEN }}
+          CRM_LOCATION_ID: ${{ secrets.CRM_LOCATION_ID }}
+        run: python etl/pedagogico_mensagens.py --validar-campos
+
       - name: Enviar boas-vindas pendentes
+        if: github.event_name != 'workflow_dispatch' || !inputs.somente_validar_campos
         id: mensagens_boas
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -56,6 +71,7 @@ jobs:
         run: python etl/pedagogico_mensagens.py
 
       - name: Enviar confirmacoes e links de grupo pendentes
+        if: github.event_name != 'workflow_dispatch' || !inputs.somente_validar_campos
         id: mensagens_turma
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
