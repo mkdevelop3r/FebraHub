@@ -105,6 +105,10 @@ TAG_BOAS_VINDAS = "pedagogico boas-vindas"
 TAG_PRAZO = "pedagogico prazo"
 TAG_CONFIRMACAO = "pedagogico:confirmacao"
 TAG_GRUPO = "pedagogico:grupo"
+CAMPOS_TURMA_OBRIGATORIOS = (
+    "curso", "datas", "horarios", "credenciamento",
+    "local", "endereco", "link_grupo",
+)
 
 # Tags de volta aplicadas pelo workflow do CRM conforme a resposta do aluno.
 TAG_RESPOSTA = {
@@ -538,6 +542,7 @@ def main():
     # botão "Salvar turma" — ela decide o momento, o script só entrega.
     # Por isso a tag varia por linha: a mesma view traz os dois tipos.
     if FILA in {"todas", "turma"}:
+        resolver_campos_crm(CAMPOS_TURMA_OBRIGATORIOS)
         processar(
             "vw_turma_fila_envio",
             lambda l: TAG_CONFIRMACAO if l["tipo"] == "confirmacao" else TAG_GRUPO,
@@ -554,8 +559,7 @@ def main():
                 "local": l.get("local"),
                 "endereco": l.get("endereco"),
             },
-            exige=("curso", "datas", "horarios", "credenciamento",
-                   "local", "endereco", "link_grupo"),
+            exige=CAMPOS_TURMA_OBRIGATORIOS,
         )
 
     if FILA in {"todas", "prazo"}:
