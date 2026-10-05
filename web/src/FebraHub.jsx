@@ -45,7 +45,7 @@ import {
   useMarketingInvestimento, useLojaMetaRealizado,
   useExecutivoReativacao,
   useTurmaDim, useTurmaSugestao,
-  useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, useTurmaRepresados, dispararTurma, marcarResposta, marcarRespostaRepresado,
+  useTurmasCentral, useTurmaInscritosResumo, useTurmaInscritos, useTurmaRepresados, dispararTurma, dispararTurmaRepresados, marcarResposta, marcarRespostaRepresado,
   useRepresadoLista, dispararRepresados, salvarContatoManual, usePresencaSaude, useTurmasMensuraveis, usePresencaCobertura,
   useCertificadoTurmas, useCertificadoPresentes, useCertificadoPorAluno, certificadoUrl, dispararCertificados,
   useContratoEnvios, useCancelados,
@@ -8924,7 +8924,8 @@ function DrawerTurmaCentral({ turma, onFechar, notificar }) {
   const disparar = async (qual) => {
     setDisparando(qual); setRetorno(null);
     try {
-      const r = await dispararTurma(turma.turma_id, qual);
+      const enviar = origemAlunos === 'represados' ? dispararTurmaRepresados : dispararTurma;
+      const r = await enviar(turma.turma_id, qual);
       setRetorno({ ...r, tipo: qual });
       notificar(r?.mensagem ?? "Pronto.", r?.ok === false ? "erro" : "ok");
       if (r?.ok !== false) recarregar();
@@ -8966,10 +8967,10 @@ function DrawerTurmaCentral({ turma, onFechar, notificar }) {
         <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".4px", textTransform: "uppercase", color: C.dim }}>Mensagens</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <BotaoSalvar onClick={() => disparar("confirmacao")} salvando={disparando === "confirmacao"} disabled={!!disparando}>
-            Enviar confirmação
+            Enviar confirmação {origemAlunos === "represados" ? "aos represados" : "às vendas"}
           </BotaoSalvar>
           <BotaoSalvar onClick={() => disparar("grupo")} salvando={disparando === "grupo"} disabled={!!disparando}>
-            Enviar link do grupo
+            Enviar link do grupo {origemAlunos === "represados" ? "aos represados" : "às vendas"}
           </BotaoSalvar>
         </div>
         <div style={{ fontSize: 10.5, color: C.faint, lineHeight: 1.5 }}>

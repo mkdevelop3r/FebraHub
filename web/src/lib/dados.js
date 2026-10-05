@@ -886,6 +886,12 @@ export async function marcarRespostaRepresado(alunoId, turmaId, resposta) {
    mensagem } ou { ok:false, faltando, mensagem } quando falta campo
    no cadastro. A tela mostra `mensagem` direto, sem reescrever: é o
    que impede mensagem truncada chegar no cliente. */
+export async function dispararTurmaRepresados(turmaId, tipo) {
+  const { data, error } = await supabase.rpc("disparar_turma_represados", { p_turma_id: turmaId, p_tipo: tipo });
+  if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
+  return data;
+}
+
 export async function dispararTurma(turmaId, tipo) {
   const { data, error } = await supabase.rpc("disparar_turma", { p_turma_id: turmaId, p_tipo: tipo });
   if (error) { const e = new Error(error.message); e.code = error.code; throw e; }
