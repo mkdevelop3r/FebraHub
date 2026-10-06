@@ -408,6 +408,12 @@ export const useMarketingOrigemVendas = () =>
 export const useMarketingCampanhaResultado = () =>
   useView("vw_mkt_campanha_resultado", { ordem: ["gasto"] });
 
+/* O acumulado nao mostra se a campanha continua respirando. Uma linha por
+   campanha+dia sustenta Hoje, 7 dias e 7 dias anteriores sem estimar a
+   distribuicao do total. */
+export const useMarketingCampanhaLeadsDiario = () =>
+  useView("vw_mkt_campanha_leads_diario", { ordem: ["campanha_nome", "dia"] });
+
 /* RESULTADO DA CAMPANHA DE EVENTO (db/193).
 
    Mede o retorno em CURSO vendido a quem se inscreveu, nunca em ingresso: o

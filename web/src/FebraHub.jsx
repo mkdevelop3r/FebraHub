@@ -34,7 +34,7 @@ import {
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingSaudeCaptacao,
-  useMarketingCampanhaResultado, useMarketingEventoResultado,
+  useMarketingCampanhaResultado, useMarketingCampanhaLeadsDiario, useMarketingEventoResultado,
   useMarketingOrigemSemMapa,
   usePedagogicoKpis, usePedagogicoKpisPeriodo, usePedagogicoPresencaKpis, usePedagogicoPresencaTempo,
   usePedagogicoRecompraCurso, usePedagogicoNaoFizeramCurso,
@@ -4793,9 +4793,10 @@ function HubMarketing() {
   const per = usePeriodo();
   const saude = useMarketingSaudeCaptacao();
   const lead = useMarketingCampanhaResultado();
+  const leadDiario = useMarketingCampanhaLeadsDiario();
   const evento = useMarketingEventoResultado();
   const semMapa = useMarketingOrigemSemMapa();
-  const consultas = [saude, lead, evento, semMapa];
+  const consultas = [saude, lead, leadDiario, evento, semMapa];
   const [semMapaAberto, setSemMapaAberto] = useState(false);
 
   /* A campanha entra no recorte se a VEICULAÇÃO tocou o período. Filtrar pela
@@ -4806,6 +4807,35 @@ function HubMarketing() {
     const c1 = String(c.terminou ?? "").slice(0, 10);
     return c0 && c1 && c0 <= per.fim && c1 >= per.inicio;
   };
+
+  const ritmoPorCampanha = useMemo(() => {
+    const chaveHoje = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "America/Bahia", year: "numeric", month: "2-digit", day: "2-digit",
+    }).format(new Date());
+    const desloca = (dias) => {
+      const d = new Date(`${chaveHoje}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + dias);
+      return d.toISOString().slice(0, 10);
+    };
+    const ontem = desloca(-1);
+    const inicio7 = desloca(-6);
+    const fim7Anterior = desloca(-7);
+    const inicio7Anterior = desloca(-13);
+    const grupos = new Map();
+    for (const r of leadDiario.data ?? []) {
+      const nome = r.campanha_nome;
+      const dia = String(r.dia ?? "").slice(0, 10);
+      const n = Number(r.leads ?? 0);
+      const a = grupos.get(nome) ?? { hoje: 0, ontem: 0, ultimos7: 0, anteriores7: 0, ultimo: null };
+      if (dia === chaveHoje) a.hoje += n;
+      if (dia === ontem) a.ontem += n;
+      if (dia >= inicio7 && dia <= chaveHoje) a.ultimos7 += n;
+      if (dia >= inicio7Anterior && dia <= fim7Anterior) a.anteriores7 += n;
+      if (!a.ultimo || dia > a.ultimo) a.ultimo = dia;
+      grupos.set(nome, a);
+    }
+    return grupos;
+  }, [leadDiario.data]);
 
   const linhas = useMemo(() => {
     const eventos = (evento.data ?? []).filter(tocaOPeriodo);
@@ -4840,6 +4870,7 @@ function HubMarketing() {
         unitario: c.cpl == null ? null : Number(c.cpl),
         parcial: false, dias: null,
         jaAlunos: Number(c.ja_eram_alunos ?? 0),
+        ritmo: ritmoPorCampanha.get(c.campanha_nome) ?? null,
         semMapa: !!c.sem_de_para,
         // Sem de-para PORQUE a fonte não alcança — não porque falta trabalho.
         // Fica cinza e fora do alerta; ver INICIO_DO_RASTREIO.
@@ -4853,7 +4884,7 @@ function HubMarketing() {
       if (a.semMapa !== b.semMapa) return a.semMapa ? 1 : -1;
       return (b.retorno ?? -1) - (a.retorno ?? -1);
     });
-  }, [lead.data, evento.data, per.inicio, per.fim]);
+  }, [lead.data, leadDiario.data, evento.data, per.inicio, per.fim, ritmoPorCampanha]);
 
   const totais = useMemo(() => linhas.reduce((a, l) => ({
     gasto: a.gasto + l.gasto,
@@ -4996,6 +5027,16 @@ function HubMarketing() {
                           <span style={{ color: C.dim }}> · {numero(l.jaAlunos)} já eram alunos</span>
                         )}
                       </div>
+                      {l.tipo === "lead" && !l.semMapa && (
+                        <div style={{ fontSize: 10, color: C.muted, marginTop: 2,
+                                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                          Hoje <b style={{ color: C.bright }}>{numero(l.ritmo?.hoje ?? 0)}</b>
+                          {" · "}ontem <b style={{ color: C.bright }}>{numero(l.ritmo?.ontem ?? 0)}</b>
+                          {" · "}7 dias <b style={{ color: C.gold }}>{numero(l.ritmo?.ultimos7 ?? 0)}</b>
+                          {" · "}7 anteriores <b style={{ color: C.bright }}>{numero(l.ritmo?.anteriores7 ?? 0)}</b>
+                          {" · "}último {l.ritmo?.ultimo ? dataBR(l.ritmo.ultimo) : "—"}
+                        </div>
+                      )}
                     </div>
                     <div style={{ fontFamily: GROTESK, fontSize: 12, color: C.muted, textAlign: "right" }}>
                       {moeda(l.gasto)}
