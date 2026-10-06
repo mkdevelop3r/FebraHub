@@ -199,11 +199,15 @@ def busca_link(doc_id):
             timeout=60,
         )
         dados = r.json()
+        if dados.get("errors"):
+            log(f"  ! query errors ({doc_id}): {json.dumps(dados['errors'])[:300]}")
         sigs = (((dados.get("data") or {}).get("document") or {}).get("signatures")) or []
         for s in sigs:
             sl = (s.get("link") or {}).get("short_link")
             if sl:
                 return sl
+        if os.getenv("CONTRATO_DEBUG"):
+            log(f"  ? sem short_link ({doc_id}): {json.dumps(sigs)[:400]}")
     except Exception as e:
         log(f"  ! nao consegui buscar link do doc {doc_id}: {e}")
     return None
