@@ -1,15 +1,11 @@
 # Contratos GGB - Fase 2: gera (contrato + ficha) e envia pelo Autentique.
-# Comeca MANUAL. Deixe "dry_run" marcado pra testar ficha+merge sem enviar nada.
-# Quando validar, desmarque dry_run pra enviar de verdade (precisa do secret
-# AUTENTIQUE_TOKEN). O agendamento (rodar sozinho) entra depois do ok.
+# O pg_cron do Supabase chama este workflow em producao. No disparo manual,
+# deixe "dry_run" marcado para testar ficha+merge sem enviar nada.
 name: Disparar contratos (GGB)
 
 on:
-  schedule:
-    # 10:00, 13:00, 16:00 e 21:00 de Salvador (UTC-3) = 13/16/19/00 UTC.
-    # Rodada automatica = envio REAL (sem dry-run), processa a fila de vendas
-    # GGB pendentes.
-    - cron: '0 0,13,16,19 * * *'
+  # O relogio confiavel e o pg_cron do Supabase (db/234), que chama este
+  # workflow 5 min depois de cada sync Salesforce. Aqui fica so a entrada.
   workflow_dispatch:
     inputs:
       dry_run:
