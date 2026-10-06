@@ -34,7 +34,7 @@ import {
   useLojaProdutosVendidosMes, useLojaEstoque, useLojaPerformanceCurso,
   useMarketingResumoMensal, useMarketingDesempenho, useMarketingOrigemVendas,
   useMarketingSaudeCaptacao,
-  useMarketingCampanhaResultado, useMarketingCampanhaLeadsDiario, useMarketingEventoResultado,
+  useMarketingCampanhaResultado, useMarketingCampanhaLeadsDiario, useMarketingLeadsCampanhasAtivas, useMarketingEventoResultado,
   useMarketingOrigemSemMapa,
   usePedagogicoKpis, usePedagogicoKpisPeriodo, usePedagogicoPresencaKpis, usePedagogicoPresencaTempo,
   usePedagogicoRecompraCurso, usePedagogicoNaoFizeramCurso,
@@ -4794,10 +4794,13 @@ function HubMarketing() {
   const saude = useMarketingSaudeCaptacao();
   const lead = useMarketingCampanhaResultado();
   const leadDiario = useMarketingCampanhaLeadsDiario();
+  const operacao = useMarketingLeadsCampanhasAtivas();
   const evento = useMarketingEventoResultado();
   const semMapa = useMarketingOrigemSemMapa();
-  const consultas = [saude, lead, leadDiario, evento, semMapa];
+  const consultas = [saude, lead, leadDiario, operacao, evento, semMapa];
   const [semMapaAberto, setSemMapaAberto] = useState(false);
+  const [abaMarketing, setAbaMarketing] = useState("resultado");
+  const [campanhaOperacao, setCampanhaOperacao] = useState("todas");
 
   /* A campanha entra no recorte se a VEICULAÇÃO tocou o período. Filtrar pela
      data de início excluiria campanha que começou antes e ainda está no ar —
@@ -4898,6 +4901,26 @@ function HubMarketing() {
   const alerta = saude.data?.[0];
   const retornoGeral = totais.gasto > 0 ? totais.receita / totais.gasto : null;
   const semMapaLista = semMapa.data ?? [];
+  const campanhasAtivas = useMemo(() => [...new Set(
+    (operacao.data ?? []).map((l) => l.campanha_nome).filter(Boolean)
+  )].sort(), [operacao.data]);
+  const leadsOperacao = useMemo(() => (operacao.data ?? []).filter((l) =>
+    campanhaOperacao === "todas" || l.campanha_nome === campanhaOperacao
+  ).sort((a, b) => String(b.criado_em).localeCompare(String(a.criado_em))),
+  [operacao.data, campanhaOperacao]);
+  const resumoOperacao = useMemo(() => leadsOperacao.reduce((a, l) => {
+    a.total += 1;
+    if (l.situacao === "Convertido") a.convertidos += 1;
+    if (l.situacao === "Em atendimento") a.atendimento += 1;
+    if (l.situacao === "Aguardando atendimento") a.aguardando += 1;
+    if (l.minutos_primeiro_atendimento != null) {
+      a.somaMin += Number(l.minutos_primeiro_atendimento); a.medidos += 1;
+    }
+    return a;
+  }, { total: 0, convertidos: 0, atendimento: 0, aguardando: 0, somaMin: 0, medidos: 0 }), [leadsOperacao]);
+  const tempoCurto = (min) => min == null ? "—" : Number(min) < 60
+    ? `${numero(min)} min` : Number(min) < 1440
+      ? `${(Number(min) / 60).toFixed(1)} h` : `${(Number(min) / 1440).toFixed(1)} d`;
 
   return (
     <Estado
@@ -4918,6 +4941,18 @@ function HubMarketing() {
       `}</style>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+        <div style={{ display: "flex", gap: 4, borderBottom: `1px solid ${C.cardLine}` }}>
+          {[["resultado", "Visão geral"], ["operacao", "Campanhas rodando"]].map(([chave, rotulo]) => (
+            <button key={chave} type="button" onClick={() => setAbaMarketing(chave)} style={{
+              border: 0, borderBottom: abaMarketing === chave ? `2px solid ${C.gold}` : "2px solid transparent",
+              background: "transparent", color: abaMarketing === chave ? C.bright : C.muted,
+              padding: "9px 12px", cursor: "pointer", fontFamily: SANS, fontSize: 12, fontWeight: 750,
+            }}>{rotulo}</button>
+          ))}
+        </div>
+
+        {abaMarketing === "resultado" && <>
 
         {alerta?.alerta && (
           <div style={{
@@ -5128,6 +5163,64 @@ function HubMarketing() {
           prejuízo. A venda é ligada por e-mail ou telefone e só conta a partir do
           evento, ou dentro da janela em que a campanha esteve no ar.
         </div>
+        </>}
+
+        {abaMarketing === "operacao" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <select value={campanhaOperacao} onChange={(e) => setCampanhaOperacao(e.target.value)}
+                style={{ minWidth: 280, maxWidth: "100%", padding: "9px 11px", borderRadius: 8,
+                         border: `1px solid ${C.cardLine}`, background: C.card, color: C.text, fontFamily: SANS }}>
+                <option value="todas">Todas as campanhas em veiculação</option>
+                {campanhasAtivas.map((nome) => <option key={nome} value={nome}>{nome}</option>)}
+              </select>
+              <span style={{ color: C.faint, fontSize: 10.5 }}>
+                Em veiculação = teve gasto nos últimos 7 dias
+              </span>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 8 }}>
+              {[
+                ["Leads", resumoOperacao.total, C.bright],
+                ["Aguardando", resumoOperacao.aguardando, C.warn],
+                ["Em atendimento", resumoOperacao.atendimento, C.gold],
+                ["Convertidos", resumoOperacao.convertidos, C.up],
+                ["1º contato médio", tempoCurto(resumoOperacao.medidos ? Math.round(resumoOperacao.somaMin / resumoOperacao.medidos) : null), C.bright],
+              ].map(([rotulo, valor, cor]) => (
+                <div key={rotulo} style={{ padding: "12px 13px", borderRadius: 10, background: C.card, border: `1px solid ${C.cardLine}` }}>
+                  <div style={{ color: C.faint, fontSize: 10, textTransform: "uppercase", letterSpacing: ".05em" }}>{rotulo}</div>
+                  <div style={{ color: cor, fontFamily: GROTESK, fontSize: 20, fontWeight: 800, marginTop: 4 }}>{valor}</div>
+                </div>
+              ))}
+            </div>
+
+            <Bloco titulo="Leads das campanhas" canto="situação atual e velocidade do atendimento">
+              {leadsOperacao.length ? (
+                <div className="rolagem" style={{ maxHeight: 560, overflow: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "minmax(180px,1.4fr) minmax(180px,1fr) 130px 130px 105px",
+                                gap: 10, padding: "8px 12px", position: "sticky", top: 0, zIndex: 2,
+                                background: "#17171c", borderBottom: `1px solid ${C.cardLine}` }}>
+                    {['Lead', 'Campanha', 'Entrada', 'Situação', '1º contato'].map((h) =>
+                      <b key={h} style={{ color: C.dim, fontSize: 9.5, textTransform: "uppercase" }}>{h}</b>)}
+                  </div>
+                  {leadsOperacao.map((l) => {
+                    const cor = l.situacao === "Convertido" ? C.up : l.situacao === "Perdido" ? C.down
+                      : l.situacao === "Aguardando atendimento" ? C.warn : C.gold;
+                    return <div key={l.oportunidade_id} style={{ display: "grid",
+                      gridTemplateColumns: "minmax(180px,1.4fr) minmax(180px,1fr) 130px 130px 105px",
+                      gap: 10, alignItems: "center", minHeight: 46, padding: "6px 12px", borderBottom: `1px solid ${C.hair}` }}>
+                      <span style={{ color: C.text, fontSize: 12, fontWeight: 700, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.nome || "Lead sem nome"}</span>
+                      <span style={{ color: C.muted, fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.campanha_nome}</span>
+                      <span style={{ color: C.faint, fontSize: 10.5 }}>{l.criado_em ? new Date(l.criado_em).toLocaleString("pt-BR", { timeZone: "America/Bahia", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "—"}</span>
+                      <b style={{ color: cor, fontSize: 10.5 }}>{l.situacao}</b>
+                      <span style={{ color: l.minutos_primeiro_atendimento == null ? C.faint : C.bright, fontFamily: GROTESK, fontSize: 11.5 }}>{tempoCurto(l.minutos_primeiro_atendimento)}</span>
+                    </div>;
+                  })}
+                </div>
+              ) : <Estado vazio vazioTitulo="Nenhuma campanha em veiculação" vazioDica="A aba considera campanhas com gasto real nos últimos 7 dias." />}
+            </Bloco>
+          </div>
+        )}
       </div>
     </Estado>
   );

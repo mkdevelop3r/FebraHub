@@ -414,6 +414,9 @@ export const useMarketingCampanhaResultado = () =>
 export const useMarketingCampanhaLeadsDiario = () =>
   useView("vw_mkt_campanha_leads_diario", { ordem: ["campanha_nome", "dia"] });
 
+export const useMarketingLeadsCampanhasAtivas = () =>
+  useView("vw_mkt_leads_campanhas_ativas", { ordem: ["campanha_nome", "criado_em"] });
+
 /* RESULTADO DA CAMPANHA DE EVENTO (db/193).
 
    Mede o retorno em CURSO vendido a quem se inscreveu, nunca em ingresso: o
