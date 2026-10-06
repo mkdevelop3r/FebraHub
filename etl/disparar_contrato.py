@@ -124,18 +124,14 @@ def baixa_ficha(sf, base, venda_id):
 
 # ---------------------------------------------------------------- PDF
 def contrato_limpo():
-    """Contrato padrão, SEM a página de auditoria do Autentique (de quando foi
-    pré-assinado) — senão o novo documento nasce com um relatório antigo."""
-    reader = PdfReader(CONTRATO_PDF)
-    writer = PdfWriter()
-    for page in reader.pages:
-        texto = (page.extract_text() or "").lower()
-        if "relatório de auditoria" in texto or "autentique.com.br" in texto:
-            continue
-        writer.add_page(page)
-    buf = io.BytesIO()
-    writer.write(buf)
-    return buf.getvalue()
+    """Contrato padrão COMPLETO, incluindo a ÚLTIMA página (Relatório de auditoria
+    do Autentique) — é nela que está a assinatura da FEBRACIS (Dulcineia), feita
+    quando o contrato foi pré-assinado. O aluno precisa receber a prova de que a
+    Febracis já assinou. Quando o aluno assina o novo documento, o Autentique só
+    acrescenta o manifesto da assinatura dele ao final — as duas ficam no PDF.
+    (Antes essa página era descartada, o que tirava a assinatura da Dulce.)"""
+    with open(CONTRATO_PDF, "rb") as f:
+        return f.read()
 
 
 def junta(contrato_bytes, ficha_bytes):
