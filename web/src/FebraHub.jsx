@@ -8179,9 +8179,25 @@ const STATUS_CONTRATO = {
   erro:    { rotulo: "Erro no envio", cor: C.down },
 };
 const primeiroNomeContrato = (n) => String(n || "").trim().split(/\s+/)[0] || "";
+// Saudação pela hora de Salvador (não manda "Bom dia" à tarde/noite).
+const saudacaoHora = () => {
+  const h = Number(new Intl.DateTimeFormat("pt-BR", { timeZone: "America/Bahia", hour: "2-digit", hour12: false }).format(new Date()));
+  return h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
+};
+// Mensagem padrão de cobrança do financeiro (Cléberson) — link entra se houver.
 const waContrato = (r) => {
   const tel = String(r.telefone || "").replace(/\D/g, "");
-  const msg = `Oi ${primeiroNomeContrato(r.nome)}, tudo bem? Seu contrato do ${r.curso} está te esperando para assinatura${r.link ? `: ${r.link}` : "."}`;
+  const nome = primeiroNomeContrato(r.nome);
+  const fimLink = r.link
+    ? `, ou pode acessar diretamente por este link: ${r.link}.`
+    : ".";
+  const msg =
+    `Olá, ${nome}. ${saudacaoHora()}! Tudo bem?\n\n` +
+    `Meu nome é Cléberson, faço parte do time financeiro da Febracis. ` +
+    `Estou entrando em contato para informar que enviamos para o seu e-mail o contrato referente ao Curso (${r.curso}) que ainda aguarda sua assinatura.\n\n` +
+    `A assinatura é digital e realizada por meio da plataforma Autentique. ` +
+    `Para concluir, basta acessar o e-mail enviado e clicar no link disponível, que o levará diretamente à plataforma para a finalização do processo${fimLink}\n\n` +
+    `Ficamos à disposição para qualquer dúvida.`;
   return `https://wa.me/${tel}?text=${encodeURIComponent(msg)}`;
 };
 
