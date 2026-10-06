@@ -1206,10 +1206,17 @@ def main():
         log("DRY RUN concluido; nada foi gravado.")
         return
 
+    # Relogio da gravacao real usado pelo vigia. O mesmo instante nas duas
+    # tabelas permite detectar carga parcial: a view usa o menor dos relogios.
+    sync_at = datetime.now(timezone.utc).isoformat()
     if "students" in targets:
+        for row in students:
+            row["sincronizado_em"] = sync_at
         sb.replace_window(
             "fato_base_alunos", students, "matricula_id", "data_matricula")
     if "payments" in targets:
+        for row in payments:
+            row["sincronizado_em"] = sync_at
         sb.replace_window(
             "fato_pagamento_base", payments, "pagamento_id", "data_aprovacao")
     if "presence" in targets:

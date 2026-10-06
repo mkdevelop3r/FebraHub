@@ -43,7 +43,7 @@ create unique index if not exists vigia_alerta_aberto_unico
 insert into public.vigia_fontes
   (fonte,nome,tolerancia_minutos,tabela_destino,coluna_relogio,exigir_avanco,execucoes_sem_avanco)
 values
- ('salesforce_api','Salesforce',45,'dim_turma_salesforce','sincronizado_em',true,3),
+ ('salesforce_api','Salesforce',45,'vw_salesforce_sync_destino','sincronizado_em',true,3),
  ('blackcrm_leads','Black CRM',1560,'fato_crm_lead','sincronizado_em',true,2),
  ('conta_azul','Conta Azul',1560,'fato_contas_receber','sincronizado_em',true,2),
  ('meta_ads','Meta Ads',1560,'fato_meta_insights','atualizado_em',true,2),
