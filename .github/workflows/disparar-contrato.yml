@@ -28,6 +28,10 @@ on:
         description: (envio real de teste) manda pra ESTE telefone, nao pro cliente
         type: string
         default: ''
+      backfill_links:
+        description: So preenche o link dos contratos ja enviados que ficaram sem link
+        type: boolean
+        default: false
 
 concurrency:
   group: disparar-contrato
@@ -62,6 +66,7 @@ jobs:
           ${{ inputs.venda_id != '' && format('--venda {0}', inputs.venda_id) || '' }}
           ${{ inputs.email_teste != '' && format('--email-teste {0}', inputs.email_teste) || '' }}
           ${{ inputs.telefone_teste != '' && format('--telefone-teste {0}', inputs.telefone_teste) || '' }}
+          ${{ inputs.backfill_links && '--backfill-links' || '' }}
       - name: Guardar os pacotes do teste (dry-run)
         if: always()
         uses: actions/upload-artifact@v4

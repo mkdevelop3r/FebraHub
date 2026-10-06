@@ -44,6 +44,13 @@ MUTATION = (
     " id name signatures { public_id email link { short_link } } } }"
 )
 
+# O short_link as vezes nao vem na resposta do createDocument; uma consulta ao
+# documento (logo depois) traz o link de assinatura do signatario.
+QUERY_DOC = (
+    "query($id: UUID!) { document(id: $id) {"
+    " signatures { public_id link { short_link } } } }"
+)
+
 
 def log(msg):
     print(msg, flush=True)
@@ -106,6 +113,32 @@ def sb_marca_integracao(registros, status="ok", mensagem=None):
         log(f"  ! heartbeat integracao_status: {e}")
 
 
+def sb_rows_sem_link():
+    """Contratos ja enviados que ficaram sem link (pra backfill)."""
+    r = requests.get(
+        f"{SB_URL}/rest/v1/contrato_envio",
+        headers={"apikey": SB_KEY, "Authorization": f"Bearer {SB_KEY}"},
+        params={"select": "venda_id,curso,nome,autentique_doc_id",
+                "link": "is.null", "autentique_doc_id": "not.is.null",
+                "limit": "500"},
+        timeout=60,
+    )
+    r.raise_for_status()
+    return r.json()
+
+
+def sb_set_link(doc_id, link):
+    r = requests.patch(
+        f"{SB_URL}/rest/v1/contrato_envio",
+        headers={"apikey": SB_KEY, "Authorization": f"Bearer {SB_KEY}",
+                 "Content-Type": "application/json", "Prefer": "return=minimal"},
+        params={"autentique_doc_id": f"eq.{doc_id}"},
+        data=json.dumps({"link": link}), timeout=60,
+    )
+    if not r.ok:
+        log(f"  ! falha ao gravar link ({doc_id}): {r.status_code} {r.text[:200]}")
+
+
 # ---------------------------------------------------------------- Ficha (VF)
 def vf_base(instance):
     host = re.sub(r"^https?://", "", instance)
@@ -154,6 +187,28 @@ def e164(tel):
     return "+" + d
 
 
+def busca_link(doc_id):
+    """Consulta o documento recem-criado pra pegar o link de assinatura
+    (short_link) quando ele nao volta na resposta do createDocument."""
+    try:
+        r = requests.post(
+            AUTENTIQUE_API,
+            headers={"Authorization": f"Bearer {AUTENTIQUE_TOKEN}",
+                     "Content-Type": "application/json"},
+            json={"query": QUERY_DOC, "variables": {"id": doc_id}},
+            timeout=60,
+        )
+        dados = r.json()
+        sigs = (((dados.get("data") or {}).get("document") or {}).get("signatures")) or []
+        for s in sigs:
+            sl = (s.get("link") or {}).get("short_link")
+            if sl:
+                return sl
+    except Exception as e:
+        log(f"  ! nao consegui buscar link do doc {doc_id}: {e}")
+    return None
+
+
 def cria_documento(nome, email, telefone, pdf_bytes, curso):
     # Autentique aceita SO UM canal por signatario (email OU phone, nunca os dois).
     signer = {"name": nome or "Aluno(a)", "action": "SIGN"}
@@ -193,6 +248,8 @@ def cria_documento(nome, email, telefone, pdf_bytes, curso):
         if (s.get("link") or {}).get("short_link"):
             link = s["link"]["short_link"]
             break
+    if not link:                       # short_link nao veio na criacao: consulta
+        link = busca_link(doc["id"])
     return doc["id"], link
 
 
@@ -207,8 +264,31 @@ def main():
                     help="envio real de teste: manda pra ESTE e-mail (nao pro cliente)")
     ap.add_argument("--telefone-teste", dest="telefone_teste",
                     help="envio real de teste: manda pra ESTE telefone (nao pro cliente)")
+    ap.add_argument("--backfill-links", dest="backfill_links", action="store_true",
+                    help="so preenche o link dos contratos ja enviados que ficaram sem link")
     args = ap.parse_args()
     load_env()
+
+    # Backfill: reconsulta o Autentique e preenche o link dos contratos que
+    # ficaram sem link. Nao envia nada novo nem precisa do Salesforce.
+    if args.backfill_links:
+        if not AUTENTIQUE_TOKEN:
+            log("AUTENTIQUE_TOKEN ausente; abortando backfill.")
+            return 1
+        rows = sb_rows_sem_link()
+        log(f"contratos sem link: {len(rows)}")
+        atualizados = 0
+        for row in rows:
+            link = busca_link(row.get("autentique_doc_id"))
+            if link:
+                sb_set_link(row.get("autentique_doc_id"), link)
+                atualizados += 1
+                log(f"  - {row.get('nome')} | {row.get('curso')}: {link}")
+            else:
+                log(f"  - {row.get('nome')}: link ainda indisponivel")
+        log(f"FIM backfill: {atualizados}/{len(rows)} atualizados")
+        return 0
+
     # rodada de producao de verdade: so ela marca o heartbeat na Central de APIs
     # (dry-run, --venda e envios de teste nao sujam o status da integracao).
     producao = not (args.dry_run or args.email_teste or args.telefone_teste or args.venda)
