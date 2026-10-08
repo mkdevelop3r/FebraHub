@@ -187,6 +187,18 @@ def e164(tel):
     return "+" + d
 
 
+def nome_salesforce(sf, venda_id):
+    """Nome real do cliente no Salesforce (Account.Name) — usado quando a fila
+    so tem o CPF (lead novo sem nome em fato_contatos/dim_alunos)."""
+    try:
+        recs = sf.query(f"SELECT Account.Name FROM Opportunity WHERE Id = '{venda_id}'")
+        if recs:
+            return (recs[0].get("Account") or {}).get("Name")
+    except Exception as e:
+        log(f"  ! nao consegui nome no SF ({venda_id}): {e}")
+    return None
+
+
 def busca_link(doc_id):
     """Consulta o documento recem-criado pra pegar o link de assinatura
     (short_link) quando ele nao volta na resposta do createDocument."""
@@ -327,6 +339,12 @@ def main():
             row["telefone"] = args.telefone_teste
         venda = row.get("venda_id")
         nome = row.get("nome")
+        # nome vazio ou so digitos (= caiu no CPF): pega o nome real no Salesforce
+        if not nome or str(nome).strip().isdigit():
+            real = nome_salesforce(sf, venda)
+            if real:
+                nome = real
+                row["nome"] = real   # grava o nome certo no hub (sb_grava_envio)
         log(f"[{i}/{len(pend)}] {nome} · {row.get('curso_sigla') or row.get('curso')} · venda {venda}")
         try:
             ficha = baixa_ficha(sf, base, venda)
