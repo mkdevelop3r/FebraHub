@@ -5928,7 +5928,7 @@ const parseBRNumero = (v) => {
 /* GGB — colar o bloco de respostas. Parser mostra a prévia (8 médias + nota da
    treinadora + respondentes) antes de gravar; só insere no fato_avaliacao ao
    confirmar. Grava com fonte='ggb'. */
-function FormMaestro({ maestro, cargoInicial, onSalvo }) {
+function FormMaestro({ maestro, cargoInicial, onSalvo, unidade = "salvador" }) {
   const [apelido, setApelido] = useState(maestro.como_gosta_ser_chamado ?? "");
   const [empresa, setEmpresa] = useState(maestro.empresa ?? "");
   const [faturamento, setFaturamento] = useState(maestro.faturamento != null ? String(maestro.faturamento) : "");
@@ -5947,7 +5947,7 @@ function FormMaestro({ maestro, cargoInicial, onSalvo }) {
         faturamento: parseBRNumero(faturamento),
         cargo: cargo.trim() || null,
         observacoes: observacoes.trim() || null,
-      });
+      }, unidade);
       onSalvo();
     } catch (e) { setErro(e.message || "Falha ao gravar."); setSalvando(false); }
   };
@@ -9225,14 +9225,25 @@ function DrawerTurmaCentral({ turma, onFechar, notificar }) {
 }
 
 /* ---- Maestros ----
-   Veio do Hub Pedagógico sem mudança de lógica: mesmas views, mesmos
-   cálculos, mesmo filtro de validade, mesmo modal de edição. Mudou só o
-   endereço — tem botão de ação (editar anotação), então é operação, e
-   operação vive aqui. */
+   As unidades compartilham a estrutura de acompanhamento e edição.
+   Cada uma consulta sua própria fonte e suas próprias anotações. */
 function CentralMaestros({ notificar }) {
-  const maestros = usePedagogicoMaestrosCompleto();
-  const maestrosKpis = usePedagogicoMaestrosKpis();
-  const anotacoes = usePedagogicoMaestroAnotacoes();
+  const [unidade, setUnidade] = useState("salvador");
+  return (
+    <>
+      <div style={{ marginBottom: 12 }}>
+        <Segmentado label="Unidade" valor={unidade} onChange={setUnidade}
+          opcoes={[{ key: "salvador", label: "Salvador" }, { key: "recife", label: "Recife" }]} />
+      </div>
+      <PainelMaestrosUnidade key={unidade} unidade={unidade} notificar={notificar} />
+    </>
+  );
+}
+
+function PainelMaestrosUnidade({ unidade, notificar }) {
+  const maestros = usePedagogicoMaestrosCompleto(unidade);
+  const maestrosKpis = usePedagogicoMaestrosKpis(unidade);
+  const anotacoes = usePedagogicoMaestroAnotacoes(unidade);
   const qc = useQueryClient();
   const [statusMaestro, setStatusMaestro] = useState("todos");
   const [maestroEdit, setMaestroEdit] = useState(null);
@@ -9321,9 +9332,9 @@ function CentralMaestros({ notificar }) {
 
       <div className="rolagem" style={{ maxHeight: 460, overflowY: "auto", border: `1px solid ${C.hair}`, borderRadius: 10 }}>
         <Estado carregando={maestros.isLoading} erro={maestros.error} vazio={!listaMaestros.length}
-          vazioTitulo={temMaestros ? "Nenhum maestro nesse status" : "Sem maestros no acesso"}
-          vazioDica={temMaestros ? "Troque o filtro de validade acima." : "Painel restrito ao setor pedagógico — aparece com o setor conectado."}>
-          {listaMaestros.map((m, i) => <LinhaMaestro key={i} m={m} onEditar={setMaestroEdit} />)}
+          vazioTitulo={temMaestros ? "Nenhum maestro nesse status" : `Sem maestros em ${unidade === "recife" ? "Recife" : "Salvador"}`}
+          vazioDica={temMaestros ? "Troque o filtro de validade acima." : "Confira o acesso ao setor pedagógico e a sincronização da unidade."}>
+          {listaMaestros.map((m) => <LinhaMaestro key={m.cpf} m={m} onEditar={setMaestroEdit} />)}
         </Estado>
       </div>
 
@@ -9333,7 +9344,7 @@ function CentralMaestros({ notificar }) {
 
       {maestroEdit && (
         <ModalCentro titulo="Editar maestro" onFechar={() => setMaestroEdit(null)}>
-          <FormMaestro maestro={maestroEdit} cargoInicial={cargoPorCpf.get(String(maestroEdit.cpf)) ?? ""} onSalvo={aposSalvar} />
+          <FormMaestro maestro={maestroEdit} unidade={unidade} cargoInicial={cargoPorCpf.get(String(maestroEdit.cpf)) ?? ""} onSalvo={aposSalvar} />
         </ModalCentro>
       )}
     </>
