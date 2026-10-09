@@ -9,6 +9,7 @@ import json
 import os
 import re
 import sys
+import time
 import unicodedata
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import unquote
@@ -91,9 +92,24 @@ class Salesforce:
 
     def get(self, path, params=None):
         url = path if path.startswith("http") else f"{self.instance}{path}"
-        response = requests.get(url, headers=self.headers, params=params, timeout=120)
-        response.raise_for_status()
-        return response.json()
+        # Somente leituras: nunca repetir automaticamente uma escrita.
+        for attempt in range(1, 4):
+            try:
+                response = requests.get(
+                    url, headers=self.headers, params=params, timeout=(15, 120))
+                if response.status_code in {429, 500, 502, 503, 504} and attempt < 3:
+                    log(f"Salesforce GET: HTTP {response.status_code}; "
+                        f"nova tentativa {attempt + 1}/3.")
+                else:
+                    response.raise_for_status()
+                    return response.json()
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                if attempt == 3:
+                    raise RuntimeError(
+                        "Salesforce GET falhou apos 3 tentativas por timeout/conexao; "
+                        "extracao interrompida antes da gravacao.") from None
+                log(f"Salesforce GET: timeout/conexao; nova tentativa {attempt + 1}/3.")
+            time.sleep(2 ** attempt)
 
     def query(self, soql):
         data = self.get(f"/services/data/v{API_VERSION}/query", {"q": soql})

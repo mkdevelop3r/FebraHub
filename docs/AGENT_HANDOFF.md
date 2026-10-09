@@ -1479,3 +1479,12 @@ gravadas.
 - Commit e push autorizados; sem merge ou deploy solicitado. QA visual indisponível (nenhum navegador conectado).
 
 - Telefone agora visível em cada Maestro, em linha própria com link para ligar; usa o contato da fonte. Todos os 9 de Recife têm telefone.
+
+### Codex — 09/10/2026 — Retentativa nas leituras Salesforce
+
+- Correção preparada na branch fix/salesforce-read-timeout, worktree .publish-maestros-recife, sobre origin/main f82a65c.
+- GET repete no máximo 3 tentativas por Timeout/ConnectionError ou HTTP 429/500/502/503/504; pausas 2/4 segundos, conexão 15s e leitura 120s.
+- Autenticação e escritas preservadas. Erros permanentes falham imediatamente; falha esgotada aborta antes de gravar.
+- 6 testes aprovados: sucesso após timeout, limite, HTTP transitório/permanente, paginação sem duplicata e falha final. diff --check aprovado.
+- Nenhuma carga real reexecutada; nenhum commit/push nesta correção.
+- Usuário autorizou commit e envio à main; execução real da carga não revalidada nesta correção.
