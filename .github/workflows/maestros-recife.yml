@@ -1,0 +1,41 @@
+﻿name: Sincronizar Maestros Recife
+
+on:
+  schedule:
+    - cron: '30 10,18 * * *'
+  workflow_dispatch:
+    inputs:
+      somente_diagnostico:
+        description: Consultar sem gravar no Supabase
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maestros-recife
+  cancel-in-progress: false
+
+jobs:
+  sincronizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependências
+        run: pip install requests
+      - name: Consultar Maestros e atualizar Recife
+        env:
+          SALESFORCE_AUTH_URL: ${{ secrets.SALESFORCE_AUTH_URL }}
+          SALESFORCE_CLIENT_ID: ${{ secrets.SALESFORCE_CLIENT_ID }}
+          SALESFORCE_CLIENT_SECRET: ${{ secrets.SALESFORCE_CLIENT_SECRET }}
+          SALESFORCE_LOGIN_URL: ${{ secrets.SALESFORCE_LOGIN_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: >-
+          python etl/maestros_recife_sync.py
+          ${{ (github.event_name == 'schedule' || !inputs.somente_diagnostico) && '--write' || '' }}

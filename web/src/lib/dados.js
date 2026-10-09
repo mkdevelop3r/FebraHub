@@ -482,18 +482,18 @@ export const usePedagogicoRiscoEvasao = () =>
 // junta as anotações editáveis (apelido/empresa/faturamento/observacoes) aos
 // campos do maestro; a chave é `cpf` (= aluno_id em maestro_anotacao). PII
 // restrita ao setor. Ordeno por chave estável; o front reordena por investido.
-export const usePedagogicoMaestrosCompleto = () =>
-  useView("vw_pedagogico_maestros_completo", { ordem: ["total_investido", "nome"] });
+export const usePedagogicoMaestrosCompleto = (unidade = "salvador") =>
+  useView(unidade === "recife" ? "vw_pedagogico_maestros_recife_completo" : "vw_pedagogico_maestros_completo", { ordem: ["total_investido", "cpf"] });
 // KPIs do grupo de maestros: total + contadores de validade da Maestria
 // (validos, perto_vencer, vencidos). Validade = 12 meses desde a compra da
 // MAESTRIA; "vencido" é benefício expirado (oportunidade de renovação), não
 // deixou de ser maestro. Uma linha só.
-export const usePedagogicoMaestrosKpis = () =>
-  useView("vw_pedagogico_maestros_kpis");
+export const usePedagogicoMaestrosKpis = (unidade = "salvador") =>
+  useView(unidade === "recife" ? "vw_pedagogico_maestros_recife_kpis" : "vw_pedagogico_maestros_kpis");
 // Anotações cruas (maestro_anotacao) — a view _completo não expõe `cargo`, e
 // aqui o form de edição pré-preenche esse campo. RLS libera só ao pedagógico.
-export const usePedagogicoMaestroAnotacoes = () =>
-  useView("maestro_anotacao", { ordem: ["aluno_id"] });
+export const usePedagogicoMaestroAnotacoes = (unidade = "salvador") =>
+  useView(unidade === "recife" ? "maestro_anotacao_recife" : "maestro_anotacao", { ordem: ["aluno_id"] });
 // Retenção (entrada manual): casos crus (fato_retencao), o resumo
 // (vw_pedagogico_retencao: total_casos/retidos/cancelados/taxa) e os motivos
 // (vw_pedagogico_retencao_motivos: motivo, retidos vs cancelados).
@@ -589,8 +589,9 @@ export async function enfileirarPrazoVencendo(limite) {
    maestro_anotacao tem policy de INSERT/UPDATE com pode_ver('pedagogico').
    A gravação vai com o JWT da sessão; a RLS barra quem não for do setor.
    Erros sobem pro form tratar. */
-export async function salvarMaestroAnotacao(anotacao) {
-  const { error } = await supabase.from("maestro_anotacao").upsert(anotacao, { onConflict: "aluno_id" });
+export async function salvarMaestroAnotacao(anotacao, unidade = "salvador") {
+  const tabela = unidade === "recife" ? "maestro_anotacao_recife" : "maestro_anotacao";
+  const { error } = await supabase.from(tabela).upsert(anotacao, { onConflict: "aluno_id" });
   if (error) throw new Error(error.message);
 }
 // Retenção: sem `id` insere um caso novo; com `id` atualiza (ex.: mudar o

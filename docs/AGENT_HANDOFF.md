@@ -1469,3 +1469,11 @@ gravadas.
 - Corrigido DrawerTurmaCentral: confirma√ß√£o/grupo usam RPC espec√≠fico quando aba Represados est√° selecionada, com r√≥tulos indicando os destinat√°rios.
 - Migration 233 APLICADA no Supabase: RPC separado e contatos internos sem filtro de auth.uid para a fila do script; vendas continuam separadas. Nenhum disparo durante aplica√ß√£o.
 - Teste transacional TV09 (rollback): confirma√ß√£o 16, repeti√ß√£o 0, grupo 20, fila 36 sem duplicatas. Build Vite passou.
+
+### Codex ó 09/10/2026 ó Maestros Recife
+
+- Aba Recife na Central PedagÛgica com os campos e indicadores de Salvador.
+- Migrations aplicadas e carga confirmada: 9 Maestros; todos com telefone, 1 sem e-mail.
+- Validados SQL/RLS/atomicidade, consulta authenticated, 8 testes Python e build.
+- Workflow dedicado preparado (07h30/15h30 BrasÌlia); cron apÛs integraÁ„o ‡ main.
+- Commit e push autorizados; sem merge ou deploy solicitado. QA visual indisponÌvel (nenhum navegador conectado).
