@@ -5887,6 +5887,12 @@ function LinhaMaestro({ m, onEditar }) {
             {m.nome}{m.como_gosta_ser_chamado ? <span style={{ color: C.faint, fontWeight: 600 }}> · {m.como_gosta_ser_chamado}</span> : null}
           </div>
           <div style={{ fontSize: 10.5, color: C.faint, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{subInfo}</div>
+          <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3 }}>
+            {m.telefone ? <a href={`tel:${String(m.telefone).replace(/[^+\d]/g, "")}`}
+              aria-label={`Ligar para ${m.nome}`} style={{ color: C.muted, whiteSpace: "nowrap" }}>
+              {m.telefone}
+            </a> : "Telefone não informado"}
+          </div>
         </div>
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>

@@ -1477,3 +1477,5 @@ gravadas.
 - Validados SQL/RLS/atomicidade, consulta authenticated, 8 testes Python e build.
 - Workflow dedicado preparado (07h30/15h30 Brasília); cron após integração à main.
 - Commit e push autorizados; sem merge ou deploy solicitado. QA visual indisponível (nenhum navegador conectado).
+
+- Telefone agora visível em cada Maestro, em linha própria com link para ligar; usa o contato da fonte. Todos os 9 de Recife têm telefone.
